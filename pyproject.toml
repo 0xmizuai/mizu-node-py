@@ -6,8 +6,15 @@ authors = ["shudong <dongs2011@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
+fastapi = "^0.115.2"
+uvicorn = "^0.31.1"
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+pre-commit = "^4.0.1"
+black = "^24.10.0"
+isort = "^5.13.2"
 
 [build-system]
 requires = ["poetry-core"]
