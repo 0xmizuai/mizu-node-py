@@ -1,70 +1,111 @@
-import os
+import time
 
-from bson import ObjectId
 from pymongo import MongoClient
+import redis
 
-from mizu_node.db.r2 import read_raw_data
+from mizu_node.db.constants import (
+    FINISH_JOB_CALLBACK_URL,
+    MONGO_DB_NAME,
+    MONGO_URL,
+    PROCESSING_JOB_EXPIRE_TTL_SECONDS,
+    REDIS_PENDING_JOBS_QUEUE,
+    REDIS_PROCESSING_JOB_PREFIX,
+    REDIS_TOTAL_PROCESSING_JOB,
+    REDIS_URL,
+    SHADOW_KEY_PREFIX,
+)
+from mizu_node.db.types import (
+    AIRuntimeConfig,
+    ClassificationJobForWorker,
+    ClassificationJobFromPublisher,
+    ClassificationJobResult,
+    ClassificationJobResultFromWorker,
+    ProcessingJob,
+)
 from mizu_node.job_handler import ClassificationJob
 
-from typing import Union
-from pydantic import BaseModel
+
+rclient = redis.Redis(REDIS_URL)
+mclient = MongoClient(MONGO_URL)
+mdb = mclient[MONGO_DB_NAME]
 
 
-class AIRuntimeConfig(BaseModel):
-    debug: bool = False
-    callback_url: str = None
+def now():
+    return int(time.time())
 
 
-class ClassificationJob(BaseModel):
-    job_id: ObjectId
-    data: str = None
-    config: Union[AIRuntimeConfig, None] = None
+def _add_processing_job(client: redis.Redis, _id: str, serialized_job: str):
+    client.set(REDIS_PROCESSING_JOB_PREFIX + _id, serialized_job)
+    client.set(
+        SHADOW_KEY_PREFIX + REDIS_PROCESSING_JOB_PREFIX + _id,
+        serialized_job,
+        ex=PROCESSING_JOB_EXPIRE_TTL_SECONDS,
+    )
+    client.incr(REDIS_TOTAL_PROCESSING_JOB)
 
 
-class ClassificationJobResult(BaseModel):
-    job_id: ObjectId
-    tags: list[str]
+def _remove_processing_job(client: redis.Redis, _id: str):
+    client.decr(REDIS_TOTAL_PROCESSING_JOB)
+    client.delete(REDIS_PROCESSING_JOB_PREFIX + _id)
+    client.delete(SHADOW_KEY_PREFIX + REDIS_PROCESSING_JOB_PREFIX + _id)
 
 
-FINISH_JOB_CALLBACK_URL = os.environ["FINISH_JOB_CALLBACK_URL"]
-MONGO_URL = os.environ["MONGO_URL"]
-MONGO_DB_NAME = os.environ["MONGO_DB_NAME"]
-
-client = MongoClient(MONGO_URL)
-db = client[MONGO_DB_NAME]
+def new_job(job: ClassificationJobFromPublisher) -> str:
+    rclient.lpush(REDIS_PENDING_JOBS_QUEUE, job.model_dump_json())
 
 
-def get_pending_job_ids():
-    ids = db.jobs.find({"status": "pending"}, {"_id": 1})
-    return [i["_id"] for i in ids]
-
-
-def take_job(job_id: str) -> ClassificationJob | None:
-    metadata = db.jobs.find_one({"_id": job_id})
-    text = read_raw_data(metadata["raw_data_key"])
-    return ClassificationJob(
-        job_id=job_id,
-        data=text,
+def take_job(worker: str) -> ClassificationJobForWorker | None:
+    job_json = rclient.rpop(REDIS_PENDING_JOBS_QUEUE)
+    if job_json is None:
+        return None
+    job = ClassificationJob.model_validate_json(job_json)
+    processing_job = ProcessingJob(
+        _id=job._id,
+        publisher=job.publisher,
+        created_at=job.created_at,
+        worker=worker,
+        assigned_at=now(),
+    )
+    _add_processing_job(
+        rclient,
+        job._id,
+        processing_job.model_dump_json(),
+    )
+    return ClassificationJobForWorker(
+        _id=job._id,
         config=AIRuntimeConfig(callback_url=FINISH_JOB_CALLBACK_URL),
     )
 
 
-def new_job(publisher: str, data_key: str) -> str:
-    return db.jobs.insert_one(
-        {
-            "raw_data_key": data_key,
-            "publisher": publisher,
-            "status": "pending",
-            "tags": [],
-        }
-    ).inserted_id
+def finish_job(result: ClassificationJobResultFromWorker):
+    processing_job_json = rclient.get(REDIS_PROCESSING_JOB_PREFIX + result._id)
+    if processing_job_json is None:  # job expired or not exists
+        return None
 
+    job = ProcessingJob.model_validate_json(processing_job_json)
+    # worker mismatch
+    if job.worker != result.worker:
+        return None
+    # already expired
+    if job.assigned_at < now() - PROCESSING_JOB_EXPIRE_TTL_SECONDS:
+        return None  # already expired
 
-def finish_job(result: ClassificationJobResult):
-    db.jobs.update_one(
-        {
-            "_id": result.job_id,
-            "status": "finished",
-            "tags": result.tags,
-        }
+    result = ClassificationJobResult(
+        _id=job._id,
+        publisher=job.publisher,
+        created_at=job.created_at,
+        worker=job.worker,
+        assigned_at=job.assigned_at,
+        finished_at=now(),
+        tags=job.tags,
     )
+    mdb.jobs.insert_one(vars(result))
+    _remove_processing_job(rclient, job._id)
+
+
+def get_pending_jobs_num():
+    return rclient.llen(REDIS_PENDING_JOBS_QUEUE)
+
+
+def get_processing_jobs_num():
+    return rclient.get(REDIS_TOTAL_PROCESSING_JOB)
