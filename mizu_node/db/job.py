@@ -22,7 +22,6 @@ from mizu_node.db.types import (
     ClassificationJobResultFromWorker,
     ProcessingJob,
 )
-from mizu_node.job_handler import ClassificationJob
 
 
 rclient = redis.Redis(REDIS_URL)
@@ -50,15 +49,15 @@ def _remove_processing_job(client: redis.Redis, _id: str):
     client.delete(SHADOW_KEY_PREFIX + REDIS_PROCESSING_JOB_PREFIX + _id)
 
 
-def new_job(job: ClassificationJobFromPublisher) -> str:
+def handle_new_job(job: ClassificationJobFromPublisher) -> str:
     rclient.lpush(REDIS_PENDING_JOBS_QUEUE, job.model_dump_json())
 
 
-def take_job(worker: str) -> ClassificationJobForWorker | None:
+def handle_take_job(worker: str) -> ClassificationJobForWorker | None:
     job_json = rclient.rpop(REDIS_PENDING_JOBS_QUEUE)
     if job_json is None:
         return None
-    job = ClassificationJob.model_validate_json(job_json)
+    job = ClassificationJobFromPublisher.model_validate_json(job_json)
     processing_job = ProcessingJob(
         _id=job._id,
         publisher=job.publisher,
@@ -77,7 +76,7 @@ def take_job(worker: str) -> ClassificationJobForWorker | None:
     )
 
 
-def finish_job(result: ClassificationJobResultFromWorker):
+def handle_finish_job(result: ClassificationJobResultFromWorker):
     processing_job_json = rclient.get(REDIS_PROCESSING_JOB_PREFIX + result._id)
     if processing_job_json is None:  # job expired or not exists
         return None
