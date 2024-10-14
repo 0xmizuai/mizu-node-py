@@ -42,8 +42,8 @@ async def assigned_jobs_len():
 @app.get("take_job")
 @error_handler
 async def take_job():
-    job_for_worker = handle_take_job(get_caller())
-    return {"job": job_for_worker.model_dump_json()}
+    job = handle_take_job(get_caller())
+    return {"job": job.model_dump_json()}
 
 
 @app.post("add_job")

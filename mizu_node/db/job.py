@@ -74,11 +74,11 @@ def handle_new_job(jobs: list[ClassificationJobFromPublisher]) -> str:
 
 def handle_take_job(worker: str) -> ClassificationJobForWorker | None:
     if _is_worker_blocked(worker):
-        raise ValueError("Worker is blocked")
+        raise ValueError("worker is blocked")
 
     job_json = rclient.rpop(REDIS_PENDING_JOBS_QUEUE)
     if job_json is None:
-        raise ValueError("No job available")
+        raise ValueError("no job available")
 
     job = ClassificationJobFromPublisher.model_validate_json(job_json)
     processing_job = ProcessingJob(
@@ -101,16 +101,16 @@ def handle_take_job(worker: str) -> ClassificationJobForWorker | None:
 
 def handle_finish_job(result: ClassificationJobResult):
     processing_job_json = rclient.get(REDIS_PROCESSING_JOB_PREFIX + result._id)
-    if processing_job_json is None:  # job expired or not exists
-        return None
+    if processing_job_json is None:
+        return ValueError("job expired or not exists")
 
     job = ProcessingJob.model_validate_json(processing_job_json)
     # worker mismatch
     if job.worker != result.worker:
-        return None
+        raise ValueError("worker mismatch")
     # already expired
     if job.assigned_at < now() - PROCESSING_JOB_EXPIRE_TTL_SECONDS:
-        return None  # already expired
+        raise ValueError("job expired")
 
     result = ClassificationJobResult(
         _id=job._id,
