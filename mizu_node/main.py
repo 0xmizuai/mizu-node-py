@@ -2,6 +2,7 @@ import uvicorn
 from fastapi import FastAPI
 
 
+from mizu_node import error_handler
 from mizu_node.db.job import (
     ClassificationJobFromPublisher,
     ClassificationJobResult,
@@ -27,31 +28,33 @@ async def default():
 
 
 @app.get("stat/pending_jobs_len")
+@error_handler
 async def pending_jobs_len():
     return get_pending_jobs_num()
 
 
 @app.get("stat/assigned_jobs_len")
+@error_handler
 async def assigned_jobs_len():
     return get_processing_jobs_num()
 
 
 @app.get("take_job")
+@error_handler
 async def take_job():
-    try:
-        job_for_worker = handle_take_job(get_caller())
-        return {"job": job_for_worker.model_dump_json()}
-    except ValueError as e:
-        return {"error": e.args}
+    job_for_worker = handle_take_job(get_caller())
+    return {"job": job_for_worker.model_dump_json()}
 
 
 @app.post("add_job")
+@error_handler
 async def add_job(jobs: list[ClassificationJobFromPublisher]):
     handle_new_job(jobs)
     return {"status": "ok"}
 
 
 @app.post("finish_job")
+@error_handler
 async def finish_job(job: ClassificationJobResult):
     handle_finish_job(job)
     return {"status": "ok"}
@@ -59,6 +62,7 @@ async def finish_job(job: ClassificationJobResult):
 
 # this job can only be called by validator
 @app.post("verify_job_callback")
+@error_handler
 async def verify_job(job: ClassificationJobResult):
     handle_verify_job_result(job)
     return {"status": "ok"}

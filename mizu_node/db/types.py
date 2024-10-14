@@ -1,18 +1,13 @@
 import json
 from pydantic import BaseModel
 
-
-class AIRuntimeConfig(BaseModel):
-    debug: bool = False
-    callback_url: str = None
-
-
 # All following _id should be the hash of the data to classify
 
 
-class ClassificationJob(BaseModel):
+class ClassificationJobForWorker(BaseModel):
     _id: str
-    config: AIRuntimeConfig
+    callback_url: str = None
+    debug: bool = False
 
 
 class ClassificationJobResult(BaseModel):

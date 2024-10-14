@@ -21,8 +21,7 @@ from mizu_node.db.constants import (
     VERIFICATION_RATIO_BASE,
 )
 from mizu_node.db.types import (
-    AIRuntimeConfig,
-    ClassificationJob,
+    ClassificationJobForWorker,
     ClassificationJobFromPublisher,
     ClassificationJobResult,
     ClassificationJobResult,
@@ -73,7 +72,7 @@ def handle_new_job(jobs: list[ClassificationJobFromPublisher]) -> str:
         rclient.lpush(REDIS_PENDING_JOBS_QUEUE, job)
 
 
-def handle_take_job(worker: str) -> ClassificationJob | None:
+def handle_take_job(worker: str) -> ClassificationJobForWorker | None:
     if _is_worker_blocked(worker):
         raise ValueError("Worker is blocked")
 
@@ -94,9 +93,9 @@ def handle_take_job(worker: str) -> ClassificationJob | None:
         job._id,
         processing_job.model_dump_json(),
     )
-    return ClassificationJob(
+    return ClassificationJobForWorker(
         _id=job._id,
-        config=AIRuntimeConfig(callback_url=FINISH_JOB_CALLBACK_URL),
+        callback_url=FINISH_JOB_CALLBACK_URL,
     )
 
 
@@ -125,8 +124,9 @@ def handle_finish_job(result: ClassificationJobResult):
     mdb.jobs.insert_one(vars(result))
     _remove_processing_job(rclient, job._id)
     if _should_verify(result):
-        verify_job = ClassificationJob(
-            job._id, AIRuntimeConfig(callback_url=VERIFY_JOB_CALLBACK_URL)
+        verify_job = ClassificationJobForWorker(
+            _id=job._id,
+            callback_url=VERIFY_JOB_CALLBACK_URL,
         )
         requests.post(VERIFY_JOB_URL, json=verify_job.model_dump_json())
 
@@ -134,7 +134,7 @@ def handle_finish_job(result: ClassificationJobResult):
 def handle_verify_job_result(result: ClassificationJobResult):
     job = mdb.jobs.find_one({"_id": result._id})
     if job is None:
-        raise "Job not found"
+        raise ValueError("Job not found")
 
     if len(result.tags) != len(job["tags"]) or set(result.tags) != set(job["tags"]):
         _block_worker(job["worker"])
