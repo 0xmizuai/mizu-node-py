@@ -10,12 +10,12 @@ class AIRuntimeConfig(BaseModel):
 # All following _id should be the hash of the data to classify
 
 
-class ClassificationJobForWorker(BaseModel):
+class ClassificationJob(BaseModel):
     _id: str
     config: AIRuntimeConfig
 
 
-class ClassificationJobResultFromWorker(BaseModel):
+class ClassificationJobResult(BaseModel):
     _id: str
     worker: str
     tags: list[str]
@@ -32,6 +32,6 @@ class ProcessingJob(ClassificationJobFromPublisher):
     assigned_at: int
 
 
-class ClassificationJobResult(ProcessingJob):
+class ClassificationJobDBResult(ProcessingJob):
     finished_at: int
     tags: list[str]
