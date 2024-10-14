@@ -19,3 +19,9 @@ poetry self add poetry-plugin-dotenv
 poetry run dev # for dev
 poetry run start # for prod
 ```
+
+### Test
+
+```shell
+poetry run pytest
+```

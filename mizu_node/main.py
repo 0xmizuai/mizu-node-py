@@ -3,11 +3,11 @@ from fastapi import FastAPI
 
 
 from mizu_node import error_handler
-from mizu_node.db.job import (
+from mizu_node.job_handler import (
     ClassificationJobFromPublisher,
     ClassificationJobResult,
     handle_take_job,
-    handle_new_job,
+    handle_new_jobs,
     handle_finish_job,
     handle_verify_job_result,
     get_pending_jobs_num,
@@ -17,7 +17,7 @@ from mizu_node.db.job import (
 app = FastAPI()
 
 
-def get_caller() -> str:
+def get_user() -> str:
     return ""
 
 
@@ -42,28 +42,31 @@ async def assigned_jobs_len():
 @app.get("take_job")
 @error_handler
 async def take_job():
-    job = handle_take_job(get_caller())
+    # TODO: add rate limit and cool down
+    job = handle_take_job(get_user())
     return {"job": job.model_dump_json()}
 
 
 @app.post("add_job")
 @error_handler
 async def add_job(jobs: list[ClassificationJobFromPublisher]):
-    handle_new_job(jobs)
+    # TODO: ensure it's called from whitelisted publisher
+    handle_new_jobs(jobs)
     return {"status": "ok"}
 
 
 @app.post("finish_job")
 @error_handler
 async def finish_job(job: ClassificationJobResult):
+    job.worker = get_user()
     handle_finish_job(job)
     return {"status": "ok"}
 
 
-# this job can only be called by validator
 @app.post("verify_job_callback")
 @error_handler
 async def verify_job(job: ClassificationJobResult):
+    # TODO: ensure it's called from validator
     handle_verify_job_result(job)
     return {"status": "ok"}
 

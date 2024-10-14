@@ -1,13 +1,13 @@
 import redis
 
-from mizu_node.db.constants import (
+from mizu_node.constants import (
     REDIS_PENDING_JOBS_QUEUE,
     REDIS_PROCESSING_JOB_PREFIX,
     REDIS_URL,
     SHADOW_KEY_PREFIX,
 )
-from mizu_node.db.types import ClassificationJobFromPublisher, ProcessingJob
-from mizu_node.db.job import _remove_processing_job, retry_expired_job
+from mizu_node.types import ClassificationJobFromPublisher, ProcessingJob
+from mizu_node.job_handler import _remove_processing_job, retry_expired_job
 
 
 def retry_expired_job(job: ProcessingJob):

@@ -5,7 +5,7 @@ from fastapi import requests
 from pymongo import MongoClient
 import redis
 
-from mizu_node.db.constants import (
+from mizu_node.constants import (
     FINISH_JOB_CALLBACK_URL,
     VERIFY_JOB_URL,
     VERIFY_JOB_CALLBACK_URL,
@@ -20,7 +20,7 @@ from mizu_node.db.constants import (
     BLOCKED_WORKER_PREFIX,
     VERIFICATION_RATIO_BASE,
 )
-from mizu_node.db.types import (
+from mizu_node.types import (
     ClassificationJobForWorker,
     ClassificationJobFromPublisher,
     ClassificationJobResult,
@@ -30,8 +30,7 @@ from mizu_node.db.types import (
 
 
 rclient = redis.Redis(REDIS_URL)
-mclient = MongoClient(MONGO_URL)
-mdb = mclient[MONGO_DB_NAME]
+mdb = MongoClient(MONGO_URL)[MONGO_DB_NAME]
 
 
 def now():
@@ -46,6 +45,13 @@ def _add_processing_job(client: redis.Redis, _id: str, serialized_job: str):
         ex=PROCESSING_JOB_EXPIRE_TTL_SECONDS,
     )
     client.incr(REDIS_TOTAL_PROCESSING_JOB)
+
+
+def _get_processing_job(_id: str) -> ProcessingJob:
+    processing_job_json = rclient.get(REDIS_PROCESSING_JOB_PREFIX + _id)
+    if processing_job_json is None:
+        return ValueError("job expired or not exists")
+    return ProcessingJob.model_validate_json(processing_job_json)
 
 
 def _remove_processing_job(client: redis.Redis, _id: str):
@@ -66,7 +72,7 @@ def _should_verify() -> bool:
     return randrange(0, VERIFICATION_RATIO_BASE) == 1
 
 
-def handle_new_job(jobs: list[ClassificationJobFromPublisher]) -> str:
+def handle_new_jobs(jobs: list[ClassificationJobFromPublisher]) -> str:
     jobs_json = [job.model_dump_json() for job in jobs]
     for job in jobs_json:
         rclient.lpush(REDIS_PENDING_JOBS_QUEUE, job)
@@ -100,11 +106,7 @@ def handle_take_job(worker: str) -> ClassificationJobForWorker | None:
 
 
 def handle_finish_job(result: ClassificationJobResult):
-    processing_job_json = rclient.get(REDIS_PROCESSING_JOB_PREFIX + result._id)
-    if processing_job_json is None:
-        return ValueError("job expired or not exists")
-
-    job = ProcessingJob.model_validate_json(processing_job_json)
+    job = _get_processing_job(result._id)
     # worker mismatch
     if job.worker != result.worker:
         raise ValueError("worker mismatch")

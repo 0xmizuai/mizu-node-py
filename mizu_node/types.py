@@ -1,4 +1,3 @@
-import json
 from pydantic import BaseModel
 
 # All following _id should be the hash of the data to classify
