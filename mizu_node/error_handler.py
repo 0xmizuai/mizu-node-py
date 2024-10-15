@@ -1,16 +1,14 @@
-def get_decorator():
-    def decorator(func):
-        def new_func(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            except ValueError as e:
-                return {"error": e.args}
-            except:
-                return {"error": "unknown"}
-
-        return new_func
-
-    return decorator
+from functools import wraps
 
 
-error_handler = get_decorator()
+def error_handler(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except ValueError as e:
+            return {"error": e.args}
+        except:
+            return {"error": "unknown"}
+
+    return wrapper

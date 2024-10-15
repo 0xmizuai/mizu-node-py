@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from pymongo import MongoClient
 import redis
 
-from mizu_node import error_handler
+from mizu_node.error_handler import error_handler
 from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, REDIS_URL
 from mizu_node.job_handler import (
     ClassificationJobFromPublisher,
