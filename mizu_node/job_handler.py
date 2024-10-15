@@ -3,24 +3,22 @@ import time
 
 from fastapi import requests
 from pymongo import MongoClient
-import redis
+from redis import Redis
 
 from mizu_node.constants import (
     FINISH_JOB_CALLBACK_URL,
     VERIFY_JOB_URL,
     VERIFY_JOB_CALLBACK_URL,
-    MONGO_DB_NAME,
-    MONGO_URL,
     PROCESSING_JOB_EXPIRE_TTL_SECONDS,
     REDIS_PENDING_JOBS_QUEUE,
     REDIS_PROCESSING_JOB_PREFIX,
     REDIS_TOTAL_PROCESSING_JOB,
-    REDIS_URL,
     SHADOW_KEY_PREFIX,
     BLOCKED_WORKER_PREFIX,
     VERIFICATION_RATIO_BASE,
 )
 from mizu_node.types import (
+    ClassificationJobDBResult,
     ClassificationJobForWorker,
     ClassificationJobFromPublisher,
     ClassificationJobResult,
@@ -29,66 +27,79 @@ from mizu_node.types import (
 )
 
 
-rclient = redis.Redis(REDIS_URL)
-mdb = MongoClient(MONGO_URL)[MONGO_DB_NAME]
-
-
 def now():
     return int(time.time())
 
 
-def _add_processing_job(client: redis.Redis, _id: str, serialized_job: str):
-    client.set(REDIS_PROCESSING_JOB_PREFIX + _id, serialized_job)
-    client.set(
-        SHADOW_KEY_PREFIX + REDIS_PROCESSING_JOB_PREFIX + _id,
+def _add_new_jobs(rclient: Redis, jobs: list[ClassificationJobFromPublisher]):
+    jobs_json = [job.model_dump_json() for job in jobs]
+    rclient.lpush(REDIS_PENDING_JOBS_QUEUE, *jobs_json)
+
+
+def _take_new_job(rclient: Redis) -> ClassificationJobFromPublisher:
+    job_json = rclient.rpop(REDIS_PENDING_JOBS_QUEUE)
+    if job_json is None:
+        raise ValueError("no job available")
+    return ClassificationJobFromPublisher.model_validate_json(job_json)
+
+
+def _add_processing_job(rclient: Redis, key: str, serialized_job: str):
+    rclient.set(REDIS_PROCESSING_JOB_PREFIX + key, serialized_job)
+    rclient.set(
+        SHADOW_KEY_PREFIX + REDIS_PROCESSING_JOB_PREFIX + key,
         serialized_job,
         ex=PROCESSING_JOB_EXPIRE_TTL_SECONDS,
     )
-    client.incr(REDIS_TOTAL_PROCESSING_JOB)
+    rclient.incr(REDIS_TOTAL_PROCESSING_JOB)
 
 
-def _get_processing_job(_id: str) -> ProcessingJob:
-    processing_job_json = rclient.get(REDIS_PROCESSING_JOB_PREFIX + _id)
+def _get_processing_job(rclient: Redis, key: str) -> ProcessingJob:
+    processing_job_json = rclient.get(REDIS_PROCESSING_JOB_PREFIX + key)
     if processing_job_json is None:
         return ValueError("job expired or not exists")
     return ProcessingJob.model_validate_json(processing_job_json)
 
 
-def _remove_processing_job(client: redis.Redis, _id: str):
-    client.decr(REDIS_TOTAL_PROCESSING_JOB)
-    client.delete(REDIS_PROCESSING_JOB_PREFIX + _id)
-    client.delete(SHADOW_KEY_PREFIX + REDIS_PROCESSING_JOB_PREFIX + _id)
+def _remove_processing_job(rclient: Redis, key: str):
+    rclient.decr(REDIS_TOTAL_PROCESSING_JOB)
+    rclient.delete(REDIS_PROCESSING_JOB_PREFIX + key)
+    rclient.delete(SHADOW_KEY_PREFIX + REDIS_PROCESSING_JOB_PREFIX + key)
 
 
-def _block_worker(worker: str):
+def _save_job_result(mdb: MongoClient, result: ClassificationJobDBResult):
+    to_insert = vars(result)
+    to_insert["_id"] = result.key
+    del to_insert["key"]
+    mdb.jobs.insert_one(to_insert)
+
+
+def _block_worker(rclient: Redis, worker: str):
     rclient.set(BLOCKED_WORKER_PREFIX + worker, 1)
 
 
-def _is_worker_blocked(worker: str) -> bool:
+def _is_worker_blocked(rclient: Redis, worker: str) -> bool:
     return rclient.get(BLOCKED_WORKER_PREFIX + worker) == 1
 
 
-def _should_verify() -> bool:
+def _should_verify(result: ClassificationJobResult = None) -> bool:
     return randrange(0, VERIFICATION_RATIO_BASE) == 1
 
 
-def handle_new_jobs(jobs: list[ClassificationJobFromPublisher]) -> str:
-    jobs_json = [job.model_dump_json() for job in jobs]
-    for job in jobs_json:
-        rclient.lpush(REDIS_PENDING_JOBS_QUEUE, job)
+def _request_verify_job(job: ClassificationJobForWorker):
+    requests.post(VERIFY_JOB_URL, json=job.model_dump_json())
 
 
-def handle_take_job(worker: str) -> ClassificationJobForWorker | None:
-    if _is_worker_blocked(worker):
+def handle_new_jobs(rclient: Redis, jobs: list[ClassificationJobFromPublisher]):
+    _add_new_jobs(rclient, jobs)
+
+
+def handle_take_job(rclient: Redis, worker: str) -> ClassificationJobForWorker | None:
+    if _is_worker_blocked(rclient, worker):
         raise ValueError("worker is blocked")
 
-    job_json = rclient.rpop(REDIS_PENDING_JOBS_QUEUE)
-    if job_json is None:
-        raise ValueError("no job available")
-
-    job = ClassificationJobFromPublisher.model_validate_json(job_json)
+    job = _take_new_job(rclient)
     processing_job = ProcessingJob(
-        _id=job._id,
+        key=job.key,
         publisher=job.publisher,
         created_at=job.created_at,
         worker=worker,
@@ -96,17 +107,19 @@ def handle_take_job(worker: str) -> ClassificationJobForWorker | None:
     )
     _add_processing_job(
         rclient,
-        job._id,
+        job.key,
         processing_job.model_dump_json(),
     )
     return ClassificationJobForWorker(
-        _id=job._id,
+        key=job.key,
         callback_url=FINISH_JOB_CALLBACK_URL,
     )
 
 
-def handle_finish_job(result: ClassificationJobResult):
-    job = _get_processing_job(result._id)
+def handle_finish_job(
+    rclient: Redis, mdb: MongoClient, result: ClassificationJobResult
+):
+    job = _get_processing_job(rclient, result.key)
     # worker mismatch
     if job.worker != result.worker:
         raise ValueError("worker mismatch")
@@ -114,27 +127,28 @@ def handle_finish_job(result: ClassificationJobResult):
     if job.assigned_at < now() - PROCESSING_JOB_EXPIRE_TTL_SECONDS:
         raise ValueError("job expired")
 
-    result = ClassificationJobResult(
-        _id=job._id,
+    jresult = ClassificationJobDBResult(
+        key=job.key,
         publisher=job.publisher,
         created_at=job.created_at,
         worker=job.worker,
         assigned_at=job.assigned_at,
         finished_at=now(),
-        tags=job.tags,
+        tags=result.tags,
     )
-    mdb.jobs.insert_one(vars(result))
-    _remove_processing_job(rclient, job._id)
-    if _should_verify(result):
-        verify_job = ClassificationJobForWorker(
-            _id=job._id,
-            callback_url=VERIFY_JOB_CALLBACK_URL,
+    _save_job_result(mdb, jresult)
+    _remove_processing_job(rclient, job.key)
+    if _should_verify(jresult):
+        _request_verify_job(
+            ClassificationJobForWorker(
+                key=job.key,
+                callback_url=VERIFY_JOB_CALLBACK_URL,
+            )
         )
-        requests.post(VERIFY_JOB_URL, json=verify_job.model_dump_json())
 
 
-def handle_verify_job_result(result: ClassificationJobResult):
-    job = mdb.jobs.find_one({"_id": result._id})
+def handle_verify_job_result(mdb: MongoClient, result: ClassificationJobResult):
+    job = mdb.jobs.find_one({"key": result.key})
     if job is None:
         raise ValueError("Job not found")
 
@@ -142,9 +156,9 @@ def handle_verify_job_result(result: ClassificationJobResult):
         _block_worker(job["worker"])
 
 
-def get_pending_jobs_num():
+def get_pending_jobs_num(rclient: Redis):
     return rclient.llen(REDIS_PENDING_JOBS_QUEUE)
 
 
-def get_processing_jobs_num():
+def get_processing_jobs_num(rclient: Redis):
     return rclient.get(REDIS_TOTAL_PROCESSING_JOB)

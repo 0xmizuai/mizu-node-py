@@ -4,19 +4,19 @@ from pydantic import BaseModel
 
 
 class ClassificationJobForWorker(BaseModel):
-    _id: str
+    key: str
     callback_url: str = None
     debug: bool = False
 
 
 class ClassificationJobResult(BaseModel):
-    _id: str
+    key: str
     worker: str
     tags: list[str]
 
 
 class ClassificationJobFromPublisher(BaseModel):
-    _id: str
+    key: str
     publisher: str
     created_at: int
 

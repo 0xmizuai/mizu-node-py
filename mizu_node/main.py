@@ -1,8 +1,10 @@
 import uvicorn
 from fastapi import FastAPI
-
+from pymongo import MongoClient
+import redis
 
 from mizu_node import error_handler
+from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, REDIS_URL
 from mizu_node.job_handler import (
     ClassificationJobFromPublisher,
     ClassificationJobResult,
@@ -14,7 +16,10 @@ from mizu_node.job_handler import (
     get_processing_jobs_num,
 )
 
+
 app = FastAPI()
+rclient = redis.Redis(REDIS_URL)
+mdb = MongoClient(MONGO_URL)[MONGO_DB_NAME]
 
 
 def get_user() -> str:
@@ -30,20 +35,20 @@ async def default():
 @app.get("stat/pending_jobs_len")
 @error_handler
 async def pending_jobs_len():
-    return get_pending_jobs_num()
+    return get_pending_jobs_num(rclient)
 
 
 @app.get("stat/assigned_jobs_len")
 @error_handler
 async def assigned_jobs_len():
-    return get_processing_jobs_num()
+    return get_processing_jobs_num(rclient)
 
 
 @app.get("take_job")
 @error_handler
 async def take_job():
     # TODO: add rate limit and cool down
-    job = handle_take_job(get_user())
+    job = handle_take_job(rclient, get_user())
     return {"job": job.model_dump_json()}
 
 
@@ -51,7 +56,7 @@ async def take_job():
 @error_handler
 async def add_job(jobs: list[ClassificationJobFromPublisher]):
     # TODO: ensure it's called from whitelisted publisher
-    handle_new_jobs(jobs)
+    handle_new_jobs(rclient, jobs)
     return {"status": "ok"}
 
 
@@ -59,7 +64,7 @@ async def add_job(jobs: list[ClassificationJobFromPublisher]):
 @error_handler
 async def finish_job(job: ClassificationJobResult):
     job.worker = get_user()
-    handle_finish_job(job)
+    handle_finish_job(rclient, mdb, job)
     return {"status": "ok"}
 
 
@@ -67,7 +72,7 @@ async def finish_job(job: ClassificationJobResult):
 @error_handler
 async def verify_job(job: ClassificationJobResult):
     # TODO: ensure it's called from validator
-    handle_verify_job_result(job)
+    handle_verify_job_result(mdb, job)
     return {"status": "ok"}
 
 

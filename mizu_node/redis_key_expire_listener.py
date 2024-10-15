@@ -7,7 +7,10 @@ from mizu_node.constants import (
     SHADOW_KEY_PREFIX,
 )
 from mizu_node.types import ClassificationJobFromPublisher, ProcessingJob
-from mizu_node.job_handler import _remove_processing_job, retry_expired_job
+from mizu_node.job_handler import (
+    _add_new_jobs,
+    _remove_processing_job,
+)
 
 
 def retry_expired_job(job: ProcessingJob):
@@ -16,7 +19,7 @@ def retry_expired_job(job: ProcessingJob):
         publisher=job.publisher,
         created_at=job.created_at,
     )
-    redis.lpush(REDIS_PENDING_JOBS_QUEUE, job.model_dump_json())
+    _add_new_jobs(rclient, [job])
     _remove_processing_job(rclient, job._id)
 
 
