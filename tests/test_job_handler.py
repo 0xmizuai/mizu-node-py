@@ -1,3 +1,4 @@
+import time
 from unittest.mock import patch
 import pytest
 
@@ -7,6 +8,7 @@ from mizu_node.constants import (
     VERIFY_JOB_CALLBACK_URL,
 )
 from mizu_node.types import (
+    ClassificationJobDBResult,
     ClassificationJobForWorker,
     ProcessingJob,
     ClassificationJobFromPublisher,
@@ -163,3 +165,55 @@ def test_finish_job_error():
     with pytest.raises(ValueError) as e2:
         job_handler.handle_finish_job(rclient, mdb, r2)
     assert e2.match("job expired")
+
+
+def test_verify_job_pass():
+    rclient = RedisMock()
+    mdb = MongoMock()
+
+    jresult = ClassificationJobDBResult(
+        key="1",
+        publisher="p1",
+        created_at=job_handler.now() - 6000,
+        worker="worker1",
+        assigned_at=job_handler.now() - 4800,
+        finished_at=job_handler.now() - 3600,
+        tags=["t1", "t2"],
+    )
+    job_handler._save_job_result(mdb, jresult)
+    assert not job_handler._is_worker_blocked(rclient, "worker1")
+
+    result = ClassificationJobResult(key="1", worker="validator", tags=["t2", "t1"])
+    job_handler.handle_verify_job_result(rclient, mdb, result)
+    assert not job_handler._is_worker_blocked(rclient, "worker1")
+
+
+def test_verify_job_blocked():
+    rclient = RedisMock()
+    mdb = MongoMock()
+
+    jresult = ClassificationJobDBResult(
+        key="1",
+        publisher="p1",
+        created_at=job_handler.now() - 6000,
+        worker="worker1",
+        assigned_at=job_handler.now() - 4800,
+        finished_at=job_handler.now() - 3600,
+        tags=["t1", "t2"],
+    )
+    job_handler._save_job_result(mdb, jresult)
+    assert not job_handler._is_worker_blocked(rclient, "worker1")
+
+    result = ClassificationJobResult(key="1", worker="validator", tags=["t2"])
+    job_handler.handle_verify_job_result(rclient, mdb, result)
+    assert job_handler._is_worker_blocked(rclient, "worker1")
+
+
+def test_verify_job_error():
+    rclient = RedisMock()
+    mdb = MongoMock()
+
+    result = ClassificationJobResult(key="1", worker="validator", tags=["t2"])
+    with pytest.raises(ValueError) as e:
+        job_handler.handle_verify_job_result(rclient, mdb, result)
+    assert e.match("invalid job")

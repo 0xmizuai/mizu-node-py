@@ -42,3 +42,6 @@ class RedisMock:
             del self.data[key]
         if key in self.expiry:
             del self.expiry[key]
+
+    def exists(self, key):
+        return key in self.data

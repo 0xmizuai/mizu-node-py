@@ -1,3 +1,4 @@
+import json
 from random import randrange
 import time
 
@@ -74,11 +75,14 @@ def _save_job_result(mdb: MongoClient, result: ClassificationJobDBResult):
 
 
 def _block_worker(rclient: Redis, worker: str):
-    rclient.set(BLOCKED_WORKER_PREFIX + worker, 1)
+    rclient.set(
+        BLOCKED_WORKER_PREFIX + worker,
+        json.dumps({"blocked": True, "updated_at": now()}),
+    )
 
 
 def _is_worker_blocked(rclient: Redis, worker: str) -> bool:
-    return rclient.get(BLOCKED_WORKER_PREFIX + worker) == 1
+    return rclient.exists(BLOCKED_WORKER_PREFIX + worker)
 
 
 def _should_verify(result: ClassificationJobResult = None) -> bool:
@@ -147,13 +151,15 @@ def handle_finish_job(
         )
 
 
-def handle_verify_job_result(mdb: MongoClient, result: ClassificationJobResult):
-    job = mdb.jobs.find_one({"key": result.key})
+def handle_verify_job_result(
+    rclient: Redis, mdb: MongoClient, result: ClassificationJobResult
+):
+    job = mdb.jobs.find_one({"_id": result.key})
     if job is None:
-        raise ValueError("Job not found")
+        raise ValueError("invalid job")
 
     if len(result.tags) != len(job["tags"]) or set(result.tags) != set(job["tags"]):
-        _block_worker(job["worker"])
+        _block_worker(rclient, job["worker"])
 
 
 def get_pending_jobs_num(rclient: Redis):
