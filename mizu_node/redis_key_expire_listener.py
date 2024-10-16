@@ -12,6 +12,11 @@ from mizu_node.job_handler import (
 )
 
 
+# Creating Redis and pubsub Connection
+rclient = redis.Redis(REDIS_URL)
+pubsub = rclient.pubsub()
+
+
 def retry_expired_job(job: ProcessingJob):
     job = ClassificationJobFromPublisher(
         _id=job._id,
@@ -39,11 +44,8 @@ def event_handler(msg):
         pass
 
 
-# Creating Redis and pubsub Connection
-rclient = redis.Redis(REDIS_URL)
-pubsub = rclient.pubsub()
-
-# Set config in config file "notify-keyspace-events Ex"
-# Subscribing to key expire events and whenver we get any notification sending it to event_handler function
-pubsub.psubscribe(**{"__keyevent@0__:expired": event_handler})
-pubsub.run_in_thread(sleep_time=0.01)
+def start_listen():
+    # Set config in config file "notify-keyspace-events Ex"
+    # Subscribing to key expire events and whenver we get any notification sending it to event_handler function
+    pubsub.psubscribe(**{"__keyevent@0__:expired": event_handler})
+    pubsub.run_in_thread()
