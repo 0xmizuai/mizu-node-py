@@ -1,8 +1,15 @@
 import hashlib
 from pydantic import BaseModel
 from enum import Enum
+import uuid
 
 from mizu_node.utils import epoch
+
+
+class VerificationMode(str, Enum):
+    none = "none"
+    always = "always"
+    random = "random"
 
 
 class JobType(str, Enum):
@@ -15,19 +22,15 @@ class PendingJobPayload(BaseModel):
     published_at: int
     job_type: JobType
     input: str  # could be serialized json
+    mocked_output: str | list[str] | None = None
 
 
 class PendingJob(PendingJobPayload):
     job_id: str
 
-    def _gen_job_id(job: PendingJobPayload) -> str:
-        sha = hashlib.sha256()
-        sha.update(job.input + job.publisher + str(job.published_at).encode())
-        return sha.hexdigest()
-
     def from_payload(job: PendingJobPayload):
         return PendingJob(
-            job_id=PendingJob._gen_job_id(job),
+            job_id=str(uuid.uuid4()),
             publisher=job.publisher,
             published_at=job.published_at,
             job_type=job.job_type,
@@ -72,15 +75,15 @@ class FinishedJob(AssignedJob):
 # worker related
 
 
-class WorkerJob(PendingJob):
+class WorkerJob(BaseModel):
+    job_id: str
+    job_type: JobType
+    input: str
     callback_url: str = None
-    debug: bool = False
 
     def from_pending_job(job: PendingJob, callback_url: str):
         return WorkerJob(
             job_id=job.job_id,
-            publisher=job.publisher,
-            published_at=job.published_at,
             job_type=job.job_type,
             input=job.input,
             callback_url=callback_url,
@@ -90,4 +93,4 @@ class WorkerJob(PendingJob):
 class WorkerJobResult(BaseModel):
     job_id: str
     output: str | list[str]  # serialized json
-    worker: str
+    worker: str = None

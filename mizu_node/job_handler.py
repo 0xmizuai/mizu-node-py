@@ -7,51 +7,71 @@ from redis import Redis
 
 from mizu_node.constants import (
     FINISH_JOB_CALLBACK_URL,
+    VERIFICATION_MODE,
     VERIFY_JOB_URL,
     VERIFY_JOB_CALLBACK_URL,
     ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
     REDIS_PENDING_JOBS_QUEUE,
-    REDIS_TOTAL_ASSIGNED_JOB,
+    REDIS_TOTAL_ASSIGNED_JOBS,
+    REDIS_TOTAL_PENDING_JOBS,
     REDIS_ASSIGNED_JOB_PREFIX,
     SHADOW_KEY_PREFIX,
     BLOCKED_WORKER_PREFIX,
     VERIFICATION_RATIO_BASE,
 )
 from mizu_node.types import (
+    JobType,
     PendingJob,
     AssignedJob,
     FinishedJob,
+    PendingJobPayload,
+    VerificationMode,
     WorkerJob,
     WorkerJobResult,
 )
 from mizu_node.utils import epoch
 
 
+VALID_JOB_TYPES = [JobType.classification, JobType.pow]
+
+
+def _gen_pending_job_key(jtype: JobType) -> str:
+    return REDIS_PENDING_JOBS_QUEUE + ":" + jtype
+
+
 def _add_new_jobs(rclient: Redis, jobs: list[PendingJob]):
-    jobs_json = [job.model_dump_json() for job in jobs]
-    rclient.lpush(REDIS_PENDING_JOBS_QUEUE, *jobs_json)
+    for jtype in VALID_JOB_TYPES:
+        jobs_json = [job.model_dump_json() for job in jobs if job.job_type == jtype]
+        rclient.lpush(_gen_pending_job_key(jtype), *jobs_json)
+    rclient.incrby(REDIS_TOTAL_PENDING_JOBS, len(jobs))
 
 
-def _take_new_job(rclient: Redis) -> PendingJob:
-    job_json = rclient.rpop(REDIS_PENDING_JOBS_QUEUE)
-    if job_json is None:
-        raise ValueError("no job available")
-    return PendingJob.model_validate_json(job_json)
+def _take_new_job(rclient: Redis, job_types: list[JobType]) -> PendingJob:
+    for jtype in job_types or VALID_JOB_TYPES:
+        if rclient.llen(_gen_pending_job_key(jtype)) > 0:
+            job_json = rclient.rpop(_gen_pending_job_key(jtype))
+            if job_json is not None:
+                rclient.decr(REDIS_TOTAL_PENDING_JOBS)
+                return PendingJob.model_validate_json(job_json)
+    raise ValueError("no job available")
 
 
 def _gen_assigned_job_key(job_id: str) -> str:
     return REDIS_ASSIGNED_JOB_PREFIX + job_id
 
 
-def _add_assigned_job(rclient: Redis, job_id: str, serialized_job: str):
-    key = _gen_assigned_job_key(job_id)
-    rclient.set(key, serialized_job)
+def _add_assigned_job(rclient: Redis, job: AssignedJob):
+    key = _gen_assigned_job_key(job.job_id)
+    rclient.set(key, job.model_dump_json())
+    # when key expires event is triggered, the value will be gone
+    # so we use the shadow key to triggrer the event, while use
+    # the real key to get the value
     rclient.set(
         SHADOW_KEY_PREFIX + key,
-        job_id,
+        job.job_id,
         ex=ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
     )
-    rclient.incr(REDIS_TOTAL_ASSIGNED_JOB)
+    rclient.incr(REDIS_TOTAL_ASSIGNED_JOBS)
 
 
 def _get_assigned_job(rclient: Redis, job_id: str) -> AssignedJob:
@@ -62,9 +82,10 @@ def _get_assigned_job(rclient: Redis, job_id: str) -> AssignedJob:
 
 
 def _remove_assigned_job(rclient: Redis, job_id: str):
-    rclient.decr(REDIS_TOTAL_ASSIGNED_JOB)
-    rclient.delete(REDIS_ASSIGNED_JOB_PREFIX + job_id)
-    rclient.delete(SHADOW_KEY_PREFIX + REDIS_ASSIGNED_JOB_PREFIX + job_id)
+    key = _gen_assigned_job_key(job_id)
+    rclient.decr(REDIS_TOTAL_ASSIGNED_JOBS)
+    rclient.delete(key)
+    rclient.delete(SHADOW_KEY_PREFIX + key)
 
 
 def _save_finished_job(mdb: MongoClient, result: FinishedJob):
@@ -85,28 +106,35 @@ def _is_worker_blocked(rclient: Redis, worker: str) -> bool:
 
 
 def _should_verify(result: WorkerJobResult = None) -> bool:
-    return randrange(0, VERIFICATION_RATIO_BASE) == 1
+    if VERIFICATION_MODE == VerificationMode.always:
+        return True
+    elif VERIFICATION_MODE == VerificationMode.random:
+        return randrange(0, VERIFICATION_RATIO_BASE) == 1
+    elif VERIFICATION_MODE == VerificationMode.none:
+        return False
+    else:
+        raise ValueError("invalid verification mode")
 
 
 def _request_verify_job(job: WorkerJob):
     requests.post(VERIFY_JOB_URL, json=job.model_dump_json())
 
 
-def handle_publish_jobs(rclient: Redis, jobs: list[PendingJob]):
-    _add_new_jobs(rclient, jobs)
+def handle_publish_jobs(rclient: Redis, jobs: list[PendingJobPayload]) -> list[str]:
+    pendings = [PendingJob.from_payload(job) for job in jobs]
+    _add_new_jobs(rclient, pendings)
+    return [job.job_id for job in pendings]
 
 
-def handle_take_job(rclient: Redis, worker: str) -> WorkerJob | None:
+def handle_take_job(
+    rclient: Redis, worker: str, job_types: list[JobType] = []
+) -> WorkerJob | None:
     if _is_worker_blocked(rclient, worker):
         raise ValueError("worker is blocked")
 
-    pending = _take_new_job(rclient)
+    pending = _take_new_job(rclient, job_types)
     assigned = AssignedJob.from_pending_job(pending, worker)
-    _add_assigned_job(
-        rclient,
-        pending.input,
-        assigned.model_dump_json(),
-    )
+    _add_assigned_job(rclient, assigned)
     return WorkerJob.from_pending_job(pending, FINISH_JOB_CALLBACK_URL)
 
 
@@ -139,9 +167,11 @@ def handle_verify_job_result(rclient: Redis, mdb: MongoClient, result: WorkerJob
         _block_worker(rclient, job["worker"])
 
 
-def get_pending_jobs_num(rclient: Redis) -> int:
-    return rclient.llen(REDIS_PENDING_JOBS_QUEUE)
+def get_pending_jobs_num(rclient: Redis, job_type: JobType = None) -> int:
+    if job_type is not None:
+        return rclient.llen(_gen_pending_job_key(job_type))
+    return rclient.get(REDIS_TOTAL_PENDING_JOBS) or 0
 
 
 def get_assigned_jobs_num(rclient: Redis) -> int:
-    return rclient.get(REDIS_TOTAL_ASSIGNED_JOB) or 0
+    return rclient.get(REDIS_TOTAL_ASSIGNED_JOBS) or 0

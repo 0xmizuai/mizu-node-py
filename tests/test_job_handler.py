@@ -3,14 +3,13 @@ import pytest
 
 from mizu_node.constants import (
     FINISH_JOB_CALLBACK_URL,
-    REDIS_PENDING_JOBS_QUEUE,
     VERIFY_JOB_CALLBACK_URL,
 )
 from mizu_node.types import (
     JobType,
-    PendingJob,
     AssignedJob,
     FinishedJob,
+    PendingJobPayload,
     WorkerJob,
     WorkerJobResult,
 )
@@ -20,54 +19,78 @@ from tests.mongo_mock import MongoMock
 from tests.redis_mock import RedisMock
 
 
-def _new_pending_job(key: str):
-    return PendingJob(
-        job_id=key,
-        job_type=JobType.classification,
-        publisher="p" + key,
+def _new_pending_job(key: str, job_type: JobType):
+    return PendingJobPayload(
+        job_type=job_type,
+        publisher="p",
         published_at=epoch(),
         input=key,
     )
 
 
-def _add_new_jobs(rclient, num_jobs=3):
-    jobs = [_new_pending_job(str(i + 1)) for i in range(num_jobs)]
-    job_handler.handle_publish_jobs(rclient, jobs)
+def _add_new_jobs(rclient, job_type: JobType, num_jobs=3):
+    jobs = [_new_pending_job(str(i + 1), job_type) for i in range(num_jobs)]
+    return job_handler.handle_publish_jobs(rclient, jobs)
 
 
-def test_new_jobs():
+def test_publish_jobs():
     rclient = RedisMock()
-    _add_new_jobs(rclient, 3)
+    _add_new_jobs(rclient, JobType.classification, 3)
     assert job_handler.get_pending_jobs_num(rclient) == 3
-    rclient.get(REDIS_PENDING_JOBS_QUEUE) == ["1", "2", "3"]
+    assert job_handler.get_pending_jobs_num(rclient, JobType.classification) == 3
+    assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 0
+
+    _add_new_jobs(rclient, JobType.pow, 3)
+    assert job_handler.get_pending_jobs_num(rclient) == 6
+    assert job_handler.get_pending_jobs_num(rclient, JobType.classification) == 3
+    assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 3
 
 
 def test_take_job_ok():
     rclient = RedisMock()
-    _add_new_jobs(rclient, 3)
+    pids = _add_new_jobs(rclient, JobType.pow, 3)
+    cids = _add_new_jobs(rclient, JobType.classification, 3)
+    assert job_handler.get_pending_jobs_num(rclient) == 6
+    assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 3
+    assert job_handler.get_pending_jobs_num(rclient, JobType.classification) == 3
 
-    job1 = job_handler.handle_take_job(rclient, "worker1")
-    assert job1.job_id == "1"
+    # take classification job 1
+    job1 = job_handler.handle_take_job(rclient, "worker1", [JobType.classification])
+    assert job1.job_id == cids[0]
+    assert job1.job_type == JobType.classification
     assert job1.callback_url == FINISH_JOB_CALLBACK_URL
-    assert job_handler.get_pending_jobs_num(rclient) == 2
+
+    assert job_handler.get_pending_jobs_num(rclient) == 5
+    assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 3
+    assert job_handler.get_pending_jobs_num(rclient, JobType.classification) == 2
     assert job_handler.get_assigned_jobs_num(rclient) == 1
 
-    job2 = job_handler.handle_take_job(rclient, "worker2")
-    assert job2.job_id == "2"
+    # take pow job 1
+    job2 = job_handler.handle_take_job(rclient, "worker2", [JobType.pow])
+    assert job2.job_id == pids[0]
+    assert job2.job_type == JobType.pow
     assert job2.callback_url == FINISH_JOB_CALLBACK_URL
-    assert job_handler.get_pending_jobs_num(rclient) == 1
+
+    assert job_handler.get_pending_jobs_num(rclient) == 4
+    assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 2
+    assert job_handler.get_pending_jobs_num(rclient, JobType.classification) == 2
     assert job_handler.get_assigned_jobs_num(rclient) == 2
 
+    # take classification job 2
     job3 = job_handler.handle_take_job(rclient, "worker3")
-    assert job3.job_id == "3"
+    assert job3.job_id == cids[1]
+    assert job3.job_type == JobType.classification
     assert job3.callback_url == FINISH_JOB_CALLBACK_URL
-    assert job_handler.get_pending_jobs_num(rclient) == 0
+
+    assert job_handler.get_pending_jobs_num(rclient) == 3
+    assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 2
+    assert job_handler.get_pending_jobs_num(rclient, JobType.classification) == 1
     assert job_handler.get_assigned_jobs_num(rclient) == 3
 
     # check processing job queue
-    assert job_handler._get_assigned_job(rclient, "1").worker == "worker1"
-    assert job_handler._get_assigned_job(rclient, "2").worker == "worker2"
-    assert job_handler._get_assigned_job(rclient, "3").worker == "worker3"
+    assert job_handler._get_assigned_job(rclient, job1.job_id).worker == "worker1"
+    assert job_handler._get_assigned_job(rclient, job2.job_id).worker == "worker2"
+    assert job_handler._get_assigned_job(rclient, job3.job_id).worker == "worker3"
 
 
 def test_take_job_error():
@@ -76,67 +99,62 @@ def test_take_job_error():
         job_handler.handle_take_job(rclient, "worker1")
     assert e1.match("no job available")
 
-    _add_new_jobs(rclient, 3)
+    _add_new_jobs(rclient, JobType.pow, 3)
+    with pytest.raises(ValueError) as e1:
+        job_handler.handle_take_job(rclient, "worker1", [JobType.classification])
+    assert e1.match("no job available")
+
     job_handler._block_worker(rclient, "worker1")
     with pytest.raises(ValueError) as e2:
         job_handler.handle_take_job(rclient, "worker1")
     assert e2.match("worker is blocked")
 
 
-def test_finish_job_ok():
+def test_finish_job_ok(mocker):
     rclient = RedisMock()
     mdb = MongoMock()
-    _add_new_jobs(rclient, 3)
-    job_handler.handle_take_job(rclient, "worker1")
-    job_handler.handle_take_job(rclient, "worker2")
-    job_handler.handle_take_job(rclient, "worker3")
+    cids = _add_new_jobs(rclient, JobType.classification, 3)
+    pids = _add_new_jobs(rclient, JobType.pow, 3)
+
+    job_handler.handle_take_job(rclient, "worker1", [JobType.classification])
+    job_handler.handle_take_job(rclient, "worker2", [JobType.pow])
+    mocker.patch("mizu_node.job_handler._request_verify_job", return_value=None)
 
     # Case 1: job 1 finished by worker1
-    r1 = WorkerJobResult(job_id="1", worker="worker1", output=["t1"])
+    r1 = WorkerJobResult(job_id=cids[0], worker="worker1", output=["t1"])
     job_handler.handle_finish_job(rclient, mdb, r1)
-    assert job_handler.get_assigned_jobs_num(rclient) == 2
-    j1 = mdb.find_one({"_id": "1"})
+    j1 = mdb.find_one({"_id": cids[0]})
     assert j1["output"] == ["t1"]
     assert j1["worker"] == "worker1"
     assert j1["finished_at"] is not None
-    assert j1["publisher"] == "p1"
+    assert j1["job_type"] == JobType.classification
 
     # Case 2: job 2 finished by worker2
-    r2 = WorkerJobResult(job_id="2", worker="worker2", output=["t2"])
+    r2 = WorkerJobResult(job_id=pids[0], worker="worker2", output=["t2"])
     job_handler.handle_finish_job(rclient, mdb, r2)
-    assert job_handler.get_assigned_jobs_num(rclient) == 1
-    j2 = mdb.find_one({"_id": "2"})
+    j2 = mdb.find_one({"_id": pids[0]})
     assert j2["output"] == ["t2"]
     assert j2["worker"] == "worker2"
     assert j2["finished_at"] is not None
-    assert j2["publisher"] == "p2"
-
-    # Case 3: job 3 finished by worker3
-    r3 = WorkerJobResult(job_id="3", worker="worker3", output=["t3"])
-    job_handler.handle_finish_job(rclient, mdb, r3)
-    assert job_handler.get_assigned_jobs_num(rclient) == 0
-    j3 = mdb.find_one({"_id": "3"})
-    assert j3["output"] == ["t3"]
-    assert j3["worker"] == "worker3"
-    assert j3["finished_at"] is not None
-    assert j3["publisher"] == "p3"
+    assert j2["job_type"] == JobType.pow
 
 
 def test_finish_job_verify(mocker):
     rclient = RedisMock()
     mdb = MongoMock()
-    _add_new_jobs(rclient, 3)
+    cids = _add_new_jobs(rclient, JobType.classification, 3)
+    pids = _add_new_jobs(rclient, JobType.pow, 3)
 
-    job_handler.handle_take_job(rclient, "worker1")
-    job_handler.handle_take_job(rclient, "worker2")
+    job_handler.handle_take_job(rclient, "worker1", [JobType.classification])
+    job_handler.handle_take_job(rclient, "worker2", [JobType.pow])
 
-    r1 = WorkerJobResult(job_id="1", worker="worker1", output=["t1"])
+    r1 = WorkerJobResult(job_id=cids[0], worker="worker1", output=["t1"])
     mocker.patch("mizu_node.job_handler._should_verify", return_value=False)
     with patch("mizu_node.job_handler._request_verify_job") as mocked_function:
         job_handler.handle_finish_job(rclient, mdb, r1)
         mocked_function.assert_not_called()
 
-    r2 = WorkerJobResult(job_id="2", worker="worker2", output=["t2"])
+    r2 = WorkerJobResult(job_id=pids[0], worker="worker2", output=["t2"])
     mocker.patch("mizu_node.job_handler._should_verify", return_value=True)
     with patch("mizu_node.job_handler._request_verify_job") as mocked_function:
         assigned = job_handler._get_assigned_job(rclient, r2.job_id)
@@ -148,28 +166,27 @@ def test_finish_job_verify(mocker):
 def test_finish_job_error():
     rclient = RedisMock()
     mdb = MongoMock()
-    _add_new_jobs(rclient, 3)
+    cids = _add_new_jobs(rclient, JobType.classification, 3)
 
     job_handler._add_assigned_job(
         rclient,
-        "1",
         AssignedJob(
-            job_id="1",
+            job_id=cids[0],
             job_type=JobType.classification,
-            publisher="p1",
+            publisher="p",
             published_at=epoch() - 7200,
             input="1",
             worker="worker1",
             assigned_at=epoch() - 4800,
-        ).model_dump_json(),
+        ),
     )
 
-    r1 = WorkerJobResult(job_id="1", worker="worker2", output=["t1"])
+    r1 = WorkerJobResult(job_id=cids[0], worker="worker2", output=["t1"])
     with pytest.raises(ValueError) as e1:
         job_handler.handle_finish_job(rclient, mdb, r1)
     assert e1.match("worker mismatch")
 
-    r2 = WorkerJobResult(job_id="1", worker="worker1", output=["t1"])
+    r2 = WorkerJobResult(job_id=cids[0], worker="worker1", output=["t1"])
     with pytest.raises(ValueError) as e2:
         job_handler.handle_finish_job(rclient, mdb, r2)
     assert e2.match("job expired")

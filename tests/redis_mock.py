@@ -31,6 +31,20 @@ class RedisMock:
         if key not in self.data:
             self.data[key] = 0
         self.data[key] -= 1
+        if self.data[key] < 0:
+            self.data[key] = 0
+
+    def incrby(self, key, value):
+        if key not in self.data:
+            self.data[key] = 0
+        self.data[key] += value
+
+    def decrby(self, key, value):
+        if key not in self.data:
+            self.data[key] = 0
+        self.data[key] -= value
+        if self.data[key] < 0:
+            self.data[key] = 0
 
     def llen(self, key):
         if key not in self.data:
