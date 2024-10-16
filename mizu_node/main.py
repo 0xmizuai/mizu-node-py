@@ -7,9 +7,8 @@ from mizu_node.error_handler import error_handler
 from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, REDIS_URL
 from mizu_node.job_handler import (
     WorkerJobResult,
-    build_pending_job,
     handle_take_job,
-    handle_new_jobs,
+    handle_publish_jobs,
     handle_finish_job,
     handle_verify_job_result,
     get_pending_jobs_num,
@@ -64,7 +63,7 @@ async def take_job():
 async def publish_jobs(jobs: list[PendingJobPayload]):
     # TODO: ensure it's called from whitelisted publisher
     pendings = [PendingJob.from_payload(job) for job in jobs]
-    handle_new_jobs(rclient, pendings)
+    handle_publish_jobs(rclient, pendings)
     return {"ids": [p.job_id for p in pendings]}
 
 

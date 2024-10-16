@@ -4,8 +4,6 @@ from enum import Enum
 
 from mizu_node.utils import epoch
 
-# All following _id should be the hash of the data to classify
-
 
 class JobType(str, Enum):
     pow = "pow"
@@ -16,7 +14,7 @@ class PendingJobPayload(BaseModel):
     publisher: str
     published_at: int
     job_type: JobType
-    input: str  # serialized json
+    input: str  # could be serialized json
 
 
 class PendingJob(PendingJobPayload):
@@ -55,7 +53,7 @@ class AssignedJob(PendingJob):
 
 class FinishedJob(AssignedJob):
     finished_at: int
-    output: str | list[str]  # serialized json
+    output: str | list[str]  # could be serialized json
 
     def from_assigned_job(job: AssignedJob, output: str | list[str]):
         return FinishedJob(

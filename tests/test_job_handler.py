@@ -32,7 +32,7 @@ def _new_pending_job(key: str):
 
 def _add_new_jobs(rclient, num_jobs=3):
     jobs = [_new_pending_job(str(i + 1)) for i in range(num_jobs)]
-    job_handler.handle_new_jobs(rclient, jobs)
+    job_handler.handle_publish_jobs(rclient, jobs)
 
 
 def test_new_jobs():

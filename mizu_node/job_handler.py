@@ -92,7 +92,7 @@ def _request_verify_job(job: WorkerJob):
     requests.post(VERIFY_JOB_URL, json=job.model_dump_json())
 
 
-def handle_new_jobs(rclient: Redis, jobs: list[PendingJob]):
+def handle_publish_jobs(rclient: Redis, jobs: list[PendingJob]):
     _add_new_jobs(rclient, jobs)
 
 
