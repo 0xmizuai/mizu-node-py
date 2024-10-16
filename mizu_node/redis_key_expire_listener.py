@@ -4,7 +4,7 @@ from mizu_node.constants import (
     REDIS_ASSIGNED_JOB_PREFIX,
     SHADOW_KEY_PREFIX,
 )
-from mizu_node.types import PendingJob, AssignedJob
+from mizu_node.types import AssignedJob
 from mizu_node.job_handler import (
     _add_new_jobs,
     _remove_assigned_job,
