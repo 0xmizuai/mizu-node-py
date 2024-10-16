@@ -1,3 +1,4 @@
+import hashlib
 from pydantic import BaseModel
 from enum import Enum
 
@@ -11,12 +12,29 @@ class JobType(str, Enum):
     classification = "classification"
 
 
-class PendingJob(BaseModel):
-    job_id: str
+class PendingJobPayload(BaseModel):
     publisher: str
     published_at: int
     job_type: JobType
     input: str  # serialized json
+
+
+class PendingJob(PendingJobPayload):
+    job_id: str
+
+    def _gen_job_id(job: PendingJobPayload) -> str:
+        sha = hashlib.sha256()
+        sha.update(job.input + job.publisher + str(job.published_at).encode())
+        return sha.hexdigest()
+
+    def from_payload(job: PendingJobPayload):
+        return PendingJob(
+            job_id=PendingJob._gen_job_id(job),
+            publisher=job.publisher,
+            published_at=job.published_at,
+            job_type=job.job_type,
+            input=job.input,
+        )
 
 
 class AssignedJob(PendingJob):
