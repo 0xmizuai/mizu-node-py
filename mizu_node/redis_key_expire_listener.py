@@ -1,15 +1,14 @@
 import redis
 
 from mizu_node.constants import (
-    REDIS_PENDING_JOBS_QUEUE,
-    REDIS_PROCESSING_JOB_PREFIX,
+    REDIS_ASSIGNED_JOB_PREFIX,
     REDIS_URL,
     SHADOW_KEY_PREFIX,
 )
 from mizu_node.types import ClassificationJobFromPublisher, ProcessingJob
 from mizu_node.job_handler import (
     _add_new_jobs,
-    _remove_processing_job,
+    _remove_assigned_job,
 )
 
 
@@ -20,7 +19,7 @@ def retry_expired_job(job: ProcessingJob):
         created_at=job.created_at,
     )
     _add_new_jobs(rclient, [job])
-    _remove_processing_job(rclient, job._id)
+    _remove_assigned_job(rclient, job._id)
 
 
 # Whenever key expire notification comes this function get's executed
@@ -32,7 +31,7 @@ def event_handler(msg):
             # To get original key we are removing the shadowKey prefix
             key = key.replace(SHADOW_KEY_PREFIX, "")
             value = rclient.get(key)
-            if REDIS_PROCESSING_JOB_PREFIX in key:
+            if REDIS_ASSIGNED_JOB_PREFIX in key:
                 retry_expired_job(ProcessingJob.model_validate_json(value))
             # Once we got to know the value we remove it from Redis and do whatever required
             rclient.delete(key)
