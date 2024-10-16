@@ -1,11 +1,11 @@
 import os
 
-# redis for pending/processing jobs
+# redis for pending/assigned jobs
 REDIS_PENDING_JOBS_QUEUE = "queue:pending_jobs"
-REDIS_PROCESSING_JOB_PREFIX = "processing_job:"
-REDIS_TOTAL_PROCESSING_JOB = "total_processing_jobs"
+REDIS_ASSIGNED_JOB_PREFIX = "assigned_job:"
+REDIS_TOTAL_ASSIGNED_JOB = "total_assigned_jobs"
 REDIS_URL = os.environ["REDIS_URL"]
-PROCESSING_JOB_EXPIRE_TTL_SECONDS = 3600
+ASSIGNED_JOB_EXPIRE_TTL_SECONDS = 3600
 
 SHADOW_KEY_PREFIX = "shadow_key:"
 BLOCKED_WORKER_PREFIX = "blocked_worker:"

@@ -6,14 +6,14 @@ import redis
 from mizu_node.error_handler import error_handler
 from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, REDIS_URL
 from mizu_node.job_handler import (
-    ClassificationJobFromPublisher,
-    ClassificationJobResult,
+    PendingJob,
+    WorkerJobResult,
     handle_take_job,
     handle_new_jobs,
     handle_finish_job,
     handle_verify_job_result,
     get_pending_jobs_num,
-    get_processing_jobs_num,
+    get_assigned_jobs_num,
 )
 
 
@@ -41,7 +41,7 @@ async def pending_jobs_len():
 @app.get("stat/assigned_jobs_len")
 @error_handler
 async def assigned_jobs_len():
-    return get_processing_jobs_num(rclient)
+    return get_assigned_jobs_num(rclient)
 
 
 @app.get("take_job")
@@ -54,7 +54,7 @@ async def take_job():
 
 @app.post("add_job")
 @error_handler
-async def add_job(jobs: list[ClassificationJobFromPublisher]):
+async def add_job(jobs: list[PendingJob]):
     # TODO: ensure it's called from whitelisted publisher
     handle_new_jobs(rclient, jobs)
     return {"status": "ok"}
@@ -62,7 +62,7 @@ async def add_job(jobs: list[ClassificationJobFromPublisher]):
 
 @app.post("finish_job")
 @error_handler
-async def finish_job(job: ClassificationJobResult):
+async def finish_job(job: WorkerJobResult):
     job.worker = get_user()
     handle_finish_job(rclient, mdb, job)
     return {"status": "ok"}
@@ -70,7 +70,7 @@ async def finish_job(job: ClassificationJobResult):
 
 @app.post("verify_job_callback")
 @error_handler
-async def verify_job(job: ClassificationJobResult):
+async def verify_job(job: WorkerJobResult):
     # TODO: ensure it's called from validator
     handle_verify_job_result(mdb, job)
     return {"status": "ok"}

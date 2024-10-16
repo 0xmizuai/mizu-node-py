@@ -1,31 +1,77 @@
 from pydantic import BaseModel
+from enum import Enum
+
+from mizu_node.utils import epoch
 
 # All following _id should be the hash of the data to classify
 
 
-class ClassificationJobForWorker(BaseModel):
-    key: str
-    callback_url: str = None
-    debug: bool = False
+class JobType(str, Enum):
+    pow = "pow"
+    classification = "classification"
 
 
-class ClassificationJobResult(BaseModel):
-    key: str
-    worker: str
-    tags: list[str]
-
-
-class ClassificationJobFromPublisher(BaseModel):
-    key: str
+class PendingJob(BaseModel):
+    job_id: str
     publisher: str
-    created_at: int
+    published_at: int
+    job_type: JobType
+    input: str  # serialized json
 
 
-class ProcessingJob(ClassificationJobFromPublisher):
+class AssignedJob(PendingJob):
     worker: str
     assigned_at: int
 
+    def from_pending_job(job: PendingJob, worker: str):
+        return AssignedJob(
+            job_id=job.job_id,
+            publisher=job.publisher,
+            published_at=job.published_at,
+            job_type=job.job_type,
+            input=job.input,
+            worker=worker,
+            assigned_at=epoch(),
+        )
 
-class ClassificationJobDBResult(ProcessingJob):
+
+class FinishedJob(AssignedJob):
     finished_at: int
-    tags: list[str]
+    output: str | list[str]  # serialized json
+
+    def from_assigned_job(job: AssignedJob, output: str | list[str]):
+        return FinishedJob(
+            job_id=job.job_id,
+            publisher=job.publisher,
+            published_at=job.published_at,
+            job_type=job.job_type,
+            input=job.input,
+            worker=job.worker,
+            assigned_at=job.assigned_at,
+            finished_at=epoch(),
+            output=output,
+        )
+
+
+# worker related
+
+
+class WorkerJob(PendingJob):
+    callback_url: str = None
+    debug: bool = False
+
+    def from_pending_job(job: PendingJob, callback_url: str):
+        return WorkerJob(
+            job_id=job.job_id,
+            publisher=job.publisher,
+            published_at=job.published_at,
+            job_type=job.job_type,
+            input=job.input,
+            callback_url=callback_url,
+        )
+
+
+class WorkerJobResult(BaseModel):
+    job_id: str
+    output: str | list[str]  # serialized json
+    worker: str
