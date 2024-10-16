@@ -15,12 +15,18 @@ from mizu_node.job_handler import (
     get_pending_jobs_num,
     get_assigned_jobs_num,
 )
+from mizu_node.redis_key_expire_listener import event_handler
 
 
 app = FastAPI()
-rclient = redis.Redis(REDIS_URL)
+rclient = redis.Redis.from_url(REDIS_URL)
 mclient = MongoClient(MONGO_URL)
 mdb = mclient[MONGO_DB_NAME]
+
+# start the redis key expiration listener
+pubsub = rclient.pubsub()
+pubsub.psubscribe(**{"__keyevent@0__:expired": event_handler})
+pubsub.run_in_thread(sleep_time=0.01)
 
 
 def get_user() -> str:

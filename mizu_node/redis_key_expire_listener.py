@@ -2,33 +2,17 @@ import redis
 
 from mizu_node.constants import (
     REDIS_ASSIGNED_JOB_PREFIX,
-    REDIS_URL,
     SHADOW_KEY_PREFIX,
 )
-from mizu_node.types import ClassificationJobFromPublisher, ProcessingJob
+from mizu_node.types import PendingJob, AssignedJob
 from mizu_node.job_handler import (
     _add_new_jobs,
     _remove_assigned_job,
 )
 
 
-# Creating Redis and pubsub Connection
-rclient = redis.Redis(REDIS_URL)
-pubsub = rclient.pubsub()
-
-
-def retry_expired_job(job: ProcessingJob):
-    job = ClassificationJobFromPublisher(
-        _id=job._id,
-        publisher=job.publisher,
-        created_at=job.created_at,
-    )
-    _add_new_jobs(rclient, [job])
-    _remove_assigned_job(rclient, job._id)
-
-
 # Whenever key expire notification comes this function get's executed
-def event_handler(msg):
+def event_handler(rclient: redis.Redis, msg):
     try:
         key = msg["data"].decode("utf-8")
         # If shadowKey is there then it means we need to proceed or else just ignore it
@@ -37,15 +21,10 @@ def event_handler(msg):
             key = key.replace(SHADOW_KEY_PREFIX, "")
             value = rclient.get(key)
             if REDIS_ASSIGNED_JOB_PREFIX in key:
-                retry_expired_job(ProcessingJob.model_validate_json(value))
+                assigned = AssignedJob.model_validate_json(value)
+                _add_new_jobs(rclient, [assigned])
+                _remove_assigned_job(rclient, assigned.job_id)
             # Once we got to know the value we remove it from Redis and do whatever required
             rclient.delete(key)
     except Exception as exp:
         pass
-
-
-def start_listen():
-    # Set config in config file "notify-keyspace-events Ex"
-    # Subscribing to key expire events and whenver we get any notification sending it to event_handler function
-    pubsub.psubscribe(**{"__keyevent@0__:expired": event_handler})
-    pubsub.run_in_thread()

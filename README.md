@@ -13,6 +13,11 @@ poetry run pre-commit install
 poetry self add poetry-plugin-dotenv
 ```
 
+Connect to redis and run following command to enable keyspace notification:
+```shell
+config set notify-keyspace-events Ex
+```
+
 ### Run
 
 ```shell
