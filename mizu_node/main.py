@@ -19,7 +19,8 @@ from mizu_node.job_handler import (
 
 app = FastAPI()
 rclient = redis.Redis(REDIS_URL)
-mdb = MongoClient(MONGO_URL)[MONGO_DB_NAME]
+mclient = MongoClient(MONGO_URL)
+mdb = mclient[MONGO_DB_NAME]
 
 
 def get_user() -> str:

@@ -24,10 +24,6 @@ black = "^24.10.0"
 isort = "^5.13.2"
 pytest-mock-resources = "^2.12.1"
 
-[tool.poetry.plugins.dotenv]
-ignore = "false"
-location = ".env.dev"
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
