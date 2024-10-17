@@ -23,6 +23,7 @@ config set notify-keyspace-events Ex
 ```shell
 poetry run dev # for dev
 poetry run start # for prod
+poetry run worker # for worker to verify jobs
 ```
 
 ### Test

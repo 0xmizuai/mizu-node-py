@@ -1,4 +1,3 @@
-import hashlib
 from pydantic import BaseModel
 from enum import Enum
 import uuid
@@ -20,20 +19,24 @@ class JobType(str, Enum):
 class PendingJobPayload(BaseModel):
     publisher: str
     published_at: int
-    job_type: JobType
     input: str  # could be serialized json
-    mocked_output: str | list[str] | None = None
+
+
+class PendingJobRequest(BaseModel):
+    job_type: JobType
+    jobs: list[PendingJobPayload]
 
 
 class PendingJob(PendingJobPayload):
     job_id: str
+    job_type: JobType
 
-    def from_payload(job: PendingJobPayload):
+    def from_payload(job: PendingJobPayload, job_type: JobType):
         return PendingJob(
             job_id=str(uuid.uuid4()),
             publisher=job.publisher,
             published_at=job.published_at,
-            job_type=job.job_type,
+            job_type=job_type,
             input=job.input,
         )
 
@@ -79,14 +82,12 @@ class WorkerJob(BaseModel):
     job_id: str
     job_type: JobType
     input: str
-    callback_url: str = None
 
-    def from_pending_job(job: PendingJob, callback_url: str):
+    def from_pending_job(job: PendingJob):
         return WorkerJob(
             job_id=job.job_id,
             job_type=job.job_type,
             input=job.input,
-            callback_url=callback_url,
         )
 
 

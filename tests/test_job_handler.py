@@ -10,6 +10,7 @@ from mizu_node.types import (
     AssignedJob,
     FinishedJob,
     PendingJobPayload,
+    PendingJobRequest,
     WorkerJob,
     WorkerJobResult,
 )
@@ -19,9 +20,8 @@ from tests.mongo_mock import MongoMock
 from tests.redis_mock import RedisMock
 
 
-def _new_pending_job(key: str, job_type: JobType):
+def _new_pending_job(key: str):
     return PendingJobPayload(
-        job_type=job_type,
         publisher="p",
         published_at=epoch(),
         input=key,
@@ -29,8 +29,9 @@ def _new_pending_job(key: str, job_type: JobType):
 
 
 def _add_new_jobs(rclient, job_type: JobType, num_jobs=3):
-    jobs = [_new_pending_job(str(i + 1), job_type) for i in range(num_jobs)]
-    return job_handler.handle_publish_jobs(rclient, jobs)
+    jobs = [_new_pending_job(str(i + 1)) for i in range(num_jobs)]
+    req = PendingJobRequest(job_type=job_type, jobs=jobs)
+    return job_handler.handle_publish_jobs(rclient, req)
 
 
 def test_publish_jobs():
@@ -58,7 +59,6 @@ def test_take_job_ok():
     job1 = job_handler.handle_take_job(rclient, "worker1", [JobType.classification])
     assert job1.job_id == cids[0]
     assert job1.job_type == JobType.classification
-    assert job1.callback_url == FINISH_JOB_CALLBACK_URL
 
     assert job_handler.get_pending_jobs_num(rclient) == 5
     assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 3
@@ -69,7 +69,6 @@ def test_take_job_ok():
     job2 = job_handler.handle_take_job(rclient, "worker2", [JobType.pow])
     assert job2.job_id == pids[0]
     assert job2.job_type == JobType.pow
-    assert job2.callback_url == FINISH_JOB_CALLBACK_URL
 
     assert job_handler.get_pending_jobs_num(rclient) == 4
     assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 2
@@ -80,7 +79,6 @@ def test_take_job_ok():
     job3 = job_handler.handle_take_job(rclient, "worker3")
     assert job3.job_id == cids[1]
     assert job3.job_type == JobType.classification
-    assert job3.callback_url == FINISH_JOB_CALLBACK_URL
 
     assert job_handler.get_pending_jobs_num(rclient) == 3
     assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 2
@@ -159,7 +157,7 @@ def test_finish_job_verify(mocker):
     with patch("mizu_node.job_handler._request_verify_job") as mocked_function:
         assigned = job_handler._get_assigned_job(rclient, r2.job_id)
         job_handler.handle_finish_job(rclient, mdb, r2)
-        job = WorkerJob.from_pending_job(assigned, VERIFY_JOB_CALLBACK_URL)
+        job = WorkerJob.from_pending_job(assigned)
         job_handler._request_verify_job.assert_called_once_with(job)
 
 
