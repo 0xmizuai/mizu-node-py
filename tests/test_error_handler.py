@@ -1,8 +1,9 @@
+from typing import Union
 from mizu_node.error_handler import error_handler
 
 
 @error_handler
-def do_not_pass(error: ValueError | Exception | None):
+def do_not_pass(error: Union[ValueError, Exception, None]):
     if error is None:
         return "ok"
     else:

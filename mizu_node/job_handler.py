@@ -1,5 +1,6 @@
 import json
 from random import randrange
+from typing import Union
 
 from pymongo import MongoClient
 from redis import Redis
@@ -117,7 +118,7 @@ def handle_publish_jobs(rclient: Redis, req: PendingJobRequest) -> list[str]:
 
 def handle_take_job(
     rclient: Redis, worker: str, job_types: list[JobType] = []
-) -> WorkerJob | None:
+) -> Union[WorkerJob, None]:
     if _is_worker_blocked(rclient, worker):
         raise ValueError("worker is blocked")
 

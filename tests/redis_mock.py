@@ -1,9 +1,12 @@
+from typing import Union
+
+
 class RedisMock:
     def __init__(self):
         self.data = {}
         self.expiry = {}
 
-    def set(self, key, value, ex=int | None):
+    def set(self, key, value, ex=Union[int, None]):
         self.data[key] = value
         if ex is not None:
             self.expiry[key] = ex
