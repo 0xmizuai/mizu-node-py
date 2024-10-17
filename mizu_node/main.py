@@ -1,16 +1,10 @@
-from rq import Worker
 import uvicorn
 from fastapi import FastAPI
 from pymongo import MongoClient
 import redis
 
 from mizu_node.error_handler import error_handler
-from mizu_node.constants import (
-    MONGO_DB_NAME,
-    MONGO_URL,
-    REDIS_URL,
-    VERIFY_JOB_QUEUE_NAME,
-)
+from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, REDIS_URL
 from mizu_node.job_handler import (
     WorkerJobResult,
     handle_take_job,
@@ -21,7 +15,7 @@ from mizu_node.job_handler import (
     get_assigned_jobs_num,
 )
 from mizu_node.redis_key_expire_listener import event_handler
-from mizu_node.types import JobType, PendingJobRequest
+from mizu_node.types import JobType, PendingJobPayload
 
 
 app = FastAPI()
@@ -56,20 +50,20 @@ async def assigned_jobs_len():
     return get_assigned_jobs_num(rclient)
 
 
-@app.post("publish_jobs/{job_type}")
-@error_handler
-async def publish_jobs(req: PendingJobRequest):
-    # TODO: ensure it's called from whitelisted publisher
-    ids = handle_publish_jobs(rclient, req)
-    return {"ids": ids}
-
-
 @app.get("take_job")
 @error_handler
 async def take_job():
     # TODO: add rate limit and cool down
     job = handle_take_job(rclient, get_user())
     return {"job": job.model_dump_json()}
+
+
+@app.post("publish_jobs")
+@error_handler
+async def publish_jobs(jobs: list[PendingJobPayload]):
+    # TODO: ensure it's called from whitelisted publisher
+    ids = handle_publish_jobs(rclient, jobs)
+    return {"ids": ids}
 
 
 @app.post("finish_job")
@@ -95,8 +89,3 @@ def start_dev():
 # the number of workers is defined by $WEB_CONCURRENCY env as default
 def start():
     uvicorn.run("mizu_node.main:app", host="0.0.0.0", port=8000)
-
-
-def start_worker():
-    worker = Worker([VERIFY_JOB_QUEUE_NAME], connection=rclient)
-    worker.work()
