@@ -15,7 +15,7 @@ from mizu_node.job_handler import (
     get_assigned_jobs_num,
 )
 from mizu_node.redis_key_expire_listener import event_handler
-from mizu_node.types import JobType, PendingJobPayload
+from mizu_node.types import JobType, PendingJobRequest
 
 
 app = FastAPI()
@@ -50,20 +50,20 @@ async def assigned_jobs_len():
     return get_assigned_jobs_num(rclient)
 
 
+@app.post("publish_jobs")
+@error_handler
+async def publish_jobs(req: PendingJobRequest):
+    # TODO: ensure it's called from whitelisted publisher
+    ids = handle_publish_jobs(rclient, req)
+    return {"ids": ids}
+
+
 @app.get("take_job")
 @error_handler
 async def take_job():
     # TODO: add rate limit and cool down
     job = handle_take_job(rclient, get_user())
     return {"job": job.model_dump_json()}
-
-
-@app.post("publish_jobs")
-@error_handler
-async def publish_jobs(jobs: list[PendingJobPayload]):
-    # TODO: ensure it's called from whitelisted publisher
-    ids = handle_publish_jobs(rclient, jobs)
-    return {"ids": ids}
 
 
 @app.post("finish_job")

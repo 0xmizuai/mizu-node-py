@@ -1,15 +1,14 @@
-from unittest.mock import patch
 import pytest
 
 from mizu_node.constants import (
-    FINISH_JOB_CALLBACK_URL,
-    VERIFY_JOB_CALLBACK_URL,
+    VERIFY_JOB_QUEUE_NAME,
 )
 from mizu_node.types import (
     JobType,
     AssignedJob,
     FinishedJob,
     PendingJobPayload,
+    PendingJobRequest,
     WorkerJob,
     WorkerJobResult,
 )
@@ -19,9 +18,8 @@ from tests.mongo_mock import MongoMock
 from tests.redis_mock import RedisMock
 
 
-def _new_pending_job(key: str, job_type: JobType):
+def _new_pending_job(key: str):
     return PendingJobPayload(
-        job_type=job_type,
         publisher="p",
         published_at=epoch(),
         input=key,
@@ -29,8 +27,9 @@ def _new_pending_job(key: str, job_type: JobType):
 
 
 def _add_new_jobs(rclient, job_type: JobType, num_jobs=3):
-    jobs = [_new_pending_job(str(i + 1), job_type) for i in range(num_jobs)]
-    return job_handler.handle_publish_jobs(rclient, jobs)
+    jobs = [_new_pending_job(str(i + 1)) for i in range(num_jobs)]
+    req = PendingJobRequest(job_type=job_type, jobs=jobs)
+    return job_handler.handle_publish_jobs(rclient, req)
 
 
 def test_publish_jobs():
@@ -58,7 +57,6 @@ def test_take_job_ok():
     job1 = job_handler.handle_take_job(rclient, "worker1", [JobType.classification])
     assert job1.job_id == cids[0]
     assert job1.job_type == JobType.classification
-    assert job1.callback_url == FINISH_JOB_CALLBACK_URL
 
     assert job_handler.get_pending_jobs_num(rclient) == 5
     assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 3
@@ -69,7 +67,6 @@ def test_take_job_ok():
     job2 = job_handler.handle_take_job(rclient, "worker2", [JobType.pow])
     assert job2.job_id == pids[0]
     assert job2.job_type == JobType.pow
-    assert job2.callback_url == FINISH_JOB_CALLBACK_URL
 
     assert job_handler.get_pending_jobs_num(rclient) == 4
     assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 2
@@ -80,7 +77,6 @@ def test_take_job_ok():
     job3 = job_handler.handle_take_job(rclient, "worker3")
     assert job3.job_id == cids[1]
     assert job3.job_type == JobType.classification
-    assert job3.callback_url == FINISH_JOB_CALLBACK_URL
 
     assert job_handler.get_pending_jobs_num(rclient) == 3
     assert job_handler.get_pending_jobs_num(rclient, JobType.pow) == 2
@@ -110,7 +106,7 @@ def test_take_job_error():
     assert e2.match("worker is blocked")
 
 
-def test_finish_job_ok(mocker):
+def test_finish_job_ok():
     rclient = RedisMock()
     mdb = MongoMock()
     cids = _add_new_jobs(rclient, JobType.classification, 3)
@@ -118,7 +114,6 @@ def test_finish_job_ok(mocker):
 
     job_handler.handle_take_job(rclient, "worker1", [JobType.classification])
     job_handler.handle_take_job(rclient, "worker2", [JobType.pow])
-    mocker.patch("mizu_node.job_handler._request_verify_job", return_value=None)
 
     # Case 1: job 1 finished by worker1
     r1 = WorkerJobResult(job_id=cids[0], worker="worker1", output=["t1"])
@@ -150,17 +145,16 @@ def test_finish_job_verify(mocker):
 
     r1 = WorkerJobResult(job_id=cids[0], worker="worker1", output=["t1"])
     mocker.patch("mizu_node.job_handler._should_verify", return_value=False)
-    with patch("mizu_node.job_handler._request_verify_job") as mocked_function:
-        job_handler.handle_finish_job(rclient, mdb, r1)
-        mocked_function.assert_not_called()
+    job_handler.handle_finish_job(rclient, mdb, r1)
+    assert not rclient.exists(VERIFY_JOB_QUEUE_NAME)
 
     r2 = WorkerJobResult(job_id=pids[0], worker="worker2", output=["t2"])
     mocker.patch("mizu_node.job_handler._should_verify", return_value=True)
-    with patch("mizu_node.job_handler._request_verify_job") as mocked_function:
-        assigned = job_handler._get_assigned_job(rclient, r2.job_id)
-        job_handler.handle_finish_job(rclient, mdb, r2)
-        job = WorkerJob.from_pending_job(assigned, VERIFY_JOB_CALLBACK_URL)
-        job_handler._request_verify_job.assert_called_once_with(job)
+    assigned = job_handler._get_assigned_job(rclient, r2.job_id)
+    job_handler.handle_finish_job(rclient, mdb, r2)
+    expected = WorkerJob.from_pending_job(assigned)
+    job = WorkerJob.model_validate_json(rclient.rpop(VERIFY_JOB_QUEUE_NAME))
+    assert job.job_id == expected.job_id
 
 
 def test_finish_job_error():

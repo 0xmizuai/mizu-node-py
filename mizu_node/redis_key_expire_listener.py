@@ -4,9 +4,9 @@ from mizu_node.constants import (
     REDIS_ASSIGNED_JOB_PREFIX,
     SHADOW_KEY_PREFIX,
 )
-from mizu_node.types import AssignedJob
+from mizu_node.types import AssignedJob, PendingJobRequest
 from mizu_node.job_handler import (
-    _add_new_jobs,
+    handle_publish_jobs,
     _remove_assigned_job,
 )
 
@@ -22,7 +22,8 @@ def event_handler(rclient: redis.Redis, msg):
             value = rclient.get(key)
             if REDIS_ASSIGNED_JOB_PREFIX in key:
                 assigned = AssignedJob.model_validate_json(value)
-                _add_new_jobs(rclient, [assigned])
+                req = PendingJobRequest(job_type=assigned.job_type, jobs=[assigned])
+                handle_publish_jobs(rclient, req)
                 _remove_assigned_job(rclient, assigned.job_id)
             # Once we got to know the value we remove it from Redis and do whatever required
             rclient.delete(key)
