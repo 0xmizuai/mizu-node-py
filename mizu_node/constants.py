@@ -15,7 +15,6 @@ VERIFY_JOB_QUEUE_NAME = "verify_job_queue"
 
 # mongodb for finished jobs
 FINISH_JOB_CALLBACK_URL = os.environ.get("FINISH_JOB_CALLBACK_URL")
-VERIFY_JOB_URL = os.environ.get("VERIFY_JOB_URL")
 VERIFY_JOB_CALLBACK_URL = os.environ.get("VERIFY_JOB_CALLBACK_URL")
 MONGO_URL = os.environ.get("MONGO_URL")
 MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME")
