@@ -5,7 +5,9 @@ from pymongo import MongoClient
 from redis import Redis
 
 from mizu_node.constants import (
+    FINISH_JOB_CALLBACK_URL,
     VERIFICATION_MODE,
+    VERIFY_JOB_CALLBACK_URL,
     ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
     REDIS_PENDING_JOBS_QUEUE,
     REDIS_TOTAL_ASSIGNED_JOBS,
@@ -19,6 +21,7 @@ from mizu_node.types import (
     PendingJob,
     AssignedJob,
     FinishedJob,
+    PendingJobPayload,
     PendingJobRequest,
     VerificationMode,
     WorkerJob,
