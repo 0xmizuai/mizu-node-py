@@ -12,6 +12,10 @@ ASSIGNED_JOB_EXPIRE_TTL_SECONDS = (
 SHADOW_KEY_PREFIX = "shadow_key:"
 BLOCKED_WORKER_PREFIX = "blocked_worker:"
 VERIFY_JOB_QUEUE_NAME = "verify_job_queue"
+COOLDOWN_WORKER_PREFIX = "cooldown_worker:"
+COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = (
+    os.environ.get("COOLDOWN_WORKER_EXPIRE_TTL_SECONDS") or 30
+)
 
 # mongodb for finished jobs
 MONGO_URL = os.environ.get("MONGO_URL")
