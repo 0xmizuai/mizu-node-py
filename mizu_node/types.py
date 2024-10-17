@@ -1,4 +1,3 @@
-from typing import Union
 from pydantic import BaseModel
 from enum import Enum
 import uuid
@@ -60,9 +59,9 @@ class AssignedJob(PendingJob):
 
 class FinishedJob(AssignedJob):
     finished_at: int
-    output: Union[str, list[str]]  # could be serialized json
+    output: str | list[str]  # could be serialized json
 
-    def from_assigned_job(job: AssignedJob, output: Union[str, list[str]]):
+    def from_assigned_job(job: AssignedJob, output: str | list[str]):
         return FinishedJob(
             job_id=job.job_id,
             publisher=job.publisher,
@@ -94,5 +93,5 @@ class WorkerJob(BaseModel):
 
 class WorkerJobResult(BaseModel):
     job_id: str
-    output: Union[str, list[str]]  # serialized json
+    output: str | list[str]  # serialized json
     worker: str = None
