@@ -82,12 +82,14 @@ class WorkerJob(BaseModel):
     job_id: str
     job_type: JobType
     input: str
+    callback_url: str | None = None
 
-    def from_pending_job(job: PendingJob):
+    def from_pending_job(job: PendingJob, callback_url: str | None = None):
         return WorkerJob(
             job_id=job.job_id,
             job_type=job.job_type,
             input=job.input,
+            callback_url=callback_url,
         )
 
 
