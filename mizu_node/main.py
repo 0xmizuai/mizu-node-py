@@ -1,10 +1,17 @@
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pymongo import MongoClient
 import redis
 
 from mizu_node.error_handler import error_handler
-from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, REDIS_URL
+from mizu_node.constants import (
+    MONGO_DB_NAME,
+    MONGO_URL,
+    REDIS_URL,
+    COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
+)
 from mizu_node.job_handler import (
     WorkerJobResult,
     handle_take_job,
@@ -16,6 +23,7 @@ from mizu_node.job_handler import (
 )
 from mizu_node.redis_key_expire_listener import event_handler
 from mizu_node.types import JobType, PendingJobRequest
+from mizu_node.worker_handler import has_worker_cooled_down
 
 
 app = FastAPI()
@@ -61,8 +69,13 @@ async def publish_jobs(req: PendingJobRequest):
 @app.get("take_job")
 @error_handler
 async def take_job():
-    # TODO: add rate limit and cool down
-    job = handle_take_job(rclient, get_user())
+    user = get_user()
+    if not has_worker_cooled_down(rclient, user):
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content=jsonable_encoder({"cool_down": COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}),
+        )
+    job = handle_take_job(rclient, user)
     return {"job": job.model_dump_json()}
 
 

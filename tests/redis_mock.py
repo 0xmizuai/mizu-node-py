@@ -8,6 +8,10 @@ class RedisMock:
         if ex is not None:
             self.expiry[key] = ex
 
+    def setex(self, key, time: int, value):
+        # Not implementing expiry
+        self.set(key, value, time)
+
     def get(self, key):
         return self.data.get(key)
 
