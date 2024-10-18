@@ -5,10 +5,7 @@ from mizu_node.constants import (
 )
 from mizu_node.types import (
     JobType,
-    AssignedJob,
     FinishedJob,
-    PendingJobPayload,
-    PendingJobRequest,
     WorkerJob,
     WorkerJobResult,
 )
