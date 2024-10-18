@@ -1,6 +1,6 @@
-from asyncio import sleep
 import asyncio
 from contextlib import asynccontextmanager
+import time
 import uvicorn
 from fastapi import FastAPI, status
 from fastapi.encoders import jsonable_encoder
@@ -34,13 +34,14 @@ mdb = mclient[MONGO_DB_NAME]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    def db_clean():
+    def queue_clean():
         while True:
             for queue in job_queues.values():
                 queue.light_clean(rclient)
-            sleep(60)
+            time.sleep(60)
 
-    asyncio.create_task(asyncio.coroutine(db_clean)())
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, queue_clean)
     yield
 
 

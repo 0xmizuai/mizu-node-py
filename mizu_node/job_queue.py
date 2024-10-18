@@ -64,7 +64,7 @@ class JobQueue(object):
         )
         return job_del_result is not None and job_del_result != 0
 
-    async def light_clean(self, db: Redis):
+    def light_clean(self, db: Redis):
         processing: list[bytes | str] = db.lrange(
             self._processing_key,
             0,
