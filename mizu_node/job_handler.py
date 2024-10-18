@@ -14,6 +14,7 @@ from mizu_node.constants import (
     SHADOW_KEY_PREFIX,
     BLOCKED_WORKER_PREFIX,
     VERIFICATION_RATIO_BASE,
+    VERIFY_JOB_CALLBACK_URL,
 )
 from mizu_node.types import (
     JobType,
@@ -136,7 +137,7 @@ def handle_finish_job(rclient: Redis, mdb: MongoClient, result: WorkerJobResult)
     _save_finished_job(mdb, finished)
     _remove_assigned_job(rclient, assigned.job_id)
     if _should_verify(finished):
-        job = WorkerJob.from_pending_job(assigned)
+        job = WorkerJob.from_pending_job(assigned, VERIFY_JOB_CALLBACK_URL)
         rclient.lpush(VERIFY_JOB_QUEUE_NAME, job.model_dump_json())
 
 
