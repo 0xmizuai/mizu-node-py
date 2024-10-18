@@ -91,7 +91,7 @@ async def finish_job(job: WorkerJobResult):
 @error_handler
 async def verify_job(job: WorkerJobResult):
     # TODO: ensure it's called from validator
-    handle_verify_job_result(mdb, job)
+    handle_verify_job_result(rclient, mdb, job)
     return {"status": "ok"}
 
 
