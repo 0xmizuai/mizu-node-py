@@ -19,6 +19,8 @@ class JobQueue(object):
 
     def add_jobs(self, db: Redis, jobs: list[DataJob]) -> None:
         job_ids = [job.job_id for job in jobs]
+        for job in jobs:
+            db.set(self._job_data_key.of(job.job_id), job.model_dump_json())
         db.lpush(self._main_queue_key, *job_ids)
 
     def queue_len(self, db: Redis) -> int:
@@ -33,7 +35,7 @@ class JobQueue(object):
         job_json = db.get(self._job_data_key.of(job_id))
         if job_json is None:
             return None
-        return DataJob.model_validate_json()
+        return DataJob.model_validate_json(job_json)
 
     def lease(self, db: Redis) -> DataJob | None:
         maybe_job_id: bytes | str | None = db.lmove(
@@ -53,10 +55,13 @@ class JobQueue(object):
             ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
             self._session,
         )
-        return DataJob
+        return DataJob.model_validate_json(data)
+
+    def lease_exists(self, db: Redis, job_id: str) -> bool:
+        return db.exists(self._lease_key.of(job_id)) != 0
 
     def complete(self, db: Redis, job_id: str) -> bool:
-        job_del_result, _, _ = (
+        job_del_result, _ = (
             db.pipeline()
             .delete(self._job_data_key.of(job_id))
             .delete(self._lease_key.of(job_id))
@@ -71,7 +76,7 @@ class JobQueue(object):
             -1,
         )
         for job_id in processing:
-            has_lease_key = db.exists(self._lease_key.of(job_id)) != 0
+            has_lease_key = self.lease_exists(db, job_id)
             has_data_key = db.exists(self._job_data_key.of(job_id)) != 0
 
             # job completed
@@ -90,7 +95,7 @@ class JobQueue(object):
                 ).execute()
 
 
-VALID_JOB_TYPES = [JobType.pow, JobType.classification]
+VALID_JOB_TYPES = [JobType.classification, JobType.pow]
 job_queues = {
     job_type: JobQueue(KeyPrefix(REDIS_JOB_QUEUE_NAME + ":" + job_type + ":"))
     for job_type in VALID_JOB_TYPES

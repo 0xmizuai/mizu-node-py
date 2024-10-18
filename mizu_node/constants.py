@@ -1,18 +1,17 @@
 import os
 
 # redis for pending/assigned jobs
-REDIS_JOB_QUEUE_NAME = os.environ.get("REDIS_JOB_QUEUE_NAME") or "job_queue"
+REDIS_JOB_QUEUE_NAME = os.environ.get("REDIS_JOB_QUEUE_NAME", "mizu_job_queue")
 REDIS_URL = os.environ.get("REDIS_URL")
-ASSIGNED_JOB_EXPIRE_TTL_SECONDS = (
-    os.environ.get("ASSIGNED_JOB_EXPIRE_TTL_SECONDS") or 3600
+ASSIGNED_JOB_EXPIRE_TTL_SECONDS = int(
+    os.environ.get("ASSIGNED_JOB_EXPIRE_TTL_SECONDS", 3600)
 )
-
 BLOCKED_WORKER_PREFIX = "blocked_worker:"
 VERIFY_JOB_CALLBACK_URL = os.environ["VERIFY_JOB_CALLBACK_URL"]  # throw if not present
 VERIFY_JOB_QUEUE_NAME = "verify_job_queue"
 COOLDOWN_WORKER_PREFIX = "cooldown_worker:"
-COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = (
-    os.environ.get("COOLDOWN_WORKER_EXPIRE_TTL_SECONDS") or 30
+COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = int(
+    os.environ.get("COOLDOWN_WORKER_EXPIRE_TTL_SECONDS", 30)
 )
 
 # mongodb for finished jobs

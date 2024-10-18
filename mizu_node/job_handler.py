@@ -54,33 +54,36 @@ def _should_verify(result: WorkerJobResult = None) -> bool:
 
 
 def handle_publish_jobs(rclient: Redis, req: PublishJobRequest) -> list[str]:
-    jobs = [DataJob.from_payload(job, req.job_type) for job in jobs]
+    jobs = [DataJob.from_payload(job, req.job_type) for job in req.jobs]
     job_queues[req.job_type].add_jobs(rclient, jobs)
     return [j.job_id for j in jobs]
 
 
 def handle_take_job(
-    rclient: Redis, worker: str, job_types: list[JobType] | None
+    rclient: Redis, worker: str, job_types: list[JobType] | None = None
 ) -> WorkerJob | None:
-    if not job_types:
-        job_types = VALID_JOB_TYPES
     if _is_worker_blocked(rclient, worker):
         raise ValueError("worker is blocked")
 
-    for job_type in job_types:
-        assigned = job_queues[job_type].lease(rclient, worker)
-        if assigned:
-            return WorkerJob.from_data_job(assigned)
+    for job_type in job_types or VALID_JOB_TYPES:
+        job = job_queues[job_type].lease(rclient)
+        if job is not None:
+            return WorkerJob.from_data_job(job)
+    raise ValueError("no job available")
 
 
 def handle_finish_job(rclient: Redis, mdb: MongoClient, result: WorkerJobResult):
-    job = job_queues[result.job_type].get_job(rclient, result.job_id)
+    queue = job_queues[result.job_type]
+    if not queue.lease_exists(rclient, result.job_id):
+        raise ValueError("invalid job")
+
+    job = queue.get_job_data(rclient, result.job_id)
     finished = FinishedJob.from_job_result(job, result)
     _save_finished_job(mdb, finished)
-    job_queues[result.job_type].complete(rclient, job.job_id)
+    queue.complete(rclient, job.job_id)
     if _should_verify(finished):
         job = WorkerJob.from_data_job(job, VERIFY_JOB_CALLBACK_URL)
-        rclient.lpush(VERIFY_JOB_QUEUE_NAME, job)
+        rclient.lpush(VERIFY_JOB_QUEUE_NAME, job.model_dump_json())
 
 
 def handle_verify_job_result(rclient: Redis, mdb: MongoClient, result: WorkerJobResult):
