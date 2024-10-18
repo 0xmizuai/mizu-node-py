@@ -112,9 +112,9 @@ def handle_publish_jobs(rclient: Redis, req: PendingJobRequest) -> list[str]:
     return [p.job_id for p in pendings]
 
 
-def handle_take_job(
-    rclient: Redis, worker: str, job_types: list[JobType] = []
-) -> WorkerJob | None:
+def handle_take_job(rclient: Redis, worker: str, job_types=None) -> WorkerJob | None:
+    if job_types is None:
+        job_types = []
     if _is_worker_blocked(rclient, worker):
         raise ValueError("worker is blocked")
 

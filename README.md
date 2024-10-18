@@ -18,6 +18,12 @@ Connect to redis and run following command to enable keyspace notification:
 config set notify-keyspace-events Ex
 ```
 
+### Environment variables
+
+Mandatory:
+- `VERIFY_JOB_QUEUE`
+- `VERIFY_JOB_CALLBACK_URL`
+
 ### Run
 
 ```shell
