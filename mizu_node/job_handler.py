@@ -17,6 +17,7 @@ from mizu_node.types import (
     JobType,
     FinishedJob,
     PublishJobRequest,
+    QueueItem,
     VerificationMode,
     WorkerJob,
     WorkerJobResult,
@@ -55,7 +56,8 @@ def _should_verify(result: WorkerJobResult = None) -> bool:
 
 def handle_publish_jobs(rclient: Redis, req: PublishJobRequest) -> list[str]:
     jobs = [DataJob.from_payload(job, req.job_type) for job in req.jobs]
-    job_queues[req.job_type].add_jobs(rclient, jobs)
+    queue_items = [QueueItem(job.job_id, job.model_dump_json()) for job in jobs]
+    job_queues[req.job_type].add_items(rclient, queue_items)
     return [j.job_id for j in jobs]
 
 
@@ -66,8 +68,9 @@ def handle_take_job(
         raise ValueError("worker is blocked")
 
     for job_type in job_types or VALID_JOB_TYPES:
-        job = job_queues[job_type].lease(rclient)
-        if job is not None:
+        job_json = job_queues[job_type].lease(rclient)
+        if job_json is not None:
+            job = DataJob.model_validate_json(job_json)
             return WorkerJob.from_data_job(job)
     raise ValueError("no job available")
 
@@ -77,7 +80,8 @@ def handle_finish_job(rclient: Redis, mdb: MongoClient, result: WorkerJobResult)
     if not queue.lease_exists(rclient, result.job_id):
         raise ValueError("invalid job")
 
-    job = queue.get_job_data(rclient, result.job_id)
+    job_json = queue.get_item_data(rclient, result.job_id)
+    job = DataJob.model_validate_json(job_json)
     finished = FinishedJob.from_job_result(job, result)
     _save_finished_job(mdb, finished)
     queue.complete(rclient, job.job_id)

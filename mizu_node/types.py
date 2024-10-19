@@ -5,6 +5,12 @@ import uuid
 from mizu_node.utils import epoch
 
 
+class QueueItem(object):
+    def __init__(self, id: str, data: str):
+        self.id = id
+        self.data = data
+
+
 class VerificationMode(str, Enum):
     none = "none"
     always = "always"

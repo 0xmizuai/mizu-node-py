@@ -2,7 +2,7 @@ import uuid
 from redis import Redis
 
 from mizu_node.constants import ASSIGNED_JOB_EXPIRE_TTL_SECONDS, REDIS_JOB_QUEUE_NAME
-from mizu_node.types import DataJob, JobType, KeyPrefix
+from mizu_node.types import DataJob, JobType, KeyPrefix, QueueItem
 import uuid
 from redis import Redis
 
@@ -15,13 +15,12 @@ class JobQueue(object):
         self._main_queue_key = name.of(":queue")
         self._processing_key = name.of(":processing")
         self._lease_key = KeyPrefix.concat(name, ":lease:")
-        self._job_data_key = KeyPrefix.concat(name, ":job:")
+        self._item_data_key = KeyPrefix.concat(name, ":job:")
 
-    def add_jobs(self, db: Redis, jobs: list[DataJob]) -> None:
-        job_ids = [job.job_id for job in jobs]
-        for job in jobs:
-            db.set(self._job_data_key.of(job.job_id), job.model_dump_json())
-        db.lpush(self._main_queue_key, *job_ids)
+    def add_items(self, db: Redis, items: list[QueueItem]) -> None:
+        for item in items:
+            db.set(self._item_data_key.of(item.id), item.data)
+        db.lpush(self._main_queue_key, *[item.id for item in items])
 
     def queue_len(self, db: Redis) -> int:
         return db.llen(self._main_queue_key)
@@ -31,40 +30,37 @@ class JobQueue(object):
         # until light clean
         return db.llen(self._processing_key)
 
-    def get_job_data(self, db: Redis, job_id: str) -> DataJob | None:
-        job_json = db.get(self._job_data_key.of(job_id))
-        if job_json is None:
-            return None
-        return DataJob.model_validate_json(job_json)
+    def get_item_data(self, db: Redis, item_id: str) -> DataJob | None:
+        return db.get(self._item_data_key.of(item_id))
 
-    def lease(self, db: Redis) -> DataJob | None:
-        maybe_job_id: bytes | str | None = db.lmove(
+    def lease(self, db: Redis) -> str | None:
+        maybe_item_id: bytes | str | None = db.lmove(
             self._main_queue_key,
             self._processing_key,
         )
-        if maybe_job_id is None:
+        if maybe_item_id is None:
             return None
 
-        data: bytes | None = db.get(self._job_data_key.of(maybe_job_id))
+        data: str | None = db.get(self._item_data_key.of(maybe_item_id))
         if data is None:
             # the item will be cleaned up from processing queue in the next clean
             return None
 
         db.setex(
-            self._lease_key.of(maybe_job_id),
+            self._lease_key.of(maybe_item_id),
             ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
             self._session,
         )
-        return DataJob.model_validate_json(data)
+        return data
 
-    def lease_exists(self, db: Redis, job_id: str) -> bool:
-        return db.exists(self._lease_key.of(job_id)) != 0
+    def lease_exists(self, db: Redis, item_id: str) -> bool:
+        return db.exists(self._lease_key.of(item_id)) != 0
 
-    def complete(self, db: Redis, job_id: str) -> bool:
+    def complete(self, db: Redis, item_id: str) -> bool:
         job_del_result, _ = (
             db.pipeline()
-            .delete(self._job_data_key.of(job_id))
-            .delete(self._lease_key.of(job_id))
+            .delete(self._item_data_key.of(item_id))
+            .delete(self._lease_key.of(item_id))
             .execute()
         )
         return job_del_result is not None and job_del_result != 0
@@ -75,23 +71,24 @@ class JobQueue(object):
             0,
             -1,
         )
-        for job_id in processing:
-            has_lease_key = self.lease_exists(db, job_id)
-            has_data_key = db.exists(self._job_data_key.of(job_id)) != 0
+        for item_id in processing:
+            has_lease_key = self.lease_exists(db, item_id)
+            has_data_key = db.exists(self._item_data_key.of(item_id)) != 0
 
             # job completed
             if not has_data_key:
                 print(
-                    job_id, " has been completed, will be deleted from processing queue"
+                    item_id,
+                    " has been completed, will be deleted from processing queue",
                 )
-                db.lrem(self._processing_key, 0, job_id)
+                db.lrem(self._processing_key, 0, item_id)
                 continue
 
             # lease expired
             if not has_lease_key:
-                print(job_id, " lease has expired, will reset")
-                db.pipeline().lrem(self._processing_key, 0, job_id).lpush(
-                    self._main_queue_key, job_id
+                print(item_id, " lease has expired, will reset")
+                db.pipeline().lrem(self._processing_key, 0, item_id).lpush(
+                    self._main_queue_key, item_id
                 ).execute()
 
 

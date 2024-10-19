@@ -141,7 +141,8 @@ def test_finish_job_verify(mocker):
         job_id=pids[0], job_type=JobType.pow, worker="worker2", output=["t2"]
     )
     mocker.patch("mizu_node.job_handler._should_verify", return_value=True)
-    data_job = job_queues[JobType.pow].get_job_data(rclient, r2.job_id)
+    job_json = job_queues[JobType.pow].get_item_data(rclient, r2.job_id)
+    data_job = DataJob.model_validate_json(job_json)
     job_handler.handle_finish_job(rclient, mdb, r2)
     worker_job = WorkerJob.model_validate_json(rclient.rpop(VERIFY_JOB_QUEUE_NAME))
     assert worker_job.job_id == data_job.job_id
