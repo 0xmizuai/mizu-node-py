@@ -3,20 +3,19 @@ import pytest
 from mizu_node.constants import (
     VERIFY_JOB_QUEUE_NAME,
 )
-from mizu_node.types import (
-    DataJob,
-    DataJobPayload,
-    JobType,
-    FinishedJob,
-    PublishJobRequest,
-    WorkerJob,
-    WorkerJobResult,
-)
+
 import mizu_node.job_handler as job_handler
+from mizu_node.types.common import JobType
+from mizu_node.types.data_job import DataJob, DataJobPayload, PublishJobRequest
+from mizu_node.types.worker_job import FinishedJob, WorkerJob, WorkerJobResult
 from mizu_node.utils import epoch
 from tests.mongo_mock import MongoMock
 from tests.redis_mock import RedisMock
-from mizu_node.job_queue import job_queues
+from mizu_node.job_handler import job_queues
+
+
+pow_queue = job_queues[JobType.pow]
+classify_queue = job_queues[JobType.classification]
 
 
 def _new_data_job_payload(key: str):
@@ -36,12 +35,12 @@ def _add_new_jobs(rclient, job_type: JobType, num_jobs=3):
 def test_publish_jobs():
     rclient = RedisMock()
     _add_new_jobs(rclient, JobType.classification, 3)
-    job_queues[JobType.classification].queue_len(rclient) == 3
-    job_queues[JobType.classification].processing_len(rclient) == 0
+    classify_queue.queue_len(rclient) == 3
+    classify_queue.processing_len(rclient) == 0
 
     _add_new_jobs(rclient, JobType.pow, 3)
-    job_queues[JobType.pow].queue_len(rclient) == 3
-    job_queues[JobType.pow].processing_len(rclient) == 0
+    pow_queue.queue_len(rclient) == 3
+    pow_queue.processing_len(rclient) == 0
 
 
 def test_take_job_ok():
@@ -53,23 +52,23 @@ def test_take_job_ok():
     job1 = job_handler.handle_take_job(rclient, "worker1", [JobType.classification])
     assert job1.job_id == cids[0]
     assert job1.job_type == JobType.classification
-    job_queues[JobType.classification].queue_len(rclient) == 3
-    job_queues[JobType.classification].processing_len(rclient) == 1
+    classify_queue.queue_len(rclient) == 3
+    classify_queue.processing_len(rclient) == 1
 
     # take pow job 1
     job2 = job_handler.handle_take_job(rclient, "worker2", [JobType.pow])
     assert job2.job_id == pids[0]
     assert job2.job_type == JobType.pow
-    job_queues[JobType.pow].queue_len(rclient) == 3
-    job_queues[JobType.pow].processing_len(rclient) == 1
+    pow_queue.queue_len(rclient) == 3
+    pow_queue.processing_len(rclient) == 1
 
     # take classification job 2
     job3 = job_handler.handle_take_job(rclient, "worker3")
     assert job3.job_id == cids[1]
     assert job3.job_type == JobType.classification
 
-    job_queues[JobType.classification].queue_len(rclient) == 3
-    job_queues[JobType.classification].processing_len(rclient) == 2
+    classify_queue.queue_len(rclient) == 3
+    classify_queue.processing_len(rclient) == 2
 
 
 def test_take_job_error():
@@ -141,7 +140,7 @@ def test_finish_job_verify(mocker):
         job_id=pids[0], job_type=JobType.pow, worker="worker2", output=["t2"]
     )
     mocker.patch("mizu_node.job_handler._should_verify", return_value=True)
-    job_json = job_queues[JobType.pow].get_item_data(rclient, r2.job_id)
+    job_json = pow_queue.get_item_data(rclient, r2.job_id)
     data_job = DataJob.model_validate_json(job_json)
     job_handler.handle_finish_job(rclient, mdb, r2)
     worker_job = WorkerJob.model_validate_json(rclient.rpop(VERIFY_JOB_QUEUE_NAME))

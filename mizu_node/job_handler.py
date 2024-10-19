@@ -5,25 +5,27 @@ from pymongo import MongoClient
 from redis import Redis
 
 from mizu_node.constants import (
+    REDIS_JOB_QUEUE_NAME,
     VERIFICATION_MODE,
     BLOCKED_WORKER_PREFIX,
     VERIFICATION_RATIO_BASE,
     VERIFY_JOB_CALLBACK_URL,
     VERIFY_JOB_QUEUE_NAME,
 )
-from mizu_node.job_queue import VALID_JOB_TYPES, JobQueue
-from mizu_node.types import (
-    DataJob,
-    JobType,
-    FinishedJob,
-    PublishJobRequest,
-    QueueItem,
-    VerificationMode,
-    WorkerJob,
-    WorkerJobResult,
-)
+
+from mizu_node.types.common import JobType, VerificationMode
+from mizu_node.types.data_job import DataJob, PublishJobRequest
+from mizu_node.types.job_queue import JobQueue, QueueItem
+from mizu_node.types.key_prefix import KeyPrefix
+from mizu_node.types.worker_job import FinishedJob, WorkerJob, WorkerJobResult
+
 from mizu_node.utils import epoch
-from mizu_node.job_queue import job_queues
+
+VALID_JOB_TYPES = [JobType.classification, JobType.pow]
+job_queues = {
+    job_type: JobQueue(KeyPrefix(REDIS_JOB_QUEUE_NAME + ":" + job_type + ":"))
+    for job_type in VALID_JOB_TYPES
+}
 
 
 def _save_finished_job(mdb: MongoClient, result: FinishedJob):

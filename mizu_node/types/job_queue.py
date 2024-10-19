@@ -1,10 +1,17 @@
 import uuid
 from redis import Redis
 
-from mizu_node.constants import ASSIGNED_JOB_EXPIRE_TTL_SECONDS, REDIS_JOB_QUEUE_NAME
-from mizu_node.types import DataJob, JobType, KeyPrefix, QueueItem
+from mizu_node.constants import ASSIGNED_JOB_EXPIRE_TTL_SECONDS
 import uuid
 from redis import Redis
+
+from mizu_node.types.key_prefix import KeyPrefix
+
+
+class QueueItem(object):
+    def __init__(self, id: str, data: str):
+        self.id = id
+        self.data = data
 
 
 class JobQueue(object):
@@ -30,7 +37,7 @@ class JobQueue(object):
         # until light clean
         return db.llen(self._processing_key)
 
-    def get_item_data(self, db: Redis, item_id: str) -> DataJob | None:
+    def get_item_data(self, db: Redis, item_id: str) -> str | None:
         return db.get(self._item_data_key.of(item_id))
 
     def lease(self, db: Redis) -> str | None:
@@ -90,10 +97,3 @@ class JobQueue(object):
                 db.pipeline().lrem(self._processing_key, 0, item_id).lpush(
                     self._main_queue_key, item_id
                 ).execute()
-
-
-VALID_JOB_TYPES = [JobType.classification, JobType.pow]
-job_queues = {
-    job_type: JobQueue(KeyPrefix(REDIS_JOB_QUEUE_NAME + ":" + job_type + ":"))
-    for job_type in VALID_JOB_TYPES
-}
