@@ -1,7 +1,6 @@
 import uuid
 from redis import Redis
 
-from mizu_node.constants import ASSIGNED_JOB_EXPIRE_TTL_SECONDS
 import uuid
 from redis import Redis
 
@@ -40,7 +39,7 @@ class JobQueue(object):
     def get_item_data(self, db: Redis, item_id: str) -> str | None:
         return db.get(self._item_data_key.of(item_id))
 
-    def lease(self, db: Redis) -> str | None:
+    def lease(self, db: Redis, ttl_secs: int) -> str | None:
         maybe_item_id: bytes | str | None = db.lmove(
             self._main_queue_key,
             self._processing_key,
@@ -55,7 +54,7 @@ class JobQueue(object):
 
         db.setex(
             self._lease_key.of(maybe_item_id),
-            ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
+            ttl_secs,
             self._session,
         )
         return data

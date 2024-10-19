@@ -16,16 +16,15 @@ from mizu_node.constants import (
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
 )
 from mizu_node.job_handler import (
-    WorkerJobResult,
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
     handle_verify_job_result,
+    queue_clean,
 )
-from mizu_node.types import PublishJobRequest
+from mizu_node.types.data_job import PublishJobRequest
+from mizu_node.types.worker_job import WorkerJobResult
 from mizu_node.worker_handler import has_worker_cooled_down
-
-from mizu_node.job_queue import job_queues
 
 rclient = redis.Redis.from_url(REDIS_URL)
 mclient = MongoClient(MONGO_URL)
@@ -34,14 +33,8 @@ mdb = mclient[MONGO_DB_NAME]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    def queue_clean():
-        while True:
-            for queue in job_queues.values():
-                queue.light_clean(rclient)
-            time.sleep(60)
-
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, queue_clean)
+    loop.run_in_executor(None, queue_clean, rclient)
     yield
 
 

@@ -1,5 +1,6 @@
 import json
 from random import randrange
+import time
 
 from pymongo import MongoClient
 from redis import Redis
@@ -11,6 +12,7 @@ from mizu_node.constants import (
     VERIFICATION_RATIO_BASE,
     VERIFY_JOB_CALLBACK_URL,
     VERIFY_JOB_QUEUE_NAME,
+    ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
 )
 
 from mizu_node.types.common import JobType, VerificationMode
@@ -26,6 +28,13 @@ job_queues = {
     job_type: JobQueue(KeyPrefix(REDIS_JOB_QUEUE_NAME + ":" + job_type + ":"))
     for job_type in VALID_JOB_TYPES
 }
+
+
+def queue_clean(rclient: Redis):
+    while True:
+        for queue in job_queues.values():
+            queue.light_clean(rclient)
+        time.sleep(60)
 
 
 def _save_finished_job(mdb: MongoClient, result: FinishedJob):
@@ -70,7 +79,7 @@ def handle_take_job(
         raise ValueError("worker is blocked")
 
     for job_type in job_types or VALID_JOB_TYPES:
-        job_json = job_queues[job_type].lease(rclient)
+        job_json = job_queues[job_type].lease(rclient, ASSIGNED_JOB_EXPIRE_TTL_SECONDS)
         if job_json is not None:
             job = DataJob.model_validate_json(job_json)
             return WorkerJob.from_data_job(job)
