@@ -1,3 +1,6 @@
+import asyncio
+from contextlib import asynccontextmanager
+import time
 import uvicorn
 from fastapi import FastAPI, status
 from fastapi.encoders import jsonable_encoder
@@ -13,27 +16,29 @@ from mizu_node.constants import (
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
 )
 from mizu_node.job_handler import (
-    WorkerJobResult,
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
     handle_verify_job_result,
-    get_pending_jobs_num,
-    get_assigned_jobs_num,
+    queue_clean,
 )
-from mizu_node.redis_key_expire_listener import event_handler
-from mizu_node.types import JobType, PendingJobRequest
+from mizu_node.types.data_job import PublishJobRequest
+from mizu_node.types.worker_job import WorkerJobResult
 from mizu_node.worker_handler import has_worker_cooled_down
 
-
-app = FastAPI()
 rclient = redis.Redis.from_url(REDIS_URL)
-pubsub = rclient.pubsub()
-pubsub.psubscribe(**{"__keyevent@0__:expired": event_handler})
-pubsub.run_in_thread(sleep_time=0.01)
-
 mclient = MongoClient(MONGO_URL)
 mdb = mclient[MONGO_DB_NAME]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, queue_clean, rclient)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 def get_user() -> str:
@@ -46,21 +51,9 @@ async def default():
     return {"status": "ok"}
 
 
-@app.get("stat/pending_jobs_num")
-@error_handler
-async def pending_jobs_len(job_type: JobType = None):
-    return get_pending_jobs_num(rclient, job_type)
-
-
-@app.get("stat/assigned_jobs_num")
-@error_handler
-async def assigned_jobs_len():
-    return get_assigned_jobs_num(rclient)
-
-
 @app.post("publish_jobs")
 @error_handler
-async def publish_jobs(req: PendingJobRequest):
+async def publish_jobs(req: PublishJobRequest):
     # TODO: ensure it's called from whitelisted publisher
     ids = handle_publish_jobs(rclient, req)
     return {"ids": ids}
