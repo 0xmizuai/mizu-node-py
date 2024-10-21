@@ -58,7 +58,7 @@ async def default():
     return {"status": "ok"}
 
 
-@app.post("publish_jobs")
+@app.post("/publish_jobs")
 @error_handler
 async def publish_jobs(req: PublishJobRequest):
     # TODO: ensure it's called from whitelisted publisher
@@ -66,7 +66,7 @@ async def publish_jobs(req: PublishJobRequest):
     return {"ids": ids}
 
 
-@app.get("take_job")
+@app.get("/take_job")
 @error_handler
 async def take_job(user: str = Depends(get_user)):
     if not has_worker_cooled_down(rclient, user):
@@ -78,7 +78,7 @@ async def take_job(user: str = Depends(get_user)):
     return {"job": job.model_dump_json()}
 
 
-@app.post("finish_job")
+@app.post("/finish_job")
 @error_handler
 async def finish_job(job: WorkerJobResult):
     job.worker = get_user()
@@ -86,7 +86,7 @@ async def finish_job(job: WorkerJobResult):
     return {"status": "ok"}
 
 
-@app.post("verify_job_callback")
+@app.post("/verify_job_callback")
 @error_handler
 async def verify_job(job: WorkerJobResult):
     # TODO: ensure it's called from validator
