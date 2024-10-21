@@ -1,10 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
-import time
 import uvicorn
-from fastapi import FastAPI, status
+from fastapi import FastAPI, Security, status, Depends
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pymongo import MongoClient
 import redis
 
@@ -22,6 +22,7 @@ from mizu_node.job_handler import (
     handle_verify_job_result,
     queue_clean,
 )
+from mizu_node.security import verify_jwt
 from mizu_node.types.data_job import PublishJobRequest
 from mizu_node.types.worker_job import WorkerJobResult
 from mizu_node.worker_handler import has_worker_cooled_down
@@ -29,6 +30,9 @@ from mizu_node.worker_handler import has_worker_cooled_down
 rclient = redis.Redis.from_url(REDIS_URL)
 mclient = MongoClient(MONGO_URL)
 mdb = mclient[MONGO_DB_NAME]
+
+# Security scheme
+bearer_scheme = HTTPBearer()
 
 
 @asynccontextmanager
@@ -41,8 +45,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-def get_user() -> str:
-    return ""
+def get_user(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+) -> str:
+    token = credentials.credentials
+    return verify_jwt(token)
 
 
 @app.get("/")
@@ -61,8 +68,7 @@ async def publish_jobs(req: PublishJobRequest):
 
 @app.get("take_job")
 @error_handler
-async def take_job():
-    user = get_user()
+async def take_job(user: str = Depends(get_user)):
     if not has_worker_cooled_down(rclient, user):
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
