@@ -1,6 +1,5 @@
 import json
 import jwt
-import os
 
 from fastapi import HTTPException
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError

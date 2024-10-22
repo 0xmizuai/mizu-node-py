@@ -21,7 +21,7 @@ from mizu_node.job_handler import (
     handle_finish_job,
     queue_clean,
 )
-from mizu_node.security import SECRET_KEY, verify_jwt, verify_api_key
+from mizu_node.security import verify_jwt, verify_api_key
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import PublishJobRequest, WorkerJobResult
 from mizu_node.utils import build_json_response

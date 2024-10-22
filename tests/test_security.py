@@ -5,7 +5,7 @@ import time
 from fastapi import HTTPException
 
 
-def test_verify_jwt(monkeypatch):
+def test_verify_jwt():
     from mizu_node.security import verify_jwt
 
     secret_key = "your-secret-key"

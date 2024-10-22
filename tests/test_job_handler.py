@@ -1,5 +1,3 @@
-import json
-import pprint
 from uuid import uuid4
 from fastapi import HTTPException
 import pytest
