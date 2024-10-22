@@ -1,3 +1,4 @@
+import argparse
 import random
 from uuid import uuid4
 from fastapi.encoders import jsonable_encoder
@@ -15,6 +16,7 @@ from mizu_node.types.data_job import (
     WorkerJobResult,
 )
 from mizu_node.utils import epoch
+from scripts.auth import get_api_keys, issue_api_key
 
 SERVICE_URL = "http://localhost:8000"
 
@@ -46,9 +48,7 @@ def _build_publish_job_request(num_jobs: int):
 
 def publish_job(num_jobs: int) -> list[(str, int)]:
     req = _build_publish_job_request(num_jobs)
-    result = requests.post(
-        SERVICE_URL + "/publish_jobs", json=jsonable_encoder.encode(req)
-    )
+    result = requests.post(SERVICE_URL + "/publish_jobs", json=jsonable_encoder(req))
     jobs_id = result.json()["data"]["job_ids"]
     return [(job_id, req.job_type) for job_id, req in zip(jobs_id, req.data)]
 
@@ -85,3 +85,32 @@ def inhonest_worker():
     block_worker()
     worker_job = take_job()
     finish_job(worker_job)
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--new_api_key", action="store", type=str, help="User to issue new API key"
+)
+parser.add_argument(
+    "--get_api_keys", action="store", type=str, help="User to query API keys"
+)
+parser.add_argument("--happy", action="store_true")
+parser.add_argument("--unhappy", action="store_true")
+
+args = parser.parse_args()
+
+
+def main():
+    if args.happy:
+        happy_path()
+    elif args.unhappy:
+        inhonest_worker()
+    elif args.new_api_key:
+        key = issue_api_key(args.new_api_key)
+        print("API key: " + key)
+    elif args.get_api_keys:
+        keys = get_api_keys(args.get_api_keys)
+        for key in keys:
+            print("API key: " + key)
+    else:
+        raise ValueError("Invalid arguments")
