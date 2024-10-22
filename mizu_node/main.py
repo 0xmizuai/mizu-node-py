@@ -23,8 +23,8 @@ from mizu_node.job_handler import (
     queue_clean,
 )
 from mizu_node.security import verify_jwt
-from mizu_node.types.data_job import PublishJobRequest
-from mizu_node.types.worker_job import WorkerJobResult
+from mizu_node.types.common import JobType
+from mizu_node.types.data_job import PublishJobRequest, WorkerJobResult
 from mizu_node.worker_handler import has_worker_cooled_down
 
 rclient = redis.Redis.from_url(REDIS_URL)
@@ -58,40 +58,49 @@ async def default():
     return {"status": "ok"}
 
 
-@app.post("publish_jobs")
+@app.post("/publish_jobs")
 @error_handler
 async def publish_jobs(req: PublishJobRequest):
     # TODO: ensure it's called from whitelisted publisher
     ids = handle_publish_jobs(rclient, req)
-    return {"ids": ids}
+    return JSONResponse(
+        status=status.HTTP_200_OK,
+        message="ok",
+        data={"job_ids": ids},
+    )
 
 
-@app.get("take_job")
+@app.get("/take_job")
 @error_handler
-async def take_job(user: str = Depends(get_user)):
+async def take_job(job_type: JobType, user: str = Depends(get_user)):
     if not has_worker_cooled_down(rclient, user):
         return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content=jsonable_encoder({"cool_down": COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}),
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+            message=jsonable_encoder({"cool_down": COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}),
+            data=None,
         )
-    job = handle_take_job(rclient, user)
-    return {"job": job.model_dump_json()}
+    job = handle_take_job(rclient, user, job_type)
+    if job is None:
+        return JSONResponse(
+            status=status.HTTP_200_OK, message="no job available", data={job: None}
+        )
+    else:
+        return JSONResponse(
+            status=status.HTTP_200_OK,
+            message="ok",
+            data={"job": job.model_dump()},
+        )
 
 
-@app.post("finish_job")
+@app.post("/finish_job")
 @error_handler
-async def finish_job(job: WorkerJobResult):
-    job.worker = get_user()
-    handle_finish_job(rclient, mdb, job)
-    return {"status": "ok"}
-
-
-@app.post("verify_job_callback")
-@error_handler
-async def verify_job(job: WorkerJobResult):
-    # TODO: ensure it's called from validator
-    handle_verify_job_result(rclient, mdb, job)
-    return {"status": "ok"}
+async def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
+    handle_finish_job(rclient, mdb, user, job)
+    return JSONResponse(
+        status=status.HTTP_200_OK,
+        message="ok",
+        data={},
+    )
 
 
 def start_dev():
