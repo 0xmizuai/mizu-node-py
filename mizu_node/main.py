@@ -19,7 +19,6 @@ from mizu_node.job_handler import (
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
-    handle_verify_job_result,
     queue_clean,
 )
 from mizu_node.security import verify_jwt

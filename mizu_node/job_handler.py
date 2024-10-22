@@ -1,24 +1,16 @@
-import json
-from random import randrange
 import time
 
-from pymongo import MongoClient
 from pymongo.database import Database
 from redis import Redis
-from fastapi import status
+from fastapi import HTTPException, status
 
 from mizu_node.constants import (
     REDIS_JOB_QUEUE_NAME,
-    VERIFICATION_MODE,
     BLOCKED_WORKER_PREFIX,
-    VERIFICATION_RATIO_BASE,
-    VERIFY_JOB_CALLBACK_URL,
-    VERIFY_JOB_QUEUE_NAME,
     ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
 )
 
-from mizu_node.error_handler import MizuError
-from mizu_node.types.common import JobType, VerificationMode
+from mizu_node.types.common import JobType
 from mizu_node.types.data_job import (
     DataJob,
     FinishedJob,
@@ -30,12 +22,10 @@ from mizu_node.types.data_job import (
 )
 from mizu_node.types.job_queue import JobQueue, QueueItem
 from mizu_node.types.key_prefix import KeyPrefix
-from mizu_node.utils import epoch
 
-VALID_JOB_TYPES = [JobType.classify, JobType.pow]
 job_queues = {
-    job_type: JobQueue(KeyPrefix(REDIS_JOB_QUEUE_NAME + ":" + job_type + ":"))
-    for job_type in VALID_JOB_TYPES
+    job_type: JobQueue(KeyPrefix(REDIS_JOB_QUEUE_NAME + ":" + str(job_type) + ":"))
+    for job_type in [JobType.classify, JobType.pow]
 }
 
 
@@ -44,13 +34,6 @@ def queue_clean(rclient: Redis):
         for queue in job_queues.values():
             queue.light_clean(rclient)
         time.sleep(60)
-
-
-def _block_worker(rclient: Redis, worker: str):
-    rclient.set(
-        BLOCKED_WORKER_PREFIX + worker,
-        json.dumps({"blocked": True, "updated_at": epoch()}),
-    )
 
 
 def _is_worker_blocked(rclient: Redis, worker: str) -> bool:
@@ -79,8 +62,8 @@ def handle_publish_jobs(
 
 def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob | None:
     if _is_worker_blocked(rclient, worker):
-        raise MizuError(
-            status=status.HTTP_401_UNAUTHORIZED, message="worker is blocked"
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="worker is blocked"
         )
 
     job_json = job_queues[job_type].lease(rclient, ASSIGNED_JOB_EXPIRE_TTL_SECONDS)
@@ -95,9 +78,9 @@ def handle_finish_job(
 ):
     queue = job_queues[result.job_type]
     if not queue.lease_exists(rclient, result.job_id):
-        raise MizuError(
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            message="job expired or not exists",
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="job expired or not exists",
         )
 
     job_json = queue.get_item_data(rclient, result.job_id)
