@@ -2,7 +2,6 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, Security, status, Depends
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pymongo import MongoClient
@@ -25,6 +24,7 @@ from mizu_node.job_handler import (
 from mizu_node.security import verify_jwt, verify_api_key
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import PublishJobRequest, WorkerJobResult
+from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
 rclient = redis.Redis.from_url(REDIS_URL)
@@ -72,7 +72,7 @@ async def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publ
     ids = handle_publish_jobs(rclient, publisher, req)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content={"job_ids": ids},
+        content={"message": "ok", "data": {"job_ids": ids}},
     )
 
 
@@ -80,28 +80,22 @@ async def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publ
 @error_handler
 async def take_job(job_type: JobType, user: str = Depends(get_user)):
     if not has_worker_cooled_down(rclient, user):
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content=f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}",
-        )
+        message = f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}"
+        return build_json_response(status.HTTP_429_TOO_MANY_REQUESTS, message)
     job = handle_take_job(rclient, user, job_type)
     if job is None:
-        return JSONResponse(status_code=status.HTTP_200_OK, content={job: None})
-    else:
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"job": job.model_dump()},
+        return build_json_response(
+            status.HTTP_200_OK, "no job available", {"job": None}
         )
+    else:
+        return build_json_response(status.HTTP_200_OK, "ok", {"job": job.model_dump()})
 
 
 @app.get("/finish_job")
 @error_handler
 async def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
     handle_finish_job(rclient, mdb[FINISHED_JOBS_COLLECTIONS], user, job)
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={},
-    )
+    return build_json_response(status.HTTP_200_OK, "ok")
 
 
 def start_dev():
