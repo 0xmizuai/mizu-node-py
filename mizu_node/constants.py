@@ -7,8 +7,6 @@ ASSIGNED_JOB_EXPIRE_TTL_SECONDS = int(
     os.environ.get("ASSIGNED_JOB_EXPIRE_TTL_SECONDS", 3600)
 )
 BLOCKED_WORKER_PREFIX = "blocked_worker:"
-VERIFY_JOB_CALLBACK_URL = os.environ.get("VERIFY_JOB_CALLBACK_URL")
-VERIFY_JOB_QUEUE_NAME = "verify_job_queue"
 COOLDOWN_WORKER_PREFIX = "cooldown_worker:"
 COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = int(
     os.environ.get("COOLDOWN_WORKER_EXPIRE_TTL_SECONDS", 30)
@@ -17,7 +15,7 @@ COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = int(
 # mongodb for finished jobs
 MONGO_URL = os.environ.get("MONGO_URL")
 MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME")
+API_KEY_COLLECTION = "api_keys"
+FINISHED_JOBS_COLLECTIONS = "finished_jobs"
 
-# misc
-VERIFICATION_MODE = os.environ.get("VERIFICATION_MODE") or "random"
-VERIFICATION_RATIO_BASE = 1000  # only valid when mode=random
+SECRET_KEY = os.environ["SECRET_KEY"]

@@ -7,6 +7,6 @@ class VerificationMode(str, Enum):
     random = "random"
 
 
-class JobType(str, Enum):
-    pow = "pow"
-    classification = "classification"
+class JobType(int, Enum):
+    pow = 0
+    classify = 1

@@ -1,14 +1,21 @@
 from functools import wraps
 
+from fastapi import HTTPException, status
+
+from mizu_node.utils import build_json_response
+
 
 def error_handler(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except ValueError as e:
-            return {"error": e.args}
+        except HTTPException as e:
+            return build_json_response(e.status_code, e.detail)
         except:
-            return {"error": "unknown"}
+            return build_json_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "unknown server error",
+            )
 
     return wrapper

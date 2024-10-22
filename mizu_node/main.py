@@ -2,7 +2,6 @@ import asyncio
 from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, Security, status, Depends
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pymongo import MongoClient
@@ -10,6 +9,7 @@ import redis
 
 from mizu_node.error_handler import error_handler
 from mizu_node.constants import (
+    FINISHED_JOBS_COLLECTIONS,
     MONGO_DB_NAME,
     MONGO_URL,
     REDIS_URL,
@@ -19,12 +19,12 @@ from mizu_node.job_handler import (
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
-    handle_verify_job_result,
     queue_clean,
 )
-from mizu_node.security import verify_jwt
-from mizu_node.types.data_job import PublishJobRequest
-from mizu_node.types.worker_job import WorkerJobResult
+from mizu_node.security import verify_jwt, verify_api_key
+from mizu_node.types.common import JobType
+from mizu_node.types.data_job import PublishJobRequest, WorkerJobResult
+from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
 rclient = redis.Redis.from_url(REDIS_URL)
@@ -49,7 +49,14 @@ def get_user(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    return verify_jwt(token)
+    return verify_jwt(token, SECRET_KEY)
+
+
+def get_publisher(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+) -> str:
+    token = credentials.credentials
+    return verify_api_key(mdb, token)
 
 
 @app.get("/")
@@ -60,38 +67,35 @@ async def default():
 
 @app.post("/publish_jobs")
 @error_handler
-async def publish_jobs(req: PublishJobRequest):
+async def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
     # TODO: ensure it's called from whitelisted publisher
-    ids = handle_publish_jobs(rclient, req)
-    return {"ids": ids}
+    ids = handle_publish_jobs(rclient, publisher, req)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"message": "ok", "data": {"job_ids": ids}},
+    )
 
 
 @app.get("/take_job")
 @error_handler
-async def take_job(user: str = Depends(get_user)):
+async def take_job(job_type: JobType, user: str = Depends(get_user)):
     if not has_worker_cooled_down(rclient, user):
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content=jsonable_encoder({"cool_down": COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}),
+        message = f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}"
+        return build_json_response(status.HTTP_429_TOO_MANY_REQUESTS, message)
+    job = handle_take_job(rclient, user, job_type)
+    if job is None:
+        return build_json_response(
+            status.HTTP_200_OK, "no job available", {"job": None}
         )
-    job = handle_take_job(rclient, user)
-    return {"job": job.model_dump_json()}
+    else:
+        return build_json_response(status.HTTP_200_OK, "ok", {"job": job.model_dump()})
 
 
-@app.post("/finish_job")
+@app.get("/finish_job")
 @error_handler
-async def finish_job(job: WorkerJobResult):
-    job.worker = get_user()
-    handle_finish_job(rclient, mdb, job)
-    return {"status": "ok"}
-
-
-@app.post("/verify_job_callback")
-@error_handler
-async def verify_job(job: WorkerJobResult):
-    # TODO: ensure it's called from validator
-    handle_verify_job_result(rclient, mdb, job)
-    return {"status": "ok"}
+async def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
+    handle_finish_job(rclient, mdb[FINISHED_JOBS_COLLECTIONS], user, job)
+    return build_json_response(status.HTTP_200_OK, "ok")
 
 
 def start_dev():
