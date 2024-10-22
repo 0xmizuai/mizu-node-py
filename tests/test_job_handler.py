@@ -6,8 +6,8 @@ import pytest
 from redis import Redis
 from fastapi import status
 
-from mizu_node.constants import BLOCKED_WORKER_PREFIX
 import mizu_node.job_handler as job_handler
+from mizu_node.security import block_worker
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import (
     ClassifyContext,
@@ -16,7 +16,6 @@ from mizu_node.types.data_job import (
     PublishJobRequest,
     WorkerJobResult,
 )
-from mizu_node.utils import epoch
 from tests.mongo_mock import MongoMock
 from tests.redis_mock import RedisMock
 from mizu_node.job_handler import job_queues
@@ -24,13 +23,6 @@ from mizu_node.job_handler import job_queues
 
 pow_queue = job_queues[JobType.pow]
 classify_queue = job_queues[JobType.classify]
-
-
-def _block_worker(rclient: Redis, worker: str):
-    rclient.set(
-        BLOCKED_WORKER_PREFIX + worker,
-        json.dumps({"blocked": True, "updated_at": epoch()}),
-    )
 
 
 def _build_classify_ctx(url: str):
@@ -103,7 +95,7 @@ def test_take_job_error():
     job = job_handler.handle_take_job(rclient, "worker1", JobType.classify)
     assert job is None
 
-    _block_worker(rclient, "worker1")
+    block_worker(rclient, "worker1")
     with pytest.raises(HTTPException) as e:
         job_handler.handle_take_job(rclient, "worker1", JobType.classify)
     assert e.value.status_code == status.HTTP_401_UNAUTHORIZED

@@ -6,10 +6,10 @@ from fastapi import HTTPException, status
 
 from mizu_node.constants import (
     REDIS_JOB_QUEUE_NAME,
-    BLOCKED_WORKER_PREFIX,
     ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
 )
 
+from mizu_node.security import is_worker_blocked
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import (
     DataJob,
@@ -36,10 +36,6 @@ def queue_clean(rclient: Redis):
         time.sleep(60)
 
 
-def _is_worker_blocked(rclient: Redis, worker: str) -> bool:
-    return rclient.exists(BLOCKED_WORKER_PREFIX + worker)
-
-
 def handle_publish_jobs(
     rclient: Redis, publisher: str, req: PublishJobRequest
 ) -> list[str]:
@@ -61,7 +57,7 @@ def handle_publish_jobs(
 
 
 def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob | None:
-    if _is_worker_blocked(rclient, worker):
+    if is_worker_blocked(rclient, worker):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="worker is blocked"
         )

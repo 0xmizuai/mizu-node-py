@@ -3,6 +3,7 @@ from uuid import uuid4
 from fastapi.encoders import jsonable_encoder
 import requests
 
+from mizu_node.security import block_worker
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import (
     ClassifyContext,
@@ -12,7 +13,6 @@ from mizu_node.types.data_job import (
     PublishJobRequest,
     WorkerJob,
     WorkerJobResult,
-    build_worker_job,
 )
 from mizu_node.utils import epoch
 
@@ -82,5 +82,6 @@ def happy_path():
 
 def inhonest_worker():
     publish_job(1)
+    block_worker()
     worker_job = take_job()
     finish_job(worker_job)

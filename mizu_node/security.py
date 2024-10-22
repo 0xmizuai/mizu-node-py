@@ -1,3 +1,4 @@
+import json
 import jwt
 import os
 
@@ -5,21 +6,22 @@ from fastapi import HTTPException
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 
 from pymongo.database import Database
+from redis import Redis
 
-from mizu_node.constants import API_KEY_COLLECTION
+from mizu_node.constants import API_KEY_COLLECTION, BLOCKED_WORKER_PREFIX
+from mizu_node.utils import epoch
 
 
-SECRET_KEY = os.environ["SECRET_KEY"]
 ALGORITHM = "HS256"
 
 # ToDo: we should define a schema for the decoded payload
 
 
-def verify_jwt(token: str) -> str:
+def verify_jwt(token: str, secret_key: str) -> str:
     """verify and return user is from token, raise otherwise"""
     try:
         # Decode and validate: expiration is automatically taken care of
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, secret_key, algorithms=[ALGORITHM])
         user_id = payload.get("telegramUserId")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Token is invalid")
@@ -35,3 +37,14 @@ def verify_api_key(mdb: Database, token: str) -> str:
     if doc is None:
         raise HTTPException(status_code=401, detail="API key is invalid")
     return doc["user"]
+
+
+def block_worker(rclient: Redis, worker: str):
+    rclient.set(
+        BLOCKED_WORKER_PREFIX + worker,
+        json.dumps({"blocked": True, "updated_at": epoch()}),
+    )
+
+
+def is_worker_blocked(rclient: Redis, worker: str) -> bool:
+    return rclient.exists(BLOCKED_WORKER_PREFIX + worker)
