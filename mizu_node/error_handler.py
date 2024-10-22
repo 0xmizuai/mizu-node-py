@@ -10,10 +10,11 @@ def error_handler(func):
         try:
             return func(*args, **kwargs)
         except HTTPException as e:
-            return JSONResponse(status=e.status_code, message=e.detail)
+            return JSONResponse(status_code=e.status_code, content=e.detail)
         except:
             return JSONResponse(
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR, message="unknown error"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content="unknown server error",
             )
 
     return wrapper

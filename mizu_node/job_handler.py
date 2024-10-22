@@ -1,6 +1,6 @@
 import time
 
-from pymongo.database import Database
+from pymongo.database import Collection
 from redis import Redis
 from fastapi import HTTPException, status
 
@@ -74,7 +74,7 @@ def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob
 
 
 def handle_finish_job(
-    rclient: Redis, mdb: Database, worker: str, result: WorkerJobResult
+    rclient: Redis, mdb: Collection, worker: str, result: WorkerJobResult
 ):
     queue = job_queues[result.job_type]
     if not queue.lease_exists(rclient, result.job_id):
@@ -86,5 +86,5 @@ def handle_finish_job(
     job_json = queue.get_item_data(rclient, result.job_id)
     job = DataJob.model_validate_json(job_json)
     finished = FinishedJob(worker, job, result)
-    mdb["jobs"].insert_one(finished.__dict__)
+    mdb.insert_one(finished.__dict__)
     queue.complete(rclient, job.job_id)

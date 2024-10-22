@@ -10,6 +10,7 @@ import redis
 
 from mizu_node.error_handler import error_handler
 from mizu_node.constants import (
+    FINISHED_JOBS_COLLECTIONS,
     MONGO_DB_NAME,
     MONGO_URL,
     REDIS_URL,
@@ -21,7 +22,7 @@ from mizu_node.job_handler import (
     handle_finish_job,
     queue_clean,
 )
-from mizu_node.security import verify_jwt
+from mizu_node.security import verify_jwt, verify_api_key
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import PublishJobRequest, WorkerJobResult
 from mizu_node.worker_handler import has_worker_cooled_down
@@ -51,6 +52,13 @@ def get_user(
     return verify_jwt(token)
 
 
+def get_publisher(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+) -> str:
+    token = credentials.credentials
+    return verify_api_key(mdb, token)
+
+
 @app.get("/")
 @app.get("/healthcheck")
 async def default():
@@ -59,13 +67,12 @@ async def default():
 
 @app.post("/publish_jobs")
 @error_handler
-async def publish_jobs(req: PublishJobRequest):
+async def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
     # TODO: ensure it's called from whitelisted publisher
-    ids = handle_publish_jobs(rclient, req)
+    ids = handle_publish_jobs(rclient, publisher, req)
     return JSONResponse(
-        status=status.HTTP_200_OK,
-        message="ok",
-        data={"job_ids": ids},
+        status_code=status.HTTP_200_OK,
+        content={"job_ids": ids},
     )
 
 
@@ -74,29 +81,26 @@ async def publish_jobs(req: PublishJobRequest):
 async def take_job(job_type: JobType, user: str = Depends(get_user)):
     if not has_worker_cooled_down(rclient, user):
         return JSONResponse(
-            status=status.HTTP_429_TOO_MANY_REQUESTS,
-            message=jsonable_encoder({"cool_down": COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}),
-            data=None,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content=f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}",
         )
     job = handle_take_job(rclient, user, job_type)
     if job is None:
-        return JSONResponse(
-            status=status.HTTP_200_OK, message="no job available", data={job: None}
-        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content={job: None})
     else:
         return JSONResponse(
-            status=status.HTTP_200_OK,
-            message="ok",
-            data={"job": job.model_dump()},
+            status_code=status.HTTP_200_OK,
+            content={"job": job.model_dump()},
         )
 
 
+@app.get("/finish_job")
+@error_handler
 async def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
-    handle_finish_job(rclient, mdb, user, job)
+    handle_finish_job(rclient, mdb[FINISHED_JOBS_COLLECTIONS], user, job)
     return JSONResponse(
-        status=status.HTTP_200_OK,
-        message="ok",
-        data={},
+        status_code=status.HTTP_200_OK,
+        content={},
     )
 
 
