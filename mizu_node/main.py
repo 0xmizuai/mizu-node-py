@@ -92,8 +92,6 @@ async def take_job(job_type: JobType, user: str = Depends(get_user)):
         )
 
 
-@app.post("/finish_job")
-@error_handler
 async def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
     handle_finish_job(rclient, mdb, user, job)
     return JSONResponse(
