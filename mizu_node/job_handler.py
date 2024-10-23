@@ -84,3 +84,7 @@ def handle_finish_job(
     finished = FinishedJob(worker, job, result)
     mdb.insert_one(finished.__dict__)
     queue.complete(rclient, job.job_id)
+
+
+def handle_queue_len(rclient: Redis) -> int:
+    return job_queues[JobType.classify].queue_len(rclient)
