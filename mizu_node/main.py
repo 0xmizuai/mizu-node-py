@@ -75,7 +75,7 @@ def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)
     ids = handle_publish_jobs(rclient, publisher, req)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content={"message": "ok", "data": {"job_ids": ids}},
+        content={"message": "ok", "data": {"jobIds": ids}},
     )
 
 
