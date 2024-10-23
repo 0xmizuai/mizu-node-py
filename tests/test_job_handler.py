@@ -23,25 +23,25 @@ pow_queue = job_queues[JobType.pow]
 classify_queue = job_queues[JobType.classify]
 
 
-def _build_classifyCtx(key: str):
+def _build_classify_ctx(key: str):
     return ClassifyContext(
-        r2Key=key,
-        byteSize=1,
+        r2_key=key,
+        byte_size=1,
         checksum="0x",
     )
 
 
-def _build_powCtx():
+def _build_pow_ctx():
     return PowContext(difficulty=1, seed=str(uuid4()))
 
 
 def _new_data_job_payload(job_type: str, r2_key: str) -> DataJobPayload:
     if job_type == JobType.classify:
         return DataJobPayload(
-            jobType=JobType.classify, classifyCtx=_build_classifyCtx(r2_key)
+            job_type=JobType.classify, classify_ctx=_build_classify_ctx(r2_key)
         )
     else:
-        return DataJobPayload(jobType=JobType.pow, powCtx=_build_powCtx())
+        return DataJobPayload(job_type=JobType.pow, pow_ctx=_build_pow_ctx())
 
 
 def _publish_jobs(rclient: Redis, job_type: JobType, num_jobs=3):
@@ -71,15 +71,15 @@ def test_take_job_ok():
 
     # take classify job 1
     job1 = job_handler.handle_take_job(rclient, "worker1", JobType.classify)
-    assert job1.jobId == cids[0]
-    assert job1.jobType == JobType.classify
+    assert job1.job_id == cids[0]
+    assert job1.job_type == JobType.classify
     classify_queue.queue_len(rclient) == 3
     classify_queue.processing_len(rclient) == 1
 
     # take pow job 1
     job2 = job_handler.handle_take_job(rclient, "worker2", JobType.pow)
-    assert job2.jobId == pids[0]
-    assert job2.jobType == JobType.pow
+    assert job2.job_id == pids[0]
+    assert job2.job_type == JobType.pow
     pow_queue.queue_len(rclient) == 3
     pow_queue.processing_len(rclient) == 1
 
@@ -111,9 +111,9 @@ def test_finish_job_ok():
 
     # Case 1: job 1 finished by worker1
     r1 = WorkerJobResult(
-        jobId=cids[0],
-        jobType=JobType.classify,
-        classifyResult=["t1"],
+        job_id=cids[0],
+        job_type=JobType.classify,
+        classify_result=["t1"],
     )
     job_handler.handle_finish_job(rclient, mdb, "worker1", r1)
     j1 = mdb.find_one({"_id": cids[0]})
@@ -123,7 +123,7 @@ def test_finish_job_ok():
     assert j1["finishedAt"] is not None
 
     # Case 2: job 2 finished by worker2
-    r2 = WorkerJobResult(jobId=pids[0], jobType=JobType.pow, powResult="0x")
+    r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="0x")
     job_handler.handle_finish_job(rclient, mdb, "worker2", r2)
     j2 = mdb.find_one({"_id": pids[0]})
     assert j2["jobType"] == JobType.pow
@@ -139,9 +139,9 @@ def test_finish_job_error():
     job = job_handler.handle_take_job(rclient, "worker1", JobType.classify)
 
     r2 = WorkerJobResult(
-        jobId=job.jobId,
-        jobType=JobType.classify,
-        classifyResult=["t1"],
+        job_id=job.job_id,
+        job_type=JobType.classify,
+        classify_result=["t1"],
     )
     job_handler.handle_finish_job(rclient, mdb, "worker1", r2)
     with pytest.raises(HTTPException) as e:
