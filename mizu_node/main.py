@@ -117,4 +117,4 @@ def start_dev():
 
 # the number of workers is defined by $WEB_CONCURRENCY env as default
 def start():
-    uvicorn.run("mizu_node.main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("mizu_node.main:app", host=["::", "0.0.0.0"], port=8000)
