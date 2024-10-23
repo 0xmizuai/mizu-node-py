@@ -17,6 +17,7 @@ from mizu_node.constants import (
     VERIFY_KEY,
 )
 from mizu_node.job_handler import (
+    handle_queue_len,
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
@@ -62,13 +63,13 @@ def get_publisher(
 
 @app.get("/")
 @app.get("/healthcheck")
-async def default():
+def default():
     return {"status": "ok"}
 
 
 @app.post("/publish_jobs")
 @error_handler
-async def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
+def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
     # TODO: ensure it's called from whitelisted publisher
     ids = handle_publish_jobs(rclient, publisher, req)
     return JSONResponse(
@@ -79,7 +80,7 @@ async def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publ
 
 @app.get("/take_job")
 @error_handler
-async def take_job(job_type: JobType, user: str = Depends(get_user)):
+def take_job(job_type: JobType, user: str = Depends(get_user)):
     if not has_worker_cooled_down(rclient, user):
         message = f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}"
         return build_json_response(status.HTTP_429_TOO_MANY_REQUESTS, message)
@@ -94,18 +95,18 @@ async def take_job(job_type: JobType, user: str = Depends(get_user)):
 
 @app.get("/finish_job")
 @error_handler
-async def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
+def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
     handle_finish_job(rclient, mdb[FINISHED_JOBS_COLLECTIONS], user, job)
     return build_json_response(status.HTTP_200_OK, "ok")
 
 
 @app.get("/queue_len")
 @error_handler
-def queue_len():
+def queue_len(job_type: JobType = JobType.classify):
     """
     Return the number of queued classify jobs.
     """
-    q_len = handle_queue_len(rclient)
+    q_len = handle_queue_len(rclient, job_type)
     return build_json_response(status.HTTP_200_OK, "ok", {"length": q_len})
 
 

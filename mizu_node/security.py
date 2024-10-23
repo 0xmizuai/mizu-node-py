@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from pymongo.database import Database
 from redis import Redis
 
-from mizu_node.constants import API_KEY_COLLECTION, BLOCKED_WORKER_PREFIX
+from mizu_node.constants import API_KEY_COLLECTION, BLOCKED_WORKER_PREFIX, MONGO_DB_NAME
 from mizu_node.utils import epoch
 import jwt
 

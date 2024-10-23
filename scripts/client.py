@@ -31,7 +31,7 @@ def _build_classify_job_payload():
 
 def _build_pow_job_payload():
     return DataJobPayload(
-        job_type=JobType.classify,
+        job_type=JobType.pow,
         pow_ctx=PowContext(difficulty=1, seed=str(uuid4())),
     )
 

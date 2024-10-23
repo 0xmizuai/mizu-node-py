@@ -7,6 +7,7 @@ from pymongo import MongoClient
 from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, API_KEY_COLLECTION
 from mizu_node.security import ALGORITHM
 
+print("Connecting to mongodb: " + MONGO_URL)
 mclient = MongoClient(MONGO_URL)
 api_keys = mclient[MONGO_DB_NAME][API_KEY_COLLECTION]
 
@@ -21,8 +22,8 @@ def issue_api_key(publisher: str):
     return key
 
 
-def get_api_keys(publisher: str):
-    docs = api_keys.find({"publisher": publisher}).to_list(length=1000)
+def get_api_keys(user: str):
+    docs = api_keys.find({"user": user}).to_list(length=1000)
     return [doc["api_key"] for doc in docs]
 
 

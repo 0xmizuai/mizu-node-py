@@ -45,14 +45,16 @@ def handle_publish_jobs(
         for job in jobs
         if job.job_type == JobType.classify
     ]
+    if len(classify_queue_items) > 0:
+        job_queues[JobType.classify].add_items(rclient, classify_queue_items)
+
     pow_queue_items = [
         QueueItem(job.job_id, job.model_dump_json())
         for job in jobs
         if job.job_type == JobType.pow
     ]
-
-    job_queues[JobType.classify].add_items(rclient, classify_queue_items)
-    job_queues[JobType.pow].add_items(rclient, pow_queue_items)
+    if len(pow_queue_items) > 0:
+        job_queues[JobType.pow].add_items(rclient, pow_queue_items)
     return [j.job_id for j in jobs]
 
 
@@ -86,5 +88,5 @@ def handle_finish_job(
     queue.complete(rclient, job.job_id)
 
 
-def handle_queue_len(rclient: Redis) -> int:
-    return job_queues[JobType.classify].queue_len(rclient)
+def handle_queue_len(rclient: Redis, job_type: JobType) -> int:
+    return job_queues[job_type].queue_len(rclient)
