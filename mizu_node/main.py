@@ -17,7 +17,6 @@ from mizu_node.constants import (
     VERIFY_KEY,
 )
 from mizu_node.job_handler import (
-    handle_queue_len,
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
