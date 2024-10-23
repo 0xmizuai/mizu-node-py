@@ -1,5 +1,8 @@
+import json
 import time
 
+from bson import BSON
+from fastapi.encoders import jsonable_encoder
 from pymongo.database import Collection
 from redis import Redis
 from fastapi import HTTPException, status
@@ -80,11 +83,10 @@ def handle_finish_job(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="job expired or not exists",
         )
-
     job_json = queue.get_item_data(rclient, result.job_id)
     job = DataJob.model_validate_json(job_json)
     finished = FinishedJob(worker, job, result)
-    mdb.insert_one(finished.__dict__)
+    mdb.insert_one(jsonable_encoder(finished))
     queue.complete(rclient, job.job_id)
 
 

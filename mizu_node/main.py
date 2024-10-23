@@ -30,7 +30,7 @@ from mizu_node.types.data_job import PublishJobRequest, WorkerJobResult
 from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
-rclient = redis.Redis.from_url(REDIS_URL)
+rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 mclient = MongoClient(MONGO_URL)
 mdb = mclient[MONGO_DB_NAME]
 
@@ -94,7 +94,7 @@ def take_job(job_type: JobType, user: str = Depends(get_user)):
         return build_json_response(status.HTTP_200_OK, "ok", {"job": job.model_dump()})
 
 
-@app.get("/finish_job")
+@app.post("/finish_job")
 @error_handler
 def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
     handle_finish_job(rclient, mdb[FINISHED_JOBS_COLLECTIONS], user, job)

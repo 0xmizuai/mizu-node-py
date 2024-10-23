@@ -59,7 +59,7 @@ class JobQueue(object):
         )
         return data
 
-    def lease_exists(self, db: Redis, item_id: str) -> bool:
+    def lease_exists(self, db: Redis, item_id: str | bytes) -> bool:
         return db.exists(self._lease_key.of(item_id)) != 0
 
     def complete(self, db: Redis, item_id: str) -> bool:

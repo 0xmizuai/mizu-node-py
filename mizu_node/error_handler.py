@@ -1,4 +1,5 @@
 from functools import wraps
+import traceback
 
 from fastapi import HTTPException, status
 
@@ -12,7 +13,8 @@ def error_handler(func):
             return func(*args, **kwargs)
         except HTTPException as e:
             return build_json_response(e.status_code, e.detail)
-        except:
+        except Exception as e:
+            print(traceback.format_exc(e))
             return build_json_response(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "unknown server error",

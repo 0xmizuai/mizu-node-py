@@ -69,18 +69,23 @@ def publish_jobs(num_jobs: int, api_key: str) -> list[(str, int)]:
     return [(job_id, req.job_type) for job_id, req in zip(jobs_id, req.data)]
 
 
-def process_job(job_type: JobType, token: str) -> str:
-    res = requests.post(
-        SERVICE_URL + "/take_job?job_type=" + job_type,
-        headers={"Authorization": "Bearer " + token},
+def process_job(job_type: JobType, jwt: str) -> str:
+    res = requests.get(
+        SERVICE_URL + "/take_job?job_type=" + str(job_type),
+        headers={"Authorization": "Bearer " + jwt},
     )
-    job = WorkerJob.model_validate(res["data"]["job"])
-    requests.post(
-        SERVICE_URL + "/finish_job",
-        json=jsonable_encoder(_build_job_result(job)),
-        headers={"Authorization": "Bearer " + token},
-    )
-    return job.job_id
+    job_raw = res.json()["data"]["job"]
+    if job_raw:
+        job = WorkerJob.model_validate(job_raw)
+        print("processing job: " + job.model_dump_json())
+        requests.post(
+            SERVICE_URL + "/finish_job",
+            json=jsonable_encoder(_build_job_result(job)),
+            headers={"Authorization": "Bearer " + jwt},
+        )
+        return job.job_id
+    else:
+        print("no job available")
 
 
 parser = argparse.ArgumentParser()
@@ -105,7 +110,7 @@ job_parser_process = subparsers.add_parser(
     description="take and finish jobs",
 )
 job_parser_process.add_argument(
-    "--token",
+    "--jwt",
     action="store",
     type=str,
     help="the jwt token for auth",
@@ -113,7 +118,7 @@ job_parser_process.add_argument(
 job_parser_process.add_argument(
     "--job_type",
     action="store",
-    type=str,
+    type=int,
     help="the job type to process",
 )
 
@@ -155,7 +160,7 @@ def main():
         job_ids = publish_jobs(args.num, args.api_key)
         print("Published jobs: " + str(job_ids))
     elif args.command == "process":
-        job_id = process_job(args.job_type, args.token)
+        job_id = process_job(args.job_type, args.jwt)
         print(f"Processed {args.job_type} job: {job_id}")
     elif args.command == "new_api_key":
         key = issue_api_key(args.user)
