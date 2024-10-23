@@ -1,9 +1,11 @@
 import binascii
 import os
 import time
+
 import jwt
 from pymongo import MongoClient
-from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, API_KEY_COLLECTION, SECRET_KEY
+from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, API_KEY_COLLECTION
+from mizu_node.security import ALGORITHM
 
 mclient = MongoClient(MONGO_URL)
 api_keys = mclient[MONGO_DB_NAME][API_KEY_COLLECTION]
@@ -24,9 +26,14 @@ def get_api_keys(publisher: str):
     return [doc["api_key"] for doc in docs]
 
 
-def sign_jwt(user: str):
-    exp = time.time() + 100  # enough to not expire during this test
-    token = jwt.encode(
-        {"telegramUserId": user, "exp": exp}, key=SECRET_KEY, algorithm="HS256"
-    )
-    return token
+def sign_jwt(user: str, private_key: str):
+    headers = {
+        "alg": "EdDSA",
+        "typ": "JWT",
+    }
+    payload = {
+        "exp": time.time() + 3600 * 7,
+        "iat": time.time(),
+        "sub": user,
+    }
+    return jwt.encode(payload, private_key, algorithm=ALGORITHM, headers=headers)

@@ -1,33 +1,25 @@
 import argparse
+import os
 import random
-import time
 from uuid import uuid4
 from fastapi.encoders import jsonable_encoder
-import jwt
 import requests
 
-from mizu_node.constants import SECRET_KEY
-from mizu_node.security import block_worker
+from mizu_node.constants import VERIFY_KEY
+from mizu_node.security import verify_jwt
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import (
     ClassifyContext,
-    DataJob,
     DataJobPayload,
     PowContext,
     PublishJobRequest,
     WorkerJob,
     WorkerJobResult,
 )
-from scripts.auth import get_api_keys, issue_api_key
+from scripts.auth import get_api_keys, issue_api_key, sign_jwt
 
 SERVICE_URL = "http://localhost:8000"
-
-
-def sign_jwt(user: str, secret_key: str):
-    exp = time.time() + 100
-    return jwt.encode(
-        {"telegramUserId": user, "exp": exp}, key=secret_key, algorithm="HS256"
-    )
+SECRET_KEY = os.environ["SECRET_KEY"]
 
 
 def _build_classify_job_payload():
@@ -128,7 +120,6 @@ job_parser_process.add_argument(
 new_api_key_parser = subparsers.add_parser(
     "new_api_key",
     add_help=False,
-    description="auth",
 )
 new_api_key_parser.add_argument(
     "--user", action="store", type=str, help="User to issue new API key"
@@ -137,19 +128,23 @@ new_api_key_parser.add_argument(
 get_api_keys_parser = subparsers.add_parser(
     "get_api_keys",
     add_help=False,
-    description="auth",
 )
 get_api_keys_parser.add_argument(
     "--user", action="store", type=str, help="User to query API keys"
 )
 
-new_token_parser = subparsers.add_parser(
-    "new_token",
+new_jwt_parser = subparsers.add_parser(
+    "new_jwt",
     add_help=False,
-    description="auth",
 )
-new_token_parser.add_argument(
-    "--user", action="store", type=str, help="user id to sign"
+new_jwt_parser.add_argument("--user", action="store", type=str, help="user id to sign")
+
+verify_jwt_parser = subparsers.add_parser(
+    "verify_jwt",
+    add_help=False,
+)
+verify_jwt_parser.add_argument(
+    "--token", action="store", type=str, help="the token to verify"
 )
 
 args = parser.parse_args()
@@ -169,8 +164,11 @@ def main():
         keys = get_api_keys(args.user)
         for key in keys:
             print("API key: " + key)
-    elif args.command == "new_token":
+    elif args.command == "new_jwt":
         token = sign_jwt(args.user, SECRET_KEY)
         print("Token: " + token)
+    elif args.command == "verify_jwt":
+        user = verify_jwt(args.token, VERIFY_KEY)
+        print("User: " + user)
     else:
         raise ValueError("Invalid arguments")

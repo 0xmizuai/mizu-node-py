@@ -14,6 +14,7 @@ from mizu_node.constants import (
     MONGO_URL,
     REDIS_URL,
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
+    VERIFY_KEY,
 )
 from mizu_node.job_handler import (
     handle_take_job,
@@ -49,7 +50,7 @@ def get_user(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    return verify_jwt(token, SECRET_KEY)
+    return verify_jwt(token, VERIFY_KEY)
 
 
 def get_publisher(

@@ -1,33 +1,30 @@
 import json
-import jwt
 
 from fastapi import HTTPException
-from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
-
 from pymongo.database import Database
 from redis import Redis
 
 from mizu_node.constants import API_KEY_COLLECTION, BLOCKED_WORKER_PREFIX
 from mizu_node.utils import epoch
+import jwt
 
-
-ALGORITHM = "HS256"
+ALGORITHM = "EdDSA"
 
 # ToDo: we should define a schema for the decoded payload
 
 
-def verify_jwt(token: str, secret_key: str) -> str:
+def verify_jwt(token: str, public_key: str) -> str:
     """verify and return user is from token, raise otherwise"""
     try:
         # Decode and validate: expiration is automatically taken care of
-        payload = jwt.decode(token, secret_key, algorithms=[ALGORITHM])
-        user_id = payload.get("telegramUserId")
+        payload = jwt.decode(jwt=token, key=public_key, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Token is invalid")
         return str(user_id)
-    except ExpiredSignatureError:
+    except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
-    except InvalidTokenError:
+    except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token verification failed")
 
 

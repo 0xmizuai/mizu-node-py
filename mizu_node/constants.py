@@ -18,4 +18,4 @@ MONGO_DB_NAME = os.environ.get("MONGO_DB_NAME")
 API_KEY_COLLECTION = "api_keys"
 FINISHED_JOBS_COLLECTIONS = "finished_jobs"
 
-SECRET_KEY = os.environ["SECRET_KEY"]
+VERIFY_KEY = os.environ["VERIFY_KEY"]
