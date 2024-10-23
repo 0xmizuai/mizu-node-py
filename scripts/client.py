@@ -25,14 +25,14 @@ SECRET_KEY = os.environ["SECRET_KEY"]
 def _build_classify_job_payload():
     return DataJobPayload(
         job_type=JobType.classify,
-        classify_ctx=ClassifyContext(r2Key=str(uuid4()), byteSize=1, checksum="0x"),
+        classify_ctx=ClassifyContext(r2_key=str(uuid4()), byte_size=1, checksum="0x"),
     )
 
 
 def _build_pow_job_payload():
     return DataJobPayload(
-        jobType=JobType.pow,
-        powCtx=PowContext(difficulty=1, seed=str(uuid4())),
+        job_type=JobType.pow,
+        pow_ctx=PowContext(difficulty=1, seed=str(uuid4())),
     )
 
 
@@ -50,10 +50,12 @@ def _build_publish_job_request(num_jobs: int):
 def _build_job_result(job: WorkerJob):
     if job.job_type == JobType.classify:
         return WorkerJobResult(
-            job_id=job.jobId, job_type=job.jobType, classifyResult=["tag1", "tag2"]
+            job_id=job.job_id, job_type=job.job_type, classify_result=["tag1", "tag2"]
         )
     else:
-        return WorkerJobResult(job_id=job.jobId, job_type=job.jobType, powResult="0x")
+        return WorkerJobResult(
+            job_id=job.job_id, job_type=job.job_type, pow_result="0x"
+        )
 
 
 def publish_jobs(num_jobs: int, api_key: str) -> list[(str, int)]:
@@ -64,7 +66,7 @@ def publish_jobs(num_jobs: int, api_key: str) -> list[(str, int)]:
         headers={"Authorization": "Bearer " + api_key},
     )
     jobs_id = result.json()["data"]["job_ids"]
-    return [(job_id, req.jobType) for job_id, req in zip(jobs_id, req.data)]
+    return [(job_id, req.job_type) for job_id, req in zip(jobs_id, req.data)]
 
 
 def process_job(job_type: JobType, jwt: str) -> str:
