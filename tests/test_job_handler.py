@@ -25,7 +25,7 @@ classify_queue = job_queues[JobType.classify]
 
 def _build_classify_ctx(url: str):
     return ClassifyContext(
-        r2_url=url,
+        r2_key=url,
         byte_size=1,
         checksum="0x",
     )
@@ -35,10 +35,10 @@ def _build_pow_ctx():
     return PowContext(difficulty=1, seed=str(uuid4()))
 
 
-def _new_data_job_payload(job_type: str, r2_url: str) -> DataJobPayload:
+def _new_data_job_payload(job_type: str, r2_key: str) -> DataJobPayload:
     if job_type == JobType.classify:
         return DataJobPayload(
-            job_type=JobType.classify, classify_ctx=_build_classify_ctx(r2_url)
+            job_type=JobType.classify, classify_ctx=_build_classify_ctx(r2_key)
         )
     else:
         return DataJobPayload(job_type=JobType.pow, pow_ctx=_build_pow_ctx())

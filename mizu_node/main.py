@@ -98,6 +98,16 @@ async def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
     return build_json_response(status.HTTP_200_OK, "ok")
 
 
+@app.get("/queue_len")
+@error_handler
+def queue_len():
+    """
+    Return the number of queued classify jobs.
+    """
+    q_len = handle_queue_len(rclient)
+    return build_json_response(status.HTTP_200_OK, "ok", {"length": q_len})
+
+
 def start_dev():
     uvicorn.run("mizu_node.main:app", host="0.0.0.0", port=8000, reload=True)
 

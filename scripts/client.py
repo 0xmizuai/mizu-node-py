@@ -33,7 +33,7 @@ def sign_jwt(user: str, secret_key: str):
 def _build_classify_job_payload():
     return DataJobPayload(
         job_type=JobType.classify,
-        classify_ctx=ClassifyContext(r2_url=str(uuid4()), byte_size=1, checksum="0x"),
+        classify_ctx=ClassifyContext(r2_key=str(uuid4()), byte_size=1, checksum="0x"),
     )
 
 

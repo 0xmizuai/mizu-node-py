@@ -6,7 +6,7 @@ from mizu_node.types.common import JobType
 
 
 class ClassifyContext(BaseModel):
-    r2_url: str
+    r2_key: str
     byte_size: int
     checksum: str
 
