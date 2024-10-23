@@ -6,8 +6,8 @@ from mizu_node.types.common import JobType
 
 
 class ClassifyContext(BaseModel):
-    r2_key: str
-    byte_size: int
+    r2Key: str
+    byteSize: int
     checksum: str
 
 
@@ -17,9 +17,9 @@ class PowContext(BaseModel):
 
 
 class DataJobPayload(BaseModel):
-    job_type: JobType
-    classify_ctx: ClassifyContext | None = None
-    pow_ctx: PowContext | None = None
+    jobType: JobType
+    classifyCtx: ClassifyContext | None = None
+    powCtx: PowContext | None = None
 
 
 class PublishJobRequest(BaseModel):
@@ -27,52 +27,52 @@ class PublishJobRequest(BaseModel):
 
 
 class DataJob(DataJobPayload):
-    job_id: str
-    job_type: JobType
+    jobId: str
+    jobType: JobType
     publisher: str
-    published_at: int
+    publishedAt: int
 
 
 class WorkerJob(DataJobPayload):
-    job_id: str
+    jobId: str
 
 
 class WorkerJobResult(BaseModel):
-    job_id: str
-    job_type: JobType
-    classify_result: list[str] | None = None
-    pow_result: str | None = None
+    jobId: str
+    jobType: JobType
+    classifyResult: list[str] | None = None
+    powResult: str | None = None
 
 
 class FinishedJob(object):
     def __init__(self, worker: str, job: DataJob, result: WorkerJobResult):
-        self._id = job.job_id
-        self.job_type = job.job_type
-        self.classify_ctx = job.classify_ctx
-        self.pow_ctx = job.pow_ctx
-        self.published_at = job.published_at
+        self._id = job.jobId
+        self.jobType = job.jobType
+        self.classifyCtx = job.classifyCtx
+        self.powCtx = job.powCtx
+        self.publishedAt = job.publishedAt
         self.publisher = job.publisher
-        self.finished_at = int(time.time())
+        self.finishedAt = int(time.time())
         self.worker = worker
-        self.classify_result = result.classify_result
-        self.pow_result = result.pow_result
+        self.classifyResult = result.classifyResult
+        self.powResult = result.powResult
 
 
 def build_data_job(publisher: str, job: DataJobPayload) -> DataJob:
     return DataJob(
-        job_id=str(uuid.uuid4()),
-        job_type=job.job_type,
+        jobId=str(uuid.uuid4()),
+        jobType=job.jobType,
         publisher=publisher,
-        published_at=int(time.time()),
-        classify_ctx=job.classify_ctx,
-        pow_ctx=job.pow_ctx,
+        publishedAt=int(time.time()),
+        classifyCtx=job.classifyCtx,
+        powCtx=job.powCtx,
     )
 
 
 def build_worker_job(job: DataJob) -> WorkerJob:
     return WorkerJob(
-        job_id=job.job_id,
-        job_type=job.job_type,
-        classify_ctx=job.classify_ctx,
-        pow_ctx=job.pow_ctx,
+        jobId=job.jobId,
+        jobType=job.jobType,
+        classifyCtx=job.classifyCtx,
+        powCtx=job.powCtx,
     )
