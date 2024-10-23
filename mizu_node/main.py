@@ -22,6 +22,7 @@ from mizu_node.job_handler import (
     handle_publish_jobs,
     handle_finish_job,
     queue_clean,
+    handle_queue_len,
 )
 from mizu_node.security import verify_jwt, verify_api_key
 from mizu_node.types.common import JobType
