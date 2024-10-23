@@ -17,7 +17,6 @@ from mizu_node.constants import (
     VERIFY_KEY,
 )
 from mizu_node.job_handler import (
-    handle_queue_len,
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
@@ -117,4 +116,4 @@ def start_dev():
 
 # the number of workers is defined by $WEB_CONCURRENCY env as default
 def start():
-    uvicorn.run("mizu_node.main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("mizu_node.main:app", host=["::", "0.0.0.0"], port=8000)
