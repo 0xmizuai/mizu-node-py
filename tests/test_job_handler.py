@@ -23,9 +23,9 @@ pow_queue = job_queues[JobType.pow]
 classify_queue = job_queues[JobType.classify]
 
 
-def _build_classify_ctx(url: str):
+def _build_classify_ctx(key: str):
     return ClassifyContext(
-        r2_key=url,
+        r2_key=key,
         byte_size=1,
         checksum="0x",
     )
@@ -117,19 +117,19 @@ def test_finish_job_ok():
     )
     job_handler.handle_finish_job(rclient, mdb, "worker1", r1)
     j1 = mdb.find_one({"_id": cids[0]})
-    assert j1["job_type"] == JobType.classify
-    assert j1["classify_result"] == ["t1"]
+    assert j1["jobType"] == JobType.classify
+    assert j1["classifyResult"] == ["t1"]
     assert j1["worker"] == "worker1"
-    assert j1["finished_at"] is not None
+    assert j1["finishedAt"] is not None
 
     # Case 2: job 2 finished by worker2
     r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="0x")
     job_handler.handle_finish_job(rclient, mdb, "worker2", r2)
     j2 = mdb.find_one({"_id": pids[0]})
-    assert j2["job_type"] == JobType.pow
-    assert j2["pow_result"] == "0x"
+    assert j2["jobType"] == JobType.pow
+    assert j2["powResult"] == "0x"
     assert j2["worker"] == "worker2"
-    assert j2["finished_at"] is not None
+    assert j2["finishedAt"] is not None
 
 
 def test_finish_job_error():

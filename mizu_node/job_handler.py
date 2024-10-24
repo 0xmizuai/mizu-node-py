@@ -85,7 +85,7 @@ def handle_finish_job(
         )
     job_json = queue.get_item_data(rclient, result.job_id)
     job = DataJob.model_validate_json(job_json)
-    finished = FinishedJob(worker, job, result)
+    finished = FinishedJob.from_models(worker, job, result)
     mdb.insert_one(jsonable_encoder(finished))
     queue.complete(rclient, job.job_id)
 

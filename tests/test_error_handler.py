@@ -1,3 +1,4 @@
+import json
 import pprint
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -19,9 +20,9 @@ def test_error_handler():
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid job"
     )
     result1: JSONResponse = do_not_pass(e)
-    result1.status_code = e.status_code
-    result1.content = e.detail
+    assert result1.status_code == e.status_code
+    assert json.loads(result1.body.decode("utf-8"))["message"] == e.detail
 
-    result2: JSONResponse = do_not_pass(Exception("arg2"))
-    result2.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
-    result2.content = "unknown server error"
+    result2: JSONResponse = do_not_pass(Exception())
+    assert result2.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert json.loads(result2.body.decode("utf-8"))["message"] == "unknown server error"
