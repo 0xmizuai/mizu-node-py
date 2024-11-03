@@ -159,8 +159,8 @@ class CommonCrawlWetImporter(threading.Thread):
                     f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {warc_id}"
                 )
 
-            # with raw data > 12MB, we got ~4MB after compression
-            if cached_size > 12 * 1024 * 1024:
+            # with raw data > 20MB, we got ~5MB after compression
+            if cached_size > 20 * 1024 * 1024:
                 r2_key = self._gen_r2_key(filename, str(progress.next_chunk))
                 self._save_chunk(cached, r2_key, progress)
                 cached_size = 0
