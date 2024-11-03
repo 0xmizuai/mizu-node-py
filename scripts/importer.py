@@ -153,7 +153,7 @@ class CommonCrawlWetImporter(threading.Thread):
                 cached_size += len(r)
             else:
                 print(
-                    f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {record.wac_id}"
+                    f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {warc_id}"
                 )
 
             if cached_size > 5 * 1024 * 1024:  # > 5MB
