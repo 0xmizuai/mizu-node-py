@@ -16,12 +16,12 @@ from mizu_node.constants import MONGO_URL
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
-R2_BUCKET_NAME = os.environ["R2_BUCKET_NAME"]
+R2_BUCKET_NAME = "mizu-cmc"
 
 COMMON_CRAWL_URL_PREFIX = "https://data.commoncrawl.org"
 LOCAL_DATA_PATH = os.environ["LOCAL_DATA_PATH"]
 
-NUM_OF_THREADS = os.environ.get("NUM_OF_THREADS", 32)
+NUM_OF_THREADS = int(os.environ.get("NUM_OF_THREADS", 32))
 MONGO_DB_NAME = "commoncrawl"
 
 
@@ -67,6 +67,7 @@ class Progress(object):
 
 class CommonCrawlWetImporter(threading.Thread):
     def __init__(self, wid: int, batch: str, q: queue.Queue):
+        super().__init__()
         self.wid = wid
         self.batch = batch
         self.q = q
@@ -130,7 +131,7 @@ class CommonCrawlWetImporter(threading.Thread):
             print(f"Thread {self.wid}: {filepath} already processed, skipping...")
             return
 
-        print(f"Thread {self.wid}: processing {filepath}...")
+        print(f"Thread {self.wid}: processing {filepath}")
         resp = requests.get(f"{COMMON_CRAWL_URL_PREFIX}/{filepath}", stream=True)
         resp.raise_for_status()
 
@@ -154,7 +155,7 @@ class CommonCrawlWetImporter(threading.Thread):
                 cached_size += len(r)
             else:
                 print(
-                    "Thread {self.wid}: skip non-conversion type {record.rec_type} with id {wac_id}"
+                    f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {wac_id}"
                 )
 
             if cached_size > 5 * 1024 * 1024:  # > 5MB
@@ -198,17 +199,10 @@ def download_large_file(url, destination):
         print("Error downloading the file: ", e)
 
 
-def load_cmc_paths(filename: str):
-    with open(filename) as f:
-        lines = f.readlines()
-        return [COMMON_CRAWL_URL_PREFIX + line.strip() for line in lines]
-
-
 def main():
-    Path(LOCAL_DATA_PATH).mkdir(parents=True, exist_ok=True)
-    filepaths = load_cmc_paths(os.path.join(LOCAL_DATA_PATH, "wet.path"))
     q = queue.Queue()
-    for filepath in filepaths:
-        q.put_nowait(filepath)
-    for wid in range(1):
+    with open(os.path.join(LOCAL_DATA_PATH, "wet.paths")) as f:
+        for line in f:
+            q.put_nowait(line.strip())
+    for wid in range(NUM_OF_THREADS):
         CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
