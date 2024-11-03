@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 import queue
 import threading
+import zlib
 
 import boto3
 from pymongo import MongoClient
@@ -10,10 +11,11 @@ import requests
 from warcio.archiveiterator import ArchiveIterator
 import requests
 
+
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
-R2_BUCKET_NAME = "mizu-cmc"
+R2_BUCKET_NAME = "mizu-cmc-compressed"
 
 COMMON_CRAWL_URL_PREFIX = "https://data.commoncrawl.org"
 LOCAL_DATA_PATH = os.environ["LOCAL_DATA_PATH"]
@@ -90,8 +92,9 @@ class CommonCrawlWetImporter(threading.Thread):
         progress: Progress,
     ):
         print(f"Thread {self.wid}: writing chunk {progress.next_chunk}")
+        compressed = zlib.compress("\n".join(cached).encode("utf-8"))
         self.s3.meta.client.put_object(
-            Bucket=R2_BUCKET_NAME, Key=r2_key, Body="\n".join(cached)
+            Bucket=R2_BUCKET_NAME, Key=r2_key, Body=compressed
         )
         self.r2_metadata.update_one(
             {
@@ -121,7 +124,7 @@ class CommonCrawlWetImporter(threading.Thread):
         )
 
     def _gen_r2_key(self, filename: str, chunk: int):
-        return os.path.join(self.batch, "wet", filename, str(chunk))
+        return os.path.join(self.batch, "wet", filename, str(chunk) + ".zz")
 
     def iterate_warc_file(self, filepath: str):
         progress = self._get_progress(filepath)
@@ -156,7 +159,8 @@ class CommonCrawlWetImporter(threading.Thread):
                     f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {warc_id}"
                 )
 
-            if cached_size > 5 * 1024 * 1024:  # > 5MB
+            # with raw data > 12MB, we got ~4MB after compression
+            if cached_size > 12 * 1024 * 1024:
                 r2_key = self._gen_r2_key(filename, str(progress.next_chunk))
                 self._save_chunk(cached, r2_key, progress)
                 cached_size = 0
