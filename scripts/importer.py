@@ -79,7 +79,7 @@ class CommonCrawlWetImporter(threading.Thread):
         )
         self.mclient = MongoClient(MONGO_URL)
         self.progress_coll = self.mclient[MONGO_DB_NAME]["progress"]
-        self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata_wet_r2"]
+        self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
 
     def _get_progress(self, filepath: str) -> Progress | None:
         doc = self.progress_coll.find_one({"_id": filepath})
