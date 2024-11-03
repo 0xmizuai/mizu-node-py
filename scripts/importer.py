@@ -1,7 +1,6 @@
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 import queue
 import threading
 
@@ -10,8 +9,6 @@ from pymongo import MongoClient
 import requests
 from warcio.archiveiterator import ArchiveIterator
 import requests
-
-from mizu_node.constants import MONGO_URL
 
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
@@ -22,6 +19,7 @@ COMMON_CRAWL_URL_PREFIX = "https://data.commoncrawl.org"
 LOCAL_DATA_PATH = os.environ["LOCAL_DATA_PATH"]
 
 NUM_OF_THREADS = int(os.environ.get("NUM_OF_THREADS", 32))
+MONGO_URL = os.environ["MONGO_URL"]
 MONGO_DB_NAME = "commoncrawl"
 
 
