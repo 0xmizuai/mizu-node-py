@@ -216,9 +216,6 @@ def main():
         lines = [line.decode() for line in extracted.split(b"\n")]
     [start, end] = [int(i) for i in args.range.split(",")]
     for i in range(start, end):
-        print(lines[i])
         q.put_nowait(lines[i].strip())
-
-
-#    for wid in range(NUM_OF_THREADS):
-#        CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
+    for wid in range(NUM_OF_THREADS):
+        CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
