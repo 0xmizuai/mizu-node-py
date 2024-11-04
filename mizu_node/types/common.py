@@ -10,3 +10,4 @@ class VerificationMode(str, Enum):
 class JobType(int, Enum):
     pow = 0
     classify = 1
+    batch_classify = 2

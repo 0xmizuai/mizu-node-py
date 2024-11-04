@@ -17,6 +17,7 @@ from mizu_node.constants import (
     VERIFY_KEY,
 )
 from mizu_node.job_handler import (
+    handle_query_job,
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
@@ -25,7 +26,7 @@ from mizu_node.job_handler import (
 )
 from mizu_node.security import verify_jwt, verify_api_key
 from mizu_node.types.common import JobType
-from mizu_node.types.data_job import PublishJobRequest, WorkerJobResult
+from mizu_node.types.data_job import PublishJobRequest, QueryJobRequest, WorkerJobResult
 from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
@@ -72,10 +73,14 @@ def default():
 def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
     # TODO: ensure it's called from whitelisted publisher
     ids = handle_publish_jobs(rclient, publisher, req)
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={"message": "ok", "data": {"jobIds": ids}},
-    )
+    return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
+
+
+@app.get("/job_status")
+@error_handler
+def finish_job(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
+    data = handle_query_job(mdb[FINISHED_JOBS_COLLECTIONS], publisher, req)
+    return build_json_response(status.HTTP_200_OK, "ok", data)
 
 
 @app.get("/take_job")
