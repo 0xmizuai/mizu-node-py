@@ -1,3 +1,5 @@
+import argparse
+import gzip
 import json
 import os
 from datetime import datetime
@@ -201,10 +203,22 @@ def download_large_file(url, destination):
         print("Error downloading the file: ", e)
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--range", type=str, action="store", help="e.g. 10,20")
+parser.add_argument("--url", type=str, action="store", help="URL to download")
+args = parser.parse_args()
+
+
 def main():
     q = queue.Queue()
-    with open(os.path.join(LOCAL_DATA_PATH, "wet.paths")) as f:
-        for line in f:
-            q.put_nowait(line.strip())
-    for wid in range(NUM_OF_THREADS):
-        CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
+    with requests.get(args.url, stream=True) as res:
+        extracted = gzip.decompress(res.content)
+        lines = [line.decode() for line in extracted.split(b"\n")]
+    [start, end] = [int(i) for i in args.range.split(",")]
+    for i in range(start, end):
+        print(lines[i])
+        q.put_nowait(lines[i].strip())
+
+
+#    for wid in range(NUM_OF_THREADS):
+#        CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
