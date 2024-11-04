@@ -18,6 +18,7 @@ from mizu_node.types.data_job import (
     DataJob,
     FinishedJob,
     PublishJobRequest,
+    QueryJobRequest,
     WorkerJob,
     WorkerJobResult,
     build_data_job,
@@ -28,7 +29,7 @@ from mizu_node.types.key_prefix import KeyPrefix
 
 job_queues = {
     job_type: JobQueue(KeyPrefix(REDIS_JOB_QUEUE_NAME + ":" + str(job_type) + ":"))
-    for job_type in [JobType.classify, JobType.pow]
+    for job_type in [JobType.classify, JobType.pow, JobType.batch_classify]
 }
 
 
@@ -59,6 +60,26 @@ def handle_publish_jobs(
     if len(pow_queue_items) > 0:
         job_queues[JobType.pow].add_items(rclient, pow_queue_items)
     return [j.job_id for j in jobs]
+
+
+def handle_query_job(mdb: Collection, req: QueryJobRequest) -> list[FinishedJob] | None:
+    job_ids = req.job_ids
+    if not job_ids:
+        return []
+    jobs = mdb.find(
+        {"job_id": {"$in": job_ids}},
+        {
+            "_id": 1,
+            "job_type": 1,
+            "pow_result": 1,
+            "classify_result": 1,
+            "batch_classify_result": 1,
+            "finished_at": 1,
+        },
+    )
+    if not jobs:
+        return None
+    return [WorkerJobResult(**job) for job in jobs]
 
 
 def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob | None:
