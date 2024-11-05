@@ -67,6 +67,13 @@ class Progress(object):
         )
 
 
+class RecordBatch(object):
+    def __init__(self):
+        self.records = []
+        self.bytesize = 0
+        self.languages = set()
+
+
 class CommonCrawlWetImporter(threading.Thread):
     def __init__(self, wid: int, batch: str, q: queue.Queue):
         super().__init__()
@@ -89,23 +96,28 @@ class CommonCrawlWetImporter(threading.Thread):
 
     def _save_chunk(
         self,
-        cached: list[str],
+        cached: RecordBatch,
         filename: str,
         progress: Progress,
     ):
         r2_key = self._gen_r2_key(filename, str(progress.next_chunk))
         print(f"Thread {self.wid}: writing chunk {progress.next_chunk}")
         compressed = zlib.compress("\n".join(cached).encode("utf-8"))
+        checksum = hashlib.sha256(r2_key.encode()).hexdigest()
         self.s3.meta.client.put_object(
             Bucket=R2_BUCKET_NAME,
             Key=r2_key,
             Body=compressed,
             ContentLength=len(compressed),
-            Metadata={"chunk_size": str(len(cached))},
+            Metadata={
+                "chunk_size": str(len(cached)),
+                "decompressed_bytesize": str(cached.bytesize),
+                "checksum": checksum,
+            },
         )
         self.r2_metadata.update_one(
             {
-                "_id": hashlib.sha256(r2_key.encode()).hexdigest(),
+                "_id": checksum,
             },
             {
                 "$set": {
@@ -115,7 +127,7 @@ class CommonCrawlWetImporter(threading.Thread):
                     "chunk": progress.next_chunk,
                     "chunk_size": len(cached),
                     "bytesize": len(compressed),
-                    "md5": hashlib.md5(compressed).hexdigest(),
+                    "decompressed_bytesize": cached.bytesize,
                     "created_at": datetime.now(),
                 }
             },
@@ -149,8 +161,7 @@ class CommonCrawlWetImporter(threading.Thread):
         resp.raise_for_status()
 
         filename = filepath.rsplit("/", 1)[-1]
-        cached_size = 0
-        cached: list[WetRecord] = []
+        cached = RecordBatch()
         resuming = progress.next_chunk > 0
         for record in ArchiveIterator(resp.raw):
             warc_id = record.rec_headers.get_header("WARC-Record-ID")
@@ -164,20 +175,19 @@ class CommonCrawlWetImporter(threading.Thread):
             progress.total_processed += 1
             if record.rec_type == "conversion":
                 r = json.dumps(WetRecord(record).__dict__)
-                cached.append(r)
-                cached_size += len(r)
+                cached.records.append(r)
+                cached.bytesize += len(r)
             else:
                 print(
                     f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {warc_id}"
                 )
 
             # with raw data > 20MB, we got ~5MB after compression
-            if cached_size > 20 * 1024 * 1024:
+            if cached.bytesize > 20 * 1024 * 1024:
                 self._save_chunk(cached, filename, progress)
-                cached_size = 0
-                cached = []
+                cached = RecordBatch()
 
-        if len(cached) > 0:
+        if len(cached.records) > 0:
             self._save_chunk(cached, filename, progress)
 
         self.progress_coll.update_one(
@@ -197,6 +207,34 @@ class CommonCrawlWetImporter(threading.Thread):
                 return
             self.iterate_warc_file(filepath)
             self.q.task_done()
+
+
+class CommonCrawlWetMigrator(threading.Thread):
+    def __init__(self):
+        super().__init__()
+        self.mclient = MongoClient(MONGO_URL)
+        self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
+
+    def migrate(self):
+        for doc in self.r2_metadata.find({"filename": {"$exists": False}}):
+            r2_key = doc["_id"]
+            [batch, type, filename, chunk] = r2_key.split("/")
+            docs = {
+                "_id": hashlib.sha256(r2_key.encode()).hexdigest(),
+                "type": type,
+                "batch": batch,
+                "filename": filename,
+                "chunk": chunk,
+                "chunk_size": doc["chunk_size"],
+            }
+            self.r2_metadata.insertMany(
+                {"_id": doc["_id"]},
+                {
+                    "$set": {
+                        "r2_key": r2_key,
+                    }
+                },
+            )
 
 
 def download_large_file(url, destination):
