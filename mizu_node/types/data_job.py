@@ -23,7 +23,10 @@ class BatchClassifyContext(BaseModel):
 
     data_url: str = Field(alias="dataUrl")
     batch_size: int = Field(alias="batchSize")
-    classifer: str
+    byte_size: int = Field(alias="byteSize")
+    decompressed_byte_size: int = Field(alias="decompressedByteSize")
+    checksum_md5: str = Field(alias="checksumMd5")
+    classifer_id: str = Field(alias="classiferId")
 
 
 class DataJobPayload(BaseModel):
@@ -67,10 +70,17 @@ class DataLabel(BaseModel):
     score: float
 
 
+class WetContext(BaseModel):
+    warc_id: str = Field(alias="warcId")
+    uri: str
+    languages: list[str]
+    crawled_at: int = Field(alias="crawledAt")
+
+
 class ClassifyResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    context: str  # seralized json
+    wet_context: WetContext = Field(alias="wetContext")
     labels: list[DataLabel]
 
 
