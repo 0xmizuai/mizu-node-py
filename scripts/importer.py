@@ -1,5 +1,6 @@
 import argparse
 import gzip
+import hashlib
 import json
 import os
 from datetime import datetime
@@ -89,22 +90,32 @@ class CommonCrawlWetImporter(threading.Thread):
     def _save_chunk(
         self,
         cached: list[str],
-        r2_key: str,
+        filename: str,
         progress: Progress,
     ):
+        r2_key = self._gen_r2_key(filename, str(progress.next_chunk))
         print(f"Thread {self.wid}: writing chunk {progress.next_chunk}")
         compressed = zlib.compress("\n".join(cached).encode("utf-8"))
         self.s3.meta.client.put_object(
-            Bucket=R2_BUCKET_NAME, Key=r2_key, Body=compressed
+            Bucket=R2_BUCKET_NAME,
+            Key=r2_key,
+            Body=compressed,
+            ContentLength=len(compressed),
+            Metadata={"chunk_size": str(len(cached))},
         )
         self.r2_metadata.update_one(
             {
-                "_id": r2_key,
+                "_id": hashlib.sha256(r2_key.encode()).hexdigest(),
             },
             {
                 "$set": {
                     "type": "wet",
+                    "batch": self.batch,
+                    "filename": filename,
+                    "chunk": progress.next_chunk,
                     "chunk_size": len(cached),
+                    "bytesize": len(compressed),
+                    "md5": hashlib.md5(compressed).hexdigest(),
                     "created_at": datetime.now(),
                 }
             },
@@ -162,14 +173,12 @@ class CommonCrawlWetImporter(threading.Thread):
 
             # with raw data > 20MB, we got ~5MB after compression
             if cached_size > 20 * 1024 * 1024:
-                r2_key = self._gen_r2_key(filename, str(progress.next_chunk))
-                self._save_chunk(cached, r2_key, progress)
+                self._save_chunk(cached, filename, progress)
                 cached_size = 0
                 cached = []
 
         if len(cached) > 0:
-            r2_key = self._gen_r2_key(filename, str(progress.next_chunk))
-            self._save_chunk(cached, r2_key, progress)
+            self._save_chunk(cached, filename, progress)
 
         self.progress_coll.update_one(
             {"_id": progress.filepath},
