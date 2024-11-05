@@ -23,8 +23,7 @@ class BatchClassifyContext(BaseModel):
 
     data_url: str = Field(alias="dataUrl")
     batch_size: int = Field(alias="batchSize")
-    labels: list[str]
-    embedding_model: str = Field(alias="embeddingModel")
+    classifer: str
 
 
 class DataJobPayload(BaseModel):
@@ -33,8 +32,8 @@ class DataJobPayload(BaseModel):
     job_type: JobType = Field(alias="jobType")
     classify_ctx: ClassifyContext | None = Field(alias="classifyCtx", default=None)
     pow_ctx: PowContext | None = Field(alias="powCtx", default=None)
-    batch_classify_ctx: BatchClassifyContext = Field(
-        alias="batchClassifyCtx", default=[]
+    batch_classify_ctx: BatchClassifyContext | None = Field(
+        alias="batchClassifyCtx", default=None
     )
 
 
