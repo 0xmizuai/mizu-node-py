@@ -68,7 +68,8 @@ class Progress(object):
 
 
 class RecordBatch(object):
-    def __init__(self):
+    def __init__(self, filename: str):
+        self.filename = filename
         self.records = []
         self.bytesize = 0
         self.languages = set()
@@ -97,38 +98,37 @@ class CommonCrawlWetImporter(threading.Thread):
     def _save_chunk(
         self,
         cached: RecordBatch,
-        filename: str,
         progress: Progress,
     ):
-        r2_key = self._gen_r2_key(filename, str(progress.next_chunk))
+        r2_key = self._gen_r2_key(cached.filename, str(progress.next_chunk))
         print(f"Thread {self.wid}: writing chunk {progress.next_chunk}")
-        compressed = zlib.compress("\n".join(cached).encode("utf-8"))
-        checksum = hashlib.sha256(r2_key.encode()).hexdigest()
+        compressed = zlib.compress("\n".join(cached.records).encode("utf-8"))
         self.s3.meta.client.put_object(
             Bucket=R2_BUCKET_NAME,
             Key=r2_key,
             Body=compressed,
             ContentLength=len(compressed),
             Metadata={
-                "chunk_size": str(len(cached)),
+                "chunk_size": str(len(cached.records)),
                 "decompressed_bytesize": str(cached.bytesize),
-                "checksum": checksum,
             },
         )
         self.r2_metadata.update_one(
             {
-                "_id": checksum,
+                "_id": hashlib.sha256(r2_key.encode("utf-8")).hexdigest(),
             },
             {
                 "$set": {
                     "type": "wet",
                     "batch": self.batch,
-                    "filename": filename,
+                    "filename": cached.filename,
                     "chunk": progress.next_chunk,
-                    "chunk_size": len(cached),
+                    "chunk_size": len(cached.records),
                     "bytesize": len(compressed),
                     "decompressed_bytesize": cached.bytesize,
                     "created_at": datetime.now(),
+                    "md5": hashlib.md5(compressed).hexdigest(),
+                    "languages": [l for l in list(cached.languages) if len(l) > 0],
                 }
             },
             upsert=True,
@@ -160,8 +160,7 @@ class CommonCrawlWetImporter(threading.Thread):
         resp = requests.get(f"{COMMON_CRAWL_URL_PREFIX}/{filepath}", stream=True)
         resp.raise_for_status()
 
-        filename = filepath.rsplit("/", 1)[-1]
-        cached = RecordBatch()
+        cached = RecordBatch(filepath.rsplit("/", 1)[-1])
         resuming = progress.next_chunk > 0
         for record in ArchiveIterator(resp.raw):
             warc_id = record.rec_headers.get_header("WARC-Record-ID")
@@ -174,9 +173,11 @@ class CommonCrawlWetImporter(threading.Thread):
             progress.last_warc_id = warc_id
             progress.total_processed += 1
             if record.rec_type == "conversion":
-                r = json.dumps(WetRecord(record).__dict__)
+                wet_record = WetRecord(record)
+                r = json.dumps(wet_record.__dict__)
                 cached.records.append(r)
                 cached.bytesize += len(r)
+                cached.languages.update(wet_record.languages)
             else:
                 print(
                     f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {warc_id}"
@@ -184,11 +185,11 @@ class CommonCrawlWetImporter(threading.Thread):
 
             # with raw data > 20MB, we got ~5MB after compression
             if cached.bytesize > 20 * 1024 * 1024:
-                self._save_chunk(cached, filename, progress)
-                cached = RecordBatch()
+                self._save_chunk(cached, progress)
+                cached = RecordBatch(cached.filename)
 
         if len(cached.records) > 0:
-            self._save_chunk(cached, filename, progress)
+            self._save_chunk(cached, progress)
 
         self.progress_coll.update_one(
             {"_id": progress.filepath},
