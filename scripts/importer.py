@@ -72,7 +72,6 @@ class RecordBatch(object):
         self.filename = filename
         self.records = []
         self.bytesize = 0
-        self.languages = set()
 
 
 class CommonCrawlWetImporter(threading.Thread):
@@ -128,7 +127,6 @@ class CommonCrawlWetImporter(threading.Thread):
                     "decompressed_bytesize": cached.bytesize,
                     "created_at": datetime.now(),
                     "md5": hashlib.md5(compressed).hexdigest(),
-                    "languages": [l for l in list(cached.languages) if len(l) > 0],
                 }
             },
             upsert=True,
@@ -177,7 +175,6 @@ class CommonCrawlWetImporter(threading.Thread):
                 r = json.dumps(wet_record.__dict__)
                 cached.records.append(r)
                 cached.bytesize += len(r)
-                cached.languages.update(wet_record.languages)
             else:
                 print(
                     f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {warc_id}"
@@ -211,58 +208,95 @@ class CommonCrawlWetImporter(threading.Thread):
 
 
 class CommonCrawlWetMigrator(threading.Thread):
-    def __init__(self):
+    def __init__(self, q: queue.Queue):
         super().__init__()
+        self.q = q
+        self.r2_url_prefix = "https://ecfd5a3d56c932e006ece0935c071e19.r2.cloudflarestorage.com/mizu-cmc-compressed"
         self.mclient = MongoClient(MONGO_URL)
         self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
 
-    def migrate(self):
-        for doc in self.r2_metadata.find({"filename": {"$exists": False}}):
-            r2_key = doc["_id"]
-            [batch, type, filename, chunk] = r2_key.split("/")
-            docs = {
-                "_id": hashlib.sha256(r2_key.encode()).hexdigest(),
-                "type": type,
-                "batch": batch,
-                "filename": filename,
-                "chunk": chunk,
-                "chunk_size": doc["chunk_size"],
-            }
-            self.r2_metadata.insertMany(
-                {"_id": doc["_id"]},
+    def produce(self):
+        while True:
+            docs = self.r2_metadata.find({"filename": {"$exists": False}}).limit(1000)
+            if not docs:
+                return
+            for doc in docs:
+                if doc["_id"].startswith("crawl-data"):
+                    self.q.put_nowait(doc["_id"])
+
+    def update_metadata(self, r2_key: str):
+        [batch, wtype, filename, chunk] = r2_key.split("/")
+        doc = self.r2_metadata.find_one({"_id": r2_key})
+        with requests.get(f"{self.r2_url_prefix}/{r2_key}", stream=True) as res:
+            decompressed = zlib.decompress(res.content)
+            self.r2_metadata.update_one(
+                {
+                    "_id": hashlib.sha256(r2_key.encode("utf-8")).hexdigest(),
+                },
                 {
                     "$set": {
-                        "r2_key": r2_key,
+                        "type": wtype,
+                        "batch": batch,
+                        "filename": filename,
+                        "chunk": int(chunk.split(".")[0]),
+                        "chunk_size": doc["chunk_size"],
+                        "bytesize": len(res.content),
+                        "decompressed_bytesize": len(decompressed),
+                        "created_at": doc["created_at"],
+                        "md5": hashlib.md5(res.content).hexdigest(),
                     }
                 },
+                upsert=True,
             )
 
-
-def download_large_file(url, destination):
-    try:
-        with requests.get(url, stream=True) as response:
-            response.raise_for_status()
-            with open(destination, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        print("File downloaded successfully!")
-    except requests.exceptions.RequestException as e:
-        print("Error downloading the file: ", e)
+    def run(self):
+        while True:
+            try:
+                r2_key = self.q.get(timeout=3)  # 3s timeout
+            except queue.Empty:
+                return
+            self.update_metadata(r2_key)
+            self.q.task_done()
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--range", type=str, action="store", help="e.g. 10,20")
-parser.add_argument("--url", type=str, action="store", help="URL to download")
+subparsers = parser.add_subparsers(dest="command", required=True)
+
+upload_parser = subparsers.add_parser(
+    "upload", add_help=False, description="import data to r2"
+)
+upload_parser.add_argument("--range", type=int, action="store", help="e.g 10,20")
+upload_parser.add_argument("--url", type=str, action="store", help="URL to download")
+
+migrate_parser = subparsers.add_parser(
+    "migrate", add_help=False, description="migrate metadata"
+)
 args = parser.parse_args()
 
 
-def main():
+def migrate():
     q = queue.Queue()
-    with requests.get(args.url, stream=True) as res:
-        extracted = gzip.decompress(res.content)
-        lines = [line.decode() for line in extracted.split(b"\n")]
-    [start, end] = [int(i) for i in args.range.split(",")]
-    for i in range(start, end):
-        q.put_nowait(lines[i].strip())
+    CommonCrawlWetImporter(q).start()
+
     for wid in range(NUM_OF_THREADS):
         CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
+
+
+def run_upload(url: str, start: int, end: int):
+    q = queue.Queue()
+    with requests.get(url, stream=True) as res:
+        extracted = gzip.decompress(res.content)
+        lines = [line.decode() for line in extracted.split(b"\n")]
+    for i in range(start, end):
+        q.put_nowait(lines[i].strip())
+
+    for wid in range(NUM_OF_THREADS):
+        CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
+
+
+def main():
+    if args.upload:
+        [start, end] = [int(i) for i in args.range.split(",")]
+        run_upload(args.url, start, end)
+    elif args.migrate:
+        migrate()
