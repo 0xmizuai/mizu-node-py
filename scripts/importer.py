@@ -265,7 +265,7 @@ subparsers = parser.add_subparsers(dest="command", required=True)
 upload_parser = subparsers.add_parser(
     "upload", add_help=False, description="import data to r2"
 )
-upload_parser.add_argument("--range", type=int, action="store", help="e.g 10,20")
+upload_parser.add_argument("--range", type=str, action="store", help="e.g 10,20")
 upload_parser.add_argument("--url", type=str, action="store", help="URL to download")
 
 migrate_parser = subparsers.add_parser(
@@ -295,8 +295,8 @@ def run_upload(url: str, start: int, end: int):
 
 
 def main():
-    if args.upload:
+    if args.command == "upload":
         [start, end] = [int(i) for i in args.range.split(",")]
         run_upload(args.url, start, end)
-    elif args.migrate:
+    elif args.command == "migrate":
         migrate()
