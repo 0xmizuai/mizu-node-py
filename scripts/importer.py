@@ -1,6 +1,5 @@
 import argparse
 import gzip
-import hashlib
 import json
 import os
 from datetime import datetime
@@ -95,15 +94,21 @@ class CommonCrawlWetImporter(threading.Thread):
     ):
         print(f"Thread {self.wid}: writing chunk {progress.next_chunk}")
         compressed = zlib.compress("\n".join(cached).encode("utf-8"))
-        md5 = hashlib.md5().update(compressed).hexdigest()
         self.s3.meta.client.put_object(
-            Bucket=R2_BUCKET_NAME,
-            Key=r2_key,
-            Body=compressed,
-            ContentType="application/gzip",
-            ContentMD5=md5,
-            ContentLength=len(compressed),
-            Metadata={"chunk_size": str(len(cached))},
+            Bucket=R2_BUCKET_NAME, Key=r2_key, Body=compressed
+        )
+        self.r2_metadata.update_one(
+            {
+                "_id": r2_key,
+            },
+            {
+                "$set": {
+                    "type": "wet",
+                    "chunk_size": len(cached),
+                    "created_at": datetime.now(),
+                }
+            },
+            upsert=True,
         )
         progress.next_chunk += 1
         self.progress_coll.update_one(
