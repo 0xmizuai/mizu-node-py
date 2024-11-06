@@ -14,6 +14,8 @@ import requests
 from warcio.archiveiterator import ArchiveIterator
 import requests
 
+from botocore.config import Config
+from botocore import UNSIGNED
 
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
@@ -150,6 +152,23 @@ class CommonCrawlWetImporter(threading.Thread):
     def _gen_r2_key(self, filename: str, chunk: int):
         return os.path.join(self.batch, "wet", filename, str(chunk) + ".zz")
 
+    def fetch_http_warc_file(self, filepath: str):
+        resp = requests.get(f"{COMMON_CRAWL_URL_PREFIX}/{filepath}", stream=True)
+        resp.raise_for_status()
+        for record in ArchiveIterator(resp.raw):
+            yield record
+
+    def fetch_s3_warc_file(self, filepath: str):
+        client = boto3.client(
+            "s3",
+            region_name="us-east-1",
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+        obj = client.get_object(Bucket="commoncrawl", Key=filepath)
+        for record in ArchiveIterator(obj["Body"]):
+            yield record
+
     def iterate_warc_file(self, filepath: str):
         progress = self._get_progress(filepath)
         if progress.finished:
@@ -157,12 +176,9 @@ class CommonCrawlWetImporter(threading.Thread):
             return
 
         print(f"Thread {self.wid}: processing {filepath}")
-        resp = requests.get(f"{COMMON_CRAWL_URL_PREFIX}/{filepath}", stream=True)
-        resp.raise_for_status()
-
         cached = RecordBatch(filepath.rsplit("/", 1)[-1])
         resuming = progress.next_chunk > 0
-        for record in ArchiveIterator(resp.raw):
+        for record in self.fetch_s3_warc_file(filepath):
             warc_id = record.rec_headers.get_header("WARC-Record-ID")
             if resuming and warc_id != progress.last_warc_id:
                 continue
