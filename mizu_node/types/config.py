@@ -6,7 +6,7 @@ class DataLabel(BaseModel):
     description: str
 
 
-class ClassiferConfig(BaseModel):
+class ClassifierConfig(BaseModel):
     embedding_model: str
     labels: list[DataLabel]
-    publisher: str
+    publisher: str | None = None

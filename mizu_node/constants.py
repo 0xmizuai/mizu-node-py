@@ -17,5 +17,6 @@ MONGO_URL = os.environ["MONGO_URL"]
 MONGO_DB_NAME = os.environ["MONGO_DB_NAME"]
 API_KEY_COLLECTION = "api_keys"
 FINISHED_JOBS_COLLECTIONS = "finished_jobs"
+CLASSIFIER_COLLECTION = "classifiers"
 
 VERIFY_KEY = os.environ["VERIFY_KEY"]

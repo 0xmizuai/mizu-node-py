@@ -1,7 +1,6 @@
 import json
 import time
 
-from bson import BSON
 from fastapi.encoders import jsonable_encoder
 from pymongo.database import Collection
 from redis import Redis
