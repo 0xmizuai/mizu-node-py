@@ -100,7 +100,9 @@ class CommonCrawlWetImporter(threading.Thread):
         progress: Progress,
     ):
         r2_key = self._gen_r2_key(cached.filename, str(progress.next_chunk))
-        print(f"Thread {self.wid}: writing chunk {progress.next_chunk}")
+        print(
+            f"Thread {self.wid}: writing chunk {progress.next_chunk} at {cached.filename}"
+        )
         compressed = zlib.compress("\n".join(cached.records).encode("utf-8"))
         self.s3.meta.client.put_object(
             Bucket=R2_BUCKET_NAME,
@@ -201,10 +203,10 @@ class CommonCrawlWetImporter(threading.Thread):
         while True:
             try:
                 filepath = self.q.get(timeout=3)  # 3s timeout
+                self.iterate_warc_file(filepath)
+                self.q.task_done()
             except queue.Empty:
                 return
-            self.iterate_warc_file(filepath)
-            self.q.task_done()
 
 
 class CommonCrawlWetMigrator(threading.Thread):
