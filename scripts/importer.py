@@ -20,7 +20,7 @@ R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 R2_BUCKET_NAME = "mizu-cmc-compressed"
 
-COMMON_CRAWL_URL_PREFIX = "https://data.commoncrawl.org"
+COMMON_CRAWL_URL_PREFIX = "https://ds5q9oxwqwsfj.cloudfront.net"
 
 NUM_OF_THREADS = int(os.environ.get("NUM_OF_THREADS", 32))
 MONGO_URL = os.environ["MONGO_URL"]
