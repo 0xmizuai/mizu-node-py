@@ -212,12 +212,14 @@ class CommonCrawlWetMigrator(threading.Thread):
         super().__init__()
         self.mode = mode
         self.q = q
-        self.r2_url_prefix = "https://ecfd5a3d56c932e006ece0935c071e19.r2.cloudflarestorage.com/mizu-cmc-compressed"
+        self.r2_url_prefix = "https://rawdata.mizu.technology"
         self.mclient = MongoClient(MONGO_URL)
         self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
 
     def produce(self):
-        for doc in self.r2_metadata.find({"filename": {"$exists": False}}):
+        for doc in self.r2_metadata.find(
+            {"filename": {"$exists": False}, "migrated": {"$ne": True}}
+        ):
             if doc["_id"].startswith("CC-MAIN-2024-42"):
                 self.q.put_nowait(doc["_id"])
 
@@ -225,7 +227,7 @@ class CommonCrawlWetMigrator(threading.Thread):
         print(f"processing {r2_key}")
         [batch, wtype, filename, chunk] = r2_key.split("/")
         doc = self.r2_metadata.find_one({"_id": r2_key})
-        with requests.get(f"{self.r2_url_prefix}/{r2_key}", stream=True) as res:
+        with requests.get(f"{self.r2_url_prefix}/{r2_key}") as res:
             decompressed = zlib.decompress(res.content)
             self.r2_metadata.update_one(
                 {
@@ -246,7 +248,7 @@ class CommonCrawlWetMigrator(threading.Thread):
                 },
                 upsert=True,
             )
-            self.r2_metadata.update({"_id": r2_key}, {"$set": {"migrated": True}})
+            self.r2_metadata.update_one({"_id": r2_key}, {"$set": {"migrated": True}})
 
     def consume(self):
         while True:
