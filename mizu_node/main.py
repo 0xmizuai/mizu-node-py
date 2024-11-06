@@ -1,14 +1,16 @@
 import asyncio
 from contextlib import asynccontextmanager
+from bson import ObjectId
+from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Security, status, Depends
-from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pymongo import MongoClient
 import redis
 
 from mizu_node.error_handler import error_handler
 from mizu_node.constants import (
+    CLASSIFIER_COLLECTION,
     FINISHED_JOBS_COLLECTIONS,
     MONGO_DB_NAME,
     MONGO_URL,
@@ -26,6 +28,7 @@ from mizu_node.job_handler import (
 )
 from mizu_node.security import verify_jwt, verify_api_key
 from mizu_node.types.common import JobType
+from mizu_node.types.config import ClassifierConfig
 from mizu_node.types.data_job import PublishJobRequest, QueryJobRequest, WorkerJobResult
 from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
@@ -74,6 +77,31 @@ def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)
     # TODO: ensure it's called from whitelisted publisher
     ids = handle_publish_jobs(rclient, publisher, req)
     return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
+
+
+@app.post("/register_classifier")
+@error_handler
+def register_classifier(
+    classifier: ClassifierConfig, publisher: str = Depends(get_publisher)
+):
+    if classifier.publisher != publisher:
+        return build_json_response(status.HTTP_401_UNAUTHORIZED, "unauthorized")
+
+    result = mdb[CLASSIFIER_COLLECTION].insert_one(jsonable_encoder(classifier))
+    return build_json_response(
+        status.HTTP_200_OK, "ok", {"id": str(result.inserted_id)}
+    )
+
+
+@app.post("/classifer")
+@error_handler
+def get_classifier(id: str):
+    doc = mdb[CLASSIFIER_COLLECTION].find_one({"_id": ObjectId(id)})
+    if doc is None:
+        return build_json_response(status.HTTP_404_NOT_FOUND, "classifier not found")
+    return build_json_response(
+        status.HTTP_200_OK, "ok", {"classifier": ClassifierConfig(**doc)}
+    )
 
 
 @app.get("/job_status")
