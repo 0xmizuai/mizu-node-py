@@ -203,6 +203,9 @@ class CommonCrawlWetImporter(threading.Thread):
         while True:
             try:
                 filepath = self.q.get(timeout=3)  # 3s timeout
+                print(
+                    f"Thread {self.wid}: one job taken, current queue size {self.q.qsize()}"
+                )
                 self.iterate_warc_file(filepath)
                 self.q.task_done()
             except queue.Empty:
