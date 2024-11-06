@@ -222,6 +222,7 @@ class CommonCrawlWetMigrator(threading.Thread):
                 self.q.put_nowait(doc["_id"])
 
     def update_metadata(self, r2_key: str):
+        print(f"processing {r2_key}")
         [batch, wtype, filename, chunk] = r2_key.split("/")
         doc = self.r2_metadata.find_one({"_id": r2_key})
         with requests.get(f"{self.r2_url_prefix}/{r2_key}", stream=True) as res:
@@ -253,8 +254,7 @@ class CommonCrawlWetMigrator(threading.Thread):
                 r2_key = self.q.get(timeout=3)  # 3s timeout
             except queue.Empty:
                 return
-            print("r2_key: " + r2_key)
-            # self.update_metadata(r2_key)
+            self.update_metadata(r2_key)
             self.q.task_done()
 
     def run(self):
