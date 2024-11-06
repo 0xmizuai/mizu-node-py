@@ -208,21 +208,18 @@ class CommonCrawlWetImporter(threading.Thread):
 
 
 class CommonCrawlWetMigrator(threading.Thread):
-    def __init__(self, q: queue.Queue):
+    def __init__(self, mode: str, q: queue.Queue):
         super().__init__()
+        self.mode = mode
         self.q = q
         self.r2_url_prefix = "https://ecfd5a3d56c932e006ece0935c071e19.r2.cloudflarestorage.com/mizu-cmc-compressed"
         self.mclient = MongoClient(MONGO_URL)
         self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
 
     def produce(self):
-        while True:
-            docs = self.r2_metadata.find({"filename": {"$exists": False}}).limit(1000)
-            if not docs:
-                return
-            for doc in docs:
-                if doc["_id"].startswith("crawl-data"):
-                    self.q.put_nowait(doc["_id"])
+        for doc in self.r2_metadata.find({"filename": {"$exists": False}}):
+            if doc["_id"].startswith("CC-MAIN-2024-42"):
+                self.q.put_nowait(doc["_id"])
 
     def update_metadata(self, r2_key: str):
         [batch, wtype, filename, chunk] = r2_key.split("/")
@@ -248,15 +245,25 @@ class CommonCrawlWetMigrator(threading.Thread):
                 },
                 upsert=True,
             )
+            self.r2_metadata.update({"_id": r2_key}, {"$set": {"migrated": True}})
 
-    def run(self):
+    def consume(self):
         while True:
             try:
                 r2_key = self.q.get(timeout=3)  # 3s timeout
             except queue.Empty:
                 return
-            self.update_metadata(r2_key)
+            print("r2_key: " + r2_key)
+            # self.update_metadata(r2_key)
             self.q.task_done()
+
+    def run(self):
+        if self.mode == "producer":
+            self.produce()
+        elif self.mode == "consumer":
+            self.consume()
+        else:
+            raise ValueError("Invalid mode")
 
 
 parser = argparse.ArgumentParser()
@@ -276,10 +283,10 @@ args = parser.parse_args()
 
 def migrate():
     q = queue.Queue()
-    CommonCrawlWetImporter(q).start()
+    CommonCrawlWetMigrator("producer", q).start()
 
-    for wid in range(NUM_OF_THREADS):
-        CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
+    for _ in range(NUM_OF_THREADS):
+        CommonCrawlWetMigrator("consumer", q).start()
 
 
 def run_upload(url: str, start: int, end: int):
