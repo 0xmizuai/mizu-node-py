@@ -31,6 +31,11 @@ poetry run dev # for dev
 poetry run start # for prod
 ```
 
+### Run as a dependency for other services
+```shell
+docker-compose up --build # This will start all services required along with `poetry run start`
+```
+
 ### Test
 
 ```shell

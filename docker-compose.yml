@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    container_name: mizu_node
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mongo
+      - redis
+      - rabbitmq
+    environment:
+      MONGO_URL: "mongodb://mongo:27017"
+      MONGO_DB_NAME: "commoncrawl"
+      REDIS_URL: "redis://redis:6379/0"
+      RABBITMQ_URL: "amqp://rabbitmq:5672"
+      VERIFY_KEY: ${VERIFY_KEY}
+    command: ["poetry", "run", "start"]
+
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: "mizu"
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # Management interface
