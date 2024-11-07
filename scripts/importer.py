@@ -22,11 +22,22 @@ R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 R2_BUCKET_NAME = "mizu-cmc-compressed"
 
-COMMON_CRAWL_URL_PREFIX = "https://ds5q9oxwqwsfj.cloudfront.net"
+COMMON_CRAWL_URL_PREFIX = "https://data.commoncrawl.org"
+CLOUDFRONT_URL_PREFIX = "https://d3k3zv3epk7z9d.cloudfront.net"
 
 NUM_OF_THREADS = int(os.environ.get("NUM_OF_THREADS", 32))
 MONGO_URL = os.environ["MONGO_URL"]
 MONGO_DB_NAME = "commoncrawl"
+
+
+def get_cc_s3_file(filepath: str):
+    client = boto3.client(
+        "s3",
+        region_name="us-east-1",
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
+    return client.get_object(Bucket="commoncrawl", Key=filepath)
 
 
 class WetRecord(object):
@@ -77,10 +88,11 @@ class RecordBatch(object):
 
 
 class CommonCrawlWetImporter(threading.Thread):
-    def __init__(self, wid: int, batch: str, q: queue.Queue):
+    def __init__(self, wid: int, source: str, batch: str, q: queue.Queue):
         super().__init__()
         self.wid = wid
         self.batch = batch
+        self.source = source
         self.q = q
         self.s3 = boto3.resource(
             "s3",
@@ -152,20 +164,14 @@ class CommonCrawlWetImporter(threading.Thread):
     def _gen_r2_key(self, filename: str, chunk: int):
         return os.path.join(self.batch, "wet", filename, str(chunk) + ".zz")
 
-    def fetch_http_warc_file(self, filepath: str):
-        resp = requests.get(f"{COMMON_CRAWL_URL_PREFIX}/{filepath}", stream=True)
+    def fetch_http_warc_file(self, prefix: str, filepath: str):
+        resp = requests.get(f"{prefix}/{filepath}", stream=True)
         resp.raise_for_status()
         for record in ArchiveIterator(resp.raw):
             yield record
 
     def fetch_s3_warc_file(self, filepath: str):
-        client = boto3.client(
-            "s3",
-            region_name="us-east-1",
-            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-        )
-        obj = client.get_object(Bucket="commoncrawl", Key=filepath)
+        obj = get_cc_s3_file(filepath)
         for record in ArchiveIterator(obj["Body"]):
             yield record
 
@@ -178,7 +184,15 @@ class CommonCrawlWetImporter(threading.Thread):
         print(f"Thread {self.wid}: processing {filepath}")
         cached = RecordBatch(filepath.rsplit("/", 1)[-1])
         resuming = progress.next_chunk > 0
-        for record in self.fetch_s3_warc_file(filepath):
+
+        if self.source == "s3":
+            cursor = self.fetch_s3_warc_file(filepath)
+        elif self.source == "cc":
+            cursor = self.fetch_http_warc_file(COMMON_CRAWL_URL_PREFIX, filepath)
+        else:
+            cursor = self.fetch_http_warc_file(CLOUDFRONT_URL_PREFIX, filepath)
+
+        for record in cursor:
             warc_id = record.rec_headers.get_header("WARC-Record-ID")
             if resuming and warc_id != progress.last_warc_id:
                 continue
@@ -296,7 +310,12 @@ upload_parser = subparsers.add_parser(
     "upload", add_help=False, description="import data to r2"
 )
 upload_parser.add_argument("--range", type=str, action="store", help="e.g 10,20")
-upload_parser.add_argument("--url", type=str, action="store", help="URL to download")
+upload_parser.add_argument(
+    "--source", type=str, action="store", default="s3", help="data source"
+)
+upload_parser.add_argument(
+    "--pathfile", type=str, action="store", help="paths file to download"
+)
 
 migrate_parser = subparsers.add_parser(
     "migrate", add_help=False, description="migrate metadata"
@@ -312,21 +331,32 @@ def migrate():
         CommonCrawlWetMigrator("consumer", q).start()
 
 
-def run_upload(url: str, start: int, end: int):
+def run_upload(source: str, pathfile: str, start: int, end: int):
     q = queue.Queue()
-    with requests.get(url, stream=True) as res:
+    if source == "s3":
+        obj = get_cc_s3_file(pathfile)
+        extracted = gzip.decompress(obj["Body"].read())
+        lines = [line.decode() for line in extracted.split(b"\n")]
+    else:
+        url = (
+            f"{COMMON_CRAWL_URL_PREFIX}/{pathfile}"
+            if source == "cc"
+            else f"{CLOUDFRONT_URL_PREFIX}/{pathfile}"
+        )
+        res = requests.get(url, stream=True)
         extracted = gzip.decompress(res.content)
         lines = [line.decode() for line in extracted.split(b"\n")]
+
     for i in range(start, end):
         q.put_nowait(lines[i].strip())
 
     for wid in range(NUM_OF_THREADS):
-        CommonCrawlWetImporter(wid, "CC-MAIN-2024-42", q).start()
+        CommonCrawlWetImporter(wid, source, "CC-MAIN-2024-42", q).start()
 
 
 def main():
     if args.command == "upload":
         [start, end] = [int(i) for i in args.range.split(",")]
-        run_upload(args.url, start, end)
+        run_upload(args.source, args.pathfile, start, end)
     elif args.command == "migrate":
         migrate()
