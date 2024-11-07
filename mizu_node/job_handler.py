@@ -1,5 +1,5 @@
-import json
 import time
+from typing import Iterator
 
 from fastapi.encoders import jsonable_encoder
 from pymongo.database import Collection
@@ -8,60 +8,40 @@ from fastapi import HTTPException, status
 
 from mizu_node.constants import (
     REDIS_JOB_QUEUE_NAME,
-    ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
 )
 
 from mizu_node.security import is_worker_blocked
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import (
     DataJob,
-    FinishedJob,
     PublishJobRequest,
     QueryJobRequest,
     WorkerJob,
     WorkerJobResult,
-    build_data_job,
     build_worker_job,
 )
-from mizu_node.types.job_queue import JobQueue, QueueItem
-from mizu_node.types.key_prefix import KeyPrefix
+from mizu_node.types.job_queue_v2 import JobQueueV2
 
 job_queues = {
-    job_type: JobQueue(KeyPrefix(REDIS_JOB_QUEUE_NAME + ":" + str(job_type) + ":"))
+    job_type: JobQueueV2(REDIS_JOB_QUEUE_NAME + ":" + str(job_type))
     for job_type in [JobType.classify, JobType.pow, JobType.batch_classify]
 }
 
 
-def queue_clean(rclient: Redis):
-    while True:
-        for queue in job_queues.values():
-            queue.light_clean(rclient)
-        time.sleep(60)
-
-
 def handle_publish_jobs(
-    rclient: Redis, publisher: str, req: PublishJobRequest
-) -> list[str]:
-    jobs = [build_data_job(publisher, job) for job in req.data]
-    classify_queue_items = [
-        QueueItem(job.job_id, job.model_dump_json())
-        for job in jobs
-        if job.job_type == JobType.classify
-    ]
-    if len(classify_queue_items) > 0:
-        job_queues[JobType.classify].add_items(rclient, classify_queue_items)
-
-    pow_queue_items = [
-        QueueItem(job.job_id, job.model_dump_json())
-        for job in jobs
-        if job.job_type == JobType.pow
-    ]
-    if len(pow_queue_items) > 0:
-        job_queues[JobType.pow].add_items(rclient, pow_queue_items)
-    return [j.job_id for j in jobs]
+    jobs_coll: Collection, publisher: str, req: PublishJobRequest
+) -> Iterator[str]:
+    jobs = [DataJob.from_job_payload(publisher, job) for job in req.data]
+    jobs_coll.insert_many([jsonable_encoder(job) for job in jobs])
+    for job in jobs:
+        worker_job = build_worker_job(job)
+        job_queues[job.job_type].add_item(jsonable_encoder(worker_job))
+        yield job.job_id
 
 
-def handle_query_job(mdb: Collection, req: QueryJobRequest) -> list[FinishedJob] | None:
+def handle_query_job(
+    mdb: Collection, req: QueryJobRequest
+) -> list[WorkerJobResult] | None:
     job_ids = req.job_ids
     if not job_ids:
         return []
@@ -86,29 +66,28 @@ def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="worker is blocked"
         )
-
-    job_json = job_queues[job_type].lease(rclient, ASSIGNED_JOB_EXPIRE_TTL_SECONDS)
-    if job_json is not None:
-        job = DataJob.model_validate_json(job_json)
-        return build_worker_job(job)
-    return None
+    return job_queues[job_type].get(rclient)
 
 
-def handle_finish_job(
-    rclient: Redis, mdb: Collection, worker: str, result: WorkerJobResult
-):
-    queue = job_queues[result.job_type]
-    if not queue.lease_exists(rclient, result.job_id):
+def handle_finish_job(mdb: Collection, worker: str, result: WorkerJobResult):
+    doc = mdb.find_one_and_update(
+        {"_id": result.job_id},
+        {
+            "$set": {
+                "finished_at": int(time.time()),
+                "worker": worker,
+                "classify_result": result.classify_result,
+                "pow_result": result.pow_result,
+                "batch_classify_result": result.batch_classify_result,
+            }
+        },
+    )
+    if doc is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="job expired or not exists",
+            status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
         )
-    job_json = queue.get_item_data(rclient, result.job_id)
-    job = DataJob.model_validate_json(job_json)
-    finished = FinishedJob.from_models(worker, job, result)
-    mdb.insert_one(jsonable_encoder(finished))
-    queue.complete(rclient, job.job_id)
+    job_queues[result.job_type].ack(str(doc["_id"]))
 
 
-def handle_queue_len(rclient: Redis, job_type: JobType) -> int:
-    return job_queues[job_type].queue_len(rclient)
+def handle_queue_len(job_type: JobType) -> int:
+    return job_queues[job_type].queue_len()

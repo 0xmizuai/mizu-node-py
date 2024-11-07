@@ -11,7 +11,7 @@ import redis
 from mizu_node.error_handler import error_handler
 from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
-    FINISHED_JOBS_COLLECTIONS,
+    JOBS_COLLECTION,
     MONGO_DB_NAME,
     MONGO_URL,
     REDIS_URL,
@@ -40,15 +40,7 @@ mdb = mclient[MONGO_DB_NAME]
 # Security scheme
 bearer_scheme = HTTPBearer()
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, queue_clean, rclient)
-    yield
-
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 
 def get_user(
@@ -69,14 +61,6 @@ def get_publisher(
 @app.get("/healthcheck")
 def default():
     return {"status": "ok"}
-
-
-@app.post("/publish_jobs")
-@error_handler
-def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
-    # TODO: ensure it's called from whitelisted publisher
-    ids = handle_publish_jobs(rclient, publisher, req)
-    return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
 
 
 @app.post("/register_classifier")
@@ -104,10 +88,18 @@ def get_classifier(id: str):
     )
 
 
+@app.post("/publish_jobs")
+@error_handler
+def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
+    # TODO: ensure it's called from whitelisted publisher
+    ids = list(handle_publish_jobs(publisher, req))
+    return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
+
+
 @app.get("/job_status")
 @error_handler
 def finish_job(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
-    data = handle_query_job(mdb[FINISHED_JOBS_COLLECTIONS], publisher, req)
+    data = handle_query_job(mdb[JOBS_COLLECTION], publisher, req)
     return build_json_response(status.HTTP_200_OK, "ok", data)
 
 
@@ -129,7 +121,7 @@ def take_job(job_type: JobType, user: str = Depends(get_user)):
 @app.post("/finish_job")
 @error_handler
 def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
-    handle_finish_job(rclient, mdb[FINISHED_JOBS_COLLECTIONS], user, job)
+    handle_finish_job(rclient, mdb[JOBS_COLLECTION], user, job)
     return build_json_response(status.HTTP_200_OK, "ok")
 
 

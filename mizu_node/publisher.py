@@ -1,8 +1,5 @@
 import argparse
-from datetime import datetime
-import gzip
 import os
-import queue
 import threading
 
 from fastapi.encoders import jsonable_encoder
@@ -12,97 +9,79 @@ import requests
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import (
     BatchClassifyContext,
+    DataJob,
     DataJobPayload,
     PublishJobRequest,
 )
-from mizu_node.types.job_queue import JobQueue
-from mizu_node.types.key_prefix import KeyPrefix
 
-
-NUM_OF_THREADS = int(os.environ.get("NUM_OF_THREADS", 32))
 MONGO_URL = os.environ["MONGO_URL"]
 MONGO_DB_NAME = "commoncrawl"
-
 SERVICE_URL = os.environ["SERVICE_URL"]
+DATA_LINK_PREFIX = "https://rawdata.mizu.technology/"
 
-queue = JobQueue(KeyPrefix("commoncrawl:mizu"))
 
-
-def _build_batch_classify_job(r2_key: str, chunk_size: int):
+def _build_batch_classify_job(doc: any, classifier_id: str):
+    r2_key = f"{doc['batch']}/{doc['type']}/{doc['filename']}/{doc['chunk']}.zz"
     return DataJobPayload(
         job_type=JobType.batch_classify,
         batch_classify_ctx=BatchClassifyContext(
-            r2_key=r2_key,
-            chunk_size=chunk_size,
-            labels=["label1", "label2"],
-            embedding_mode="average",
+            data_url=f"{DATA_LINK_PREFIX}/{r2_key}",
+            batch_size=doc["chunk_size"],
+            bytesize=doc["bytesize"],
+            checksum_md5=doc["md5"],
+            decompressed_bytesize=doc["decompressed_bytesize"],
+            classifer_id=classifier_id,
         ),
     )
 
 
-def publish_batch_classify_jobs(api_key: str, batch_size: int = 1000):
-    req = PublishJobRequest(
-        data=[_build_batch_classify_job() for _ in range(batch_size)]
-    )
-    result = requests.post(
-        SERVICE_URL + "/publish_jobs",
-        json=jsonable_encoder(req),
-        headers={"Authorization": "Bearer " + api_key},
-    )
-    jobs_id = result.json()["data"]["job_ids"]
-    for job_id, req in zip(jobs_id, req.data):
-        yield job_id, req.job_type
-
-
 class CommonCrawlWetPublisher(threading.Thread):
-    def __init__(self, mode: str, api_key: str, batch: str):
+    def __init__(
+        self, api_key: str, batch: str, classifier_id: str, batch_size: int = 1000
+    ):
         super().__init__()
-        self.mode = mode
         self.batch = batch
+        self.batch_size = batch_size
         self.api_key = api_key
+        self.classifier_id = classifier_id
         self.mclient = MongoClient(MONGO_URL)
-        self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
-        self.jobs = self.mclient[MONGO_DB_NAME]["jobs"]
+        self.source = self.mclient[MONGO_DB_NAME]["metadata"]
+        self.dest = self.mclient[MONGO_DB_NAME]["published_jobs"]
 
-    def produce(self, doc):
-        for doc in self.r2_metadata.find({"type": "wet", "batch": self.batch}):
-            if self.jobs.find_one({"_id": doc["_id"]}):
-                continue
-            self.q.put_nowait(doc)
-
-    def consume(self):
-        publish_batch_classify_jobs(self.api_key, records)
-        for record in records:
-            self.r2_metadata.update_one(
-                {"_id": record["_id"]},
-                {"$set": {"published_at": datetime.now()}},
-            )
-
-    def consume(self):
-        while True:
-            try:
-                doc = self.q.get_nowait()
-            except queue.Empty:
-                break
-            self.process(doc)
-            self.q.task_done()
+    def _publish(self, batch: list[DataJobPayload]):
+        req = PublishJobRequest(data=batch)
+        result = requests.post(
+            SERVICE_URL + "/publish_jobs",
+            json=jsonable_encoder(req),
+            headers={"Authorization": "Bearer " + self.api_key},
+        )
+        job_ids = result.json()["data"]["job_ids"]
+        self.dest.insert_many(
+            [
+                jsonable_encoder(DataJob.from_job_payload("self", payload, job_id))
+                for job_id, payload in zip(job_ids, batch)
+            ]
+        )
 
     def run(self):
-        if self.mode == "produce":
-            self.produce()
-        elif self.mode == "consume":
-            self.consume()
-        else:
-            raise ValueError("Invalid mode")
+        batch = []
+        for doc in self.source.find({"batch": self.batch}):
+            if self.dest.count_documents({"_id": doc["_id"]}) > 0:
+                continue
+            batch.append(_build_batch_classify_job(doc, self.classifier_id))
+            if len(batch) == self.batch_size:
+                self._publish(batch)
+
+        if len(batch) > 0:
+            self._publish(batch)
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--metadata_url", type=str, action="store")
 parser.add_argument("--api_key", type=str, action="store")
 parser.add_argument("--batch", type=str, action="store")
+parser.add_argument("--classifier", type=str, action="store")
 args = parser.parse_args()
 
 
 def start():
-    CommonCrawlWetPublisher("produce", args.api_key, args.batch, q).start()
-    CommonCrawlWetPublisher("consume", args.api_key, args.batch, q).start()
+    CommonCrawlWetPublisher(args.api_key, args.batch, args.classifier).start()

@@ -23,8 +23,8 @@ class BatchClassifyContext(BaseModel):
 
     data_url: str = Field(alias="dataUrl")
     batch_size: int = Field(alias="batchSize")
-    byte_size: int = Field(alias="byteSize")
-    decompressed_byte_size: int = Field(alias="decompressedByteSize")
+    bytesize: int = Field(alias="bytesize")
+    decompressed_bytesize: int = Field(alias="decompressedBytesize")
     checksum_md5: str = Field(alias="checksumMd5")
     classifer_id: str = Field(alias="classiferId")
 
@@ -48,22 +48,7 @@ class QueryJobRequest(BaseModel):
     job_ids: list[str] = Field(alias="jobIds")
 
 
-class DataJob(DataJobPayload):
-    model_config = ConfigDict(populate_by_name=True)
-
-    job_id: str = Field(alias="jobId")
-    job_type: JobType = Field(alias="jobType")
-    publisher: str
-    published_at: int = Field(alias="publishedAt")
-
-
-class WorkerJob(DataJobPayload):
-    model_config = ConfigDict(populate_by_name=True)
-
-    job_id: str = Field(alias="jobId")
-
-
-class DataLabel(BaseModel):
+class DataLabelResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     label: str
@@ -81,7 +66,7 @@ class ClassifyResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     wet_context: WetContext = Field(alias="wetContext")
-    labels: list[DataLabel]
+    labels: list[DataLabelResult]
 
 
 class WorkerJobResult(BaseModel):
@@ -96,10 +81,10 @@ class WorkerJobResult(BaseModel):
     )
 
 
-class FinishedJob(BaseModel):
+class DataJob(DataJobPayload):
     model_config = ConfigDict(populate_by_name=True)
 
-    db_id: str = Field(alias="_id")
+    job_id: str = Field(alias="_id")
     job_type: JobType = Field(alias="jobType")
     classify_ctx: ClassifyContext | None = Field(alias="classifyCtx")
     classify_result: list[str] | None = Field(alias="classifyResult")
@@ -113,31 +98,24 @@ class FinishedJob(BaseModel):
     worker: str
 
     @classmethod
-    def from_models(cls, worker: str, job: DataJob, result: WorkerJobResult):
+    def from_job_payload(
+        cls, publisher: str, payload: DataJobPayload, job_id: str | None = None
+    ):
         return cls(
-            db_id=job.job_id,
-            job_type=job.job_type,
-            classify_ctx=job.classify_ctx,
-            pow_ctx=job.pow_ctx,
-            published_at=job.published_at,
-            publisher=job.publisher,
-            finished_at=int(time.time()),
-            worker=worker,
-            classify_result=result.classify_result,
-            pow_result=result.pow_result,
+            job_id=job_id | str(uuid.uuid4()),
+            job_type=payload.job_type,
+            publisher=publisher,
+            published_at=int(time.time()),
+            classify_ctx=payload.classify_ctx,
+            pow_ctx=payload.pow_ctx,
+            batch_classify_ctx=payload.batch_classify_ctx,
         )
 
 
-def build_data_job(publisher: str, job: DataJobPayload) -> DataJob:
-    return DataJob(
-        job_id=str(uuid.uuid4()),
-        job_type=job.job_type,
-        publisher=publisher,
-        published_at=int(time.time()),
-        classify_ctx=job.classify_ctx,
-        pow_ctx=job.pow_ctx,
-        batch_classify_ctx=job.batch_classify_ctx,
-    )
+class WorkerJob(DataJobPayload):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str = Field(alias="jobId")
 
 
 def build_worker_job(job: DataJob) -> WorkerJob:

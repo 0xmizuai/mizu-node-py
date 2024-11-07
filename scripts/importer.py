@@ -14,9 +14,6 @@ import requests
 from warcio.archiveiterator import ArchiveIterator
 import requests
 
-from botocore.config import Config
-from botocore import UNSIGNED
-
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
@@ -243,25 +240,22 @@ class CommonCrawlWetImporter(threading.Thread):
 
 
 class CommonCrawlWetMigrator(threading.Thread):
-    def __init__(self, mode: str, q: queue.Queue):
+    def __init__(self, q: queue.Queue):
         super().__init__()
-        self.mode = mode
         self.q = q
         self.r2_url_prefix = "https://rawdata.mizu.technology"
         self.mclient = MongoClient(MONGO_URL)
         self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
 
     def produce(self):
-        for doc in self.r2_metadata.find(
-            {"filename": {"$exists": False}, "migrated": {"$ne": True}}
-        ):
-            if doc["_id"].startswith("CC-MAIN-2024-42"):
-                self.q.put_nowait(doc["_id"])
+        for doc in self.r2_metadata.find({"decompressed_bytesize": {"$exists": False}}):
+            print("id: ", doc["_id"])
+            self.q.put_nowait(doc["_id"])
 
-    def update_metadata(self, r2_key: str):
-        print(f"processing {r2_key}")
-        [batch, wtype, filename, chunk] = r2_key.split("/")
-        doc = self.r2_metadata.find_one({"_id": r2_key})
+    def update_metadata(self, doc_id: str):
+        print(f"processing record {doc_id}")
+        doc = self.r2_metadata.find_one({"_id": doc_id})
+        r2_key = f"{doc['batch']}/{doc['type']}/{doc['filename']}/{doc['chunk']}.zz"
         with requests.get(f"{self.r2_url_prefix}/{r2_key}") as res:
             decompressed = zlib.decompress(res.content)
             self.r2_metadata.update_one(
@@ -270,22 +264,14 @@ class CommonCrawlWetMigrator(threading.Thread):
                 },
                 {
                     "$set": {
-                        "type": wtype,
-                        "batch": batch,
-                        "filename": filename,
-                        "chunk": int(chunk.split(".")[0]),
-                        "chunk_size": doc["chunk_size"],
-                        "bytesize": len(res.content),
                         "decompressed_bytesize": len(decompressed),
-                        "created_at": doc["created_at"],
-                        "md5": hashlib.md5(res.content).hexdigest(),
                     }
                 },
                 upsert=True,
             )
             self.r2_metadata.update_one({"_id": r2_key}, {"$set": {"migrated": True}})
 
-    def consume(self):
+    def run(self):
         while True:
             try:
                 r2_key = self.q.get(timeout=3)  # 3s timeout
@@ -293,14 +279,6 @@ class CommonCrawlWetMigrator(threading.Thread):
                 return
             self.update_metadata(r2_key)
             self.q.task_done()
-
-    def run(self):
-        if self.mode == "producer":
-            self.produce()
-        elif self.mode == "consumer":
-            self.consume()
-        else:
-            raise ValueError("Invalid mode")
 
 
 parser = argparse.ArgumentParser()
@@ -325,10 +303,14 @@ args = parser.parse_args()
 
 def migrate():
     q = queue.Queue()
-    CommonCrawlWetMigrator("producer", q).start()
-
+    CommonCrawlWetMigrator(q).produce()
+    threads = []
     for _ in range(NUM_OF_THREADS):
-        CommonCrawlWetMigrator("consumer", q).start()
+        threads.append(CommonCrawlWetMigrator(q))
+        threads[-1].start()
+
+    for t in threads:
+        t.join()
 
 
 def run_upload(source: str, pathfile: str, start: int, end: int):
