@@ -1,8 +1,8 @@
 from fastapi.encoders import jsonable_encoder
 import requests
 
-from mizu_node.types.common import JobType
-from mizu_node.types.data_job import (
+from mizu_node.types.job import (
+    JobType,
     WorkerJob,
     WorkerJobResult,
 )

@@ -13,10 +13,10 @@ from pymongo import MongoClient
 import requests
 
 from mizu_node.constants import R2_DATA_PREFIX
-from mizu_node.types.common import JobType
-from mizu_node.types.data_job import (
+from mizu_node.types.job import (
     BatchClassifyContext,
     DataJobPayload,
+    JobType,
     PowContext,
     PublishJobRequest,
 )
