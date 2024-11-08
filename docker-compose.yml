@@ -24,7 +24,7 @@ services:
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_DATABASE: "mizu"
+      MONGO_INITDB_DATABASE: "mizu_node"
 
   redis:
     image: redis:latest

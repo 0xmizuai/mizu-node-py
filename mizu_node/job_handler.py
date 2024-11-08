@@ -93,10 +93,10 @@ def handle_finish_job(jobs: Collection, worker: str, result: WorkerJobResult):
             status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
         )
     job_queues[result.job_type].ack(str(doc["_id"]))
-    requests.post(
-        BACKEND_SERVICE_URL + "/settle_rewards",
-        json=jsonable_encoder({"job_id": doc["_id"], "job_type": doc["job_type"]}),
-    )
+    # requests.post(
+    #     BACKEND_SERVICE_URL + "/settle_rewards",
+    #     json=jsonable_encoder({"job_id": doc["_id"], "job_type": doc["job_type"]}),
+    # )
 
 
 def handle_queue_len(job_type: JobType) -> int:
