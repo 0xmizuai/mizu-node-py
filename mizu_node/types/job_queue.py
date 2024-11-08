@@ -1,98 +1,73 @@
-import uuid
+from fastapi.encoders import jsonable_encoder
+import pika
 from redis import Redis
 
-import uuid
-from redis import Redis
+from mizu_node.types.job import WorkerJob
 
-from mizu_node.types.key_prefix import KeyPrefix
-
-
-class QueueItem(object):
-    def __init__(self, id: str, data: str):
-        self.id = id
-        self.data = data
+TTL = 600000  # 10mins
 
 
-class JobQueue(object):
-    """A work queue backed by a redis database"""
+class PikaBase(object):
+    def __init__(self, qname: str):
+        self.qname = qname
+        connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+        self.channel = connection.channel()
+        self.queue = self.channel.queue_declare(queue=qname, durable=True)
 
-    def __init__(self, name: KeyPrefix):
-        self._session = uuid.uuid4().hex
-        self._main_queue_key = name.of(":queue")
-        self._processing_key = name.of(":processing")
-        self._lease_key = KeyPrefix.concat(name, ":lease:")
-        self._item_data_key = KeyPrefix.concat(name, ":job:")
 
-    def add_items(self, db: Redis, items: list[QueueItem]) -> None:
-        for item in items:
-            db.set(self._item_data_key.of(item.id), item.data)
-        db.lpush(self._main_queue_key, *[item.id for item in items])
+class PikaProducer(PikaBase):
+    def __init__(self, qname: str):
+        super().__init__(qname)
 
-    def queue_len(self, db: Redis) -> int:
-        return db.llen(self._main_queue_key)
-
-    def processing_len(self, db: Redis) -> int:
-        # this is not accurate since we don't delete completed jobs
-        # until light clean
-        return db.llen(self._processing_key)
-
-    def get_item_data(self, db: Redis, item_id: str) -> str | None:
-        return db.get(self._item_data_key.of(item_id))
-
-    def lease(self, db: Redis, ttl_secs: int) -> str | None:
-        maybe_item_id: bytes | str | None = db.lmove(
-            self._main_queue_key,
-            self._processing_key,
+    def add_item(self, item: str):
+        self.channel.basic_publish(
+            exchange="",
+            routing_key=self.qname,
+            body=item,
+            properties=pika.BasicProperties(delivery_mode=pika.DeliveryMode.Persistent),
         )
-        if maybe_item_id is None:
+
+
+class PikaConsumer(PikaBase):
+    def __init__(self, qname: str):
+        super().__init__(qname)
+
+    def get(self) -> str:
+        (method, _, body) = self.channel.basic_get(queue=self.qname, auto_ack=True)
+        return (method.delivery_tag if method else None, body)
+
+    def ack(self, delivery_tag: int):
+        self.channel.basic_ack(int(delivery_tag), False)
+
+    def queue_len(self):
+        return self.queue.method.message_count
+
+
+class JobQueueV2(object):
+    def __init__(self, qname: str):
+        self.qname = qname
+        self.producer = PikaProducer(qname)
+        self.consumer = PikaConsumer(qname)
+
+    def add_item(self, job: WorkerJob):
+        self.producer.add_item(jsonable_encoder(job))
+
+    def _gen_rkey(self, job_id: str) -> str:
+        return f"{self.qname}:delivery_tag:{job_id}"
+
+    def get(self, rclient: Redis) -> WorkerJob | None:
+        (delivery_tag, job_json) = self.consumer.get()
+        if delivery_tag is None:
             return None
 
-        data: str | None = db.get(self._item_data_key.of(maybe_item_id))
-        if data is None:
-            # the item will be cleaned up from processing queue in the next clean
-            return None
+        worker_job = WorkerJob(**job_json)
+        rclient.setex(self._gen_rkey(worker_job.job_id), TTL / 1000 * 2, delivery_tag)
+        return worker_job
 
-        db.setex(
-            self._lease_key.of(maybe_item_id),
-            ttl_secs,
-            self._session,
-        )
-        return data
+    def ack(self, rclient: Redis, job_id: int):
+        delivery_tag = rclient.get(self._gen_rkey(job_id))
+        if delivery_tag:
+            self.consumer.ack(int(delivery_tag))
 
-    def lease_exists(self, db: Redis, item_id: str | bytes) -> bool:
-        return db.exists(self._lease_key.of(item_id)) != 0
-
-    def complete(self, db: Redis, item_id: str) -> bool:
-        job_del_result, _ = (
-            db.pipeline()
-            .delete(self._item_data_key.of(item_id))
-            .delete(self._lease_key.of(item_id))
-            .execute()
-        )
-        return job_del_result is not None and job_del_result != 0
-
-    def light_clean(self, db: Redis):
-        processing: list[bytes | str] = db.lrange(
-            self._processing_key,
-            0,
-            -1,
-        )
-        for item_id in processing:
-            has_lease_key = self.lease_exists(db, item_id)
-            has_data_key = db.exists(self._item_data_key.of(item_id)) != 0
-
-            # job completed
-            if not has_data_key:
-                print(
-                    item_id,
-                    " has been completed, will be deleted from processing queue",
-                )
-                db.lrem(self._processing_key, 0, item_id)
-                continue
-
-            # lease expired
-            if not has_lease_key:
-                print(item_id, " lease has expired, will reset")
-                db.pipeline().lrem(self._processing_key, 0, item_id).lpush(
-                    self._main_queue_key, item_id
-                ).execute()
+    def queue_len(self):
+        return self.consumer.queue_len()
