@@ -48,9 +48,11 @@ def handle_query_job(
 ) -> list[WorkerJobResult] | None:
     job_ids = req.job_ids
     if not job_ids:
-        return []
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
+        )
     jobs = mdb.find(
-        {"job_id": {"$in": job_ids}},
+        {"job_id": {"$in": job_ids.slice(1, 1000)}},
         {
             "_id": 1,
             "job_type": 1,

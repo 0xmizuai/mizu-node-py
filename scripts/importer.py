@@ -13,6 +13,8 @@ import requests
 from warcio.archiveiterator import ArchiveIterator
 import requests
 
+from scripts.models import WetMetadata
+
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
@@ -125,23 +127,21 @@ class CommonCrawlWetImporter(threading.Thread):
                 "decompressed_bytesize": str(cached.bytesize),
             },
         )
+        metadata = WetMetadata(
+            id=hashlib.sha256(r2_key.encode("utf-8")).hexdigest(),
+            batch=self.batch,
+            filename=cached.filename,
+            chunk=progress.next_chunk,
+            chunk_size=len(cached.records),
+            bytesize=len(compressed),
+            decompressed_bytesize=cached.bytesize,
+            md5=hashlib.md5(compressed).hexdigest(),
+        )
         self.r2_metadata.update_one(
             {
-                "_id": hashlib.sha256(r2_key.encode("utf-8")).hexdigest(),
+                "_id": metadata.id,
             },
-            {
-                "$set": {
-                    "type": "wet",
-                    "batch": self.batch,
-                    "filename": cached.filename,
-                    "chunk": progress.next_chunk,
-                    "chunk_size": len(cached.records),
-                    "bytesize": len(compressed),
-                    "decompressed_bytesize": cached.bytesize,
-                    "created_at": datetime.now(),
-                    "md5": hashlib.md5(compressed).hexdigest(),
-                }
-            },
+            {"$set": metadata.model_dump()},
             upsert=True,
         )
         progress.next_chunk += 1
@@ -348,7 +348,9 @@ class CommonCrawlWetMetadataUploader(object):
 
     def datetime_handler(self, obj):
         if isinstance(obj, datetime):
-            return int(obj.timestamp())  # Convert to Unix epoch seconds
+            return (
+                obj.isoformat()
+            )  # Convert to ISO format string like "2024-03-14T15:30:00"
         raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
     def iterate_and_upload(self, processed=0, batch_num=0):

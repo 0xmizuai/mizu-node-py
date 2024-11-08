@@ -1,4 +1,3 @@
-import json
 import math
 import os
 import queue
@@ -17,7 +16,6 @@ from mizu_node.constants import R2_DATA_PREFIX
 from mizu_node.types.common import JobType
 from mizu_node.types.data_job import (
     BatchClassifyContext,
-    DataJob,
     DataJobPayload,
     PowContext,
     PublishJobRequest,
@@ -28,9 +26,11 @@ from scripts.importer import (
     R2_BACKCUP_BUCKET_NAME,
     R2_SECRET_KEY,
 )
+from scripts.models import ClientJobRecord, WetMetadata
 
 MONGO_URL = os.environ["CC_MONGO_URL"]
 MONGO_DB_NAME = "commoncrawl"
+PUBLISHED_JOBS_COLLECTION = "published_jobs"
 DATA_LINK_PREFIX = "https://rawdata.mizu.technology/"
 
 
@@ -123,86 +123,157 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         self.classifier_id = classifier_id
         self.cool_down = cool_down
         self.mclient = MongoClient(MONGO_URL)
-        self.jobs_coll = self.mclient[MONGO_DB_NAME]["published_jobs"]
+        self.jobs_coll = self.mclient[MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
 
-    def _build_batch_classify_job(self, doc: any, classifier_id: str):
-        r2_key = f"{doc['batch']}/{doc['type']}/{doc['filename']}/{doc['chunk']}.zz"
+    def _build_batch_classify_job(self, doc: WetMetadata, classifier_id: str):
+        r2_key = f"{doc.batch}/{doc.type}/{doc.filename}/{doc.chunk}.zz"
         return DataJobPayload(
             job_type=JobType.batch_classify,
             batch_classify_ctx=BatchClassifyContext(
                 data_url=f"{DATA_LINK_PREFIX}/{r2_key}",
-                batch_size=doc["chunk_size"],
-                bytesize=doc["bytesize"],
-                checksum_md5=doc["md5"],
-                decompressed_bytesize=doc["decompressed_bytesize"],
+                batch_size=doc.chunk_size,
+                bytesize=doc.bytesize,
+                checksum_md5=doc.md5,
+                decompressed_bytesize=doc.decompressed_bytesize,
                 classifer_id=classifier_id,
             ),
         )
 
-    def query_status(self):
-        for doc in self.dest.find({"finished_at": {"$exists": False}}):
-            result = requests.post(
-                self.service_url + "/query_jobs",
-                json=jsonable_encoder({"job_ids": [doc["_id"]]}),
-                headers={"Authorization": "Bearer " + self.api_key},
+    def publish_and_record(self, jobs: list[(WetMetadata, DataJobPayload)]):
+        job_ids = list(self.publish([payload for _, payload in jobs]))
+        job_records = [
+            ClientJobRecord(
+                id=metadata.id,
+                batch=self.cc_batch,
+                classifier_id=self.classifier_id,
+                metadata_type=metadata.type,
+                job_id=job_id,
+                job_type=payload.job_type,
+                created_at=int(time.time()),
             )
-            if result.json()["data"][0]["finished_at"]:
-                self.dest.update_one(
-                    {"_id": doc["_id"]},
-                    {"$set": {"finished_at": result.json()["data"][0]["finished_at"]}},
-                )
+            for job_id, (metadata, payload) in zip(job_ids, jobs)
+        ]
+        self.jobs_coll.insert_many([record.model_dump_json() for record in job_records])
 
-    def publish_and_record(self, jobs: list[DataJobPayload]):
-        job_ids = list(self.publish(jobs))
-        self.jobs_coll.insert_many(
-            [
-                jsonable_encoder(DataJob.from_job_payload("", payload, job_id))
-                for job_id, payload in zip(job_ids, jobs)
-            ]
-        )
-
-    def publish_all(self, r2_key: str):
-        with requests.get(f"{R2_DATA_PREFIX}/{r2_key}") as res:
-            batch = []
-            decompressed = zlib.decompress(res.content)
-            for record_str in decompressed.decode("utf-8").split("\n"):
-                record = json.loads(record_str)
-                if self.jobs_coll.count_documents({"_id": record["_id"]}) > 0:
-                    continue
-                batch.append(self._build_batch_classify_job(record, self.classifier_id))
-                if len(batch) == self.batch_size:
-                    self.publish_and_record(batch)
-            if len(batch) > 0:
+    def publish_all(self, metadatas: list[WetMetadata]):
+        batch = []
+        for metadata in metadatas:
+            if self.jobs_coll.count_documents({"_id": metadata.id}) > 0:
+                continue
+            job = self._build_batch_classify_job(metadata, self.classifier_id)
+            batch.append((metadata.id, job))
+            if len(batch) == self.batch_size:
                 self.publish_and_record(batch)
+                batch = []
+        if len(batch) > 0:
+            self.publish_and_record(batch)
+
+    def get_one(self, retry=10) -> WetMetadata | None:
+        if retry == 0:
+            raise ValueError("No more metadata")
+        try:
+            return self.q.get(timeout=3)
+        except queue.Empty:
+            time.sleep(3)
+            return self.get_one(retry - 1)
+
+    def get_batch(self) -> Iterator[WetMetadata]:
+        for _ in range(self.batch_size):
+            metadata = self.get_one()
+            if metadata is None:
+                return
+            else:
+                yield metadata
 
     def run(self):
         while True:
-            try:
-                r2_key = self.q.get(timeout=3)  # 3s timeout
-                print("processing metadata file: ", r2_key)
-                self.publish_all(r2_key)
-                time.sleep(self.cool_down)
-            except queue.Empty:
+            metadatas = list(self.get_batch())
+            self.publish_all(metadatas)
+            if len(metadatas) < self.batch_size:
                 return
-            self.q.task_done()
+            time.sleep(self.cool_down)
 
 
-class CommonCrawlMetadataLoader(threading.Thread):
-    def __init__(self, cc_batch: str, q: queue.Queue):
-        super().__init__()
-        self.cc_batch = cc_batch
+class CommonCrawlDataJobLoader(threading.Thread):
+    def __init__(
+        self, q: queue.Queue, cc_batch: str, metadata_type: str, num_of_publishers: int
+    ):
         self.q = q
-        self.s3 = boto3.resource(
+        self.cc_batch = cc_batch
+        self.metadata_type = metadata_type
+        self.num_of_publishers = num_of_publishers
+        self.total_jobs = 0
+        self.mclient = MongoClient(MONGO_URL)
+        self.jobs_coll = self.mclient[MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
+
+    def load_one_file(self, filepath: str):
+        with requests.get(f"{R2_DATA_PREFIX}/{filepath}") as res:
+            decompressed = zlib.decompress(res.content)
+            lines = decompressed.decode("utf-8").split("\n")
+            for record_str in lines:
+                self.q.put_nowait(WetMetadata.model_validate_json(record_str))
+            self.total_jobs += len(lines)
+
+    def query_status(self):
+        pending_jobs = list(
+            self.jobs_coll.find(
+                {
+                    "batch": self.cc_batch,
+                    "metadata_type": self.metadata_type,
+                    "classifier_id": self.classifier_id,
+                    "created_at": {"$gt": int(time.time()) - 1800},  # wait for 30mins
+                    "finished_at": {"$exists": False},
+                }
+            )
+            .sort("created_at", 1)
+            .limit(1000)
+        )
+        if len(pending_jobs) == 0:
+            return
+
+        result = requests.post(
+            self.service_url + "/job_status",
+            json=jsonable_encoder({"job_ids": [doc["_id"] for doc in pending_jobs]}),
+            headers={"Authorization": "Bearer " + self.api_key},
+        )
+        for job_result in result.json()["data"]:
+            self.dest.update_one(
+                {"_id": job_result["job_id"]},
+                {
+                    "$set": {
+                        "finished_at": job_result["finished_at"],
+                        "batch_classify_result": job_result["batch_classify_result"],
+                    }
+                },
+            )
+        self.total_jobs -= len(result.json()["data"])
+
+    def load_metadatas(self):
+        s3 = boto3.resource(
             "s3",
             endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
             aws_access_key_id=R2_ACCESS_KEY,
             aws_secret_access_key=R2_SECRET_KEY,
         )
+        bucket = s3.Bucket(R2_BACKCUP_BUCKET_NAME)
+        objs = bucket.objects.filter(Prefix=f"{self.cc_batch}")
+        for obj in objs:
+            self.load_one_file(obj.key)
+            print(f"Loader: enqueued {self.total_jobs} jobs")
+
+        for _ in range(self.num_of_publishers):
+            self.q.put_nowait(None)  # for publisher to exit
+
+    def wait_until_queue_empty(self):
+        while not self.q.empty():
+            time.sleep(30)
 
     def run(self):
-        bucket = self.s3.Bucket(R2_BACKCUP_BUCKET_NAME)
-        for obj in bucket.objects.filter(Prefix=f"{self.cc_batch}/"):
-            self.q.put(obj.key)
+        self.load_metadatas()
+        self.wait_until_queue_empty()
+        while self.total_jobs > 0:
+            self.query_status()
+            time.sleep(60)
 
 
 def publish_pow_jobs(api_key: str, num_of_threads: int = 32):
@@ -215,19 +286,15 @@ def publish_pow_jobs(api_key: str, num_of_threads: int = 32):
 
 
 def publish_batch_classify_jobs(
-    api_key: str, cc_batch: str, classifier_id: str, num_of_threads: int = 32
+    api_key: str,
+    cc_batch: str,
+    classifier_id: str,
+    metadata_type: str = "wet",
+    num_of_threads: int = 32,
 ):
     q = queue.Queue()
-    loader = CommonCrawlMetadataLoader(cc_batch, q)
-    loader.start()
-
-    publishers = []
+    CommonCrawlDataJobLoader(q, cc_batch, metadata_type, num_of_threads).start()
     for _ in range(num_of_threads):
-        publishers.append(
-            CommonCrawlDataJobPublisher(api_key, q, cc_batch, classifier_id)
-        )
-        publishers[-1].start()
-
-    loader.join()
-    for t in publishers:
-        t.join()
+        CommonCrawlDataJobPublisher(
+            api_key, q, cc_batch, classifier_id, metadata_type
+        ).start()
