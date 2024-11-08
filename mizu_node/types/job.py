@@ -1,8 +1,21 @@
+from enum import Enum
 import time
 from pydantic import BaseModel, ConfigDict, Field
 import uuid
 
-from mizu_node.types.common import JobType
+from mizu_node.types.classifier import ClassifyResult
+
+
+class VerificationMode(str, Enum):
+    none = "none"
+    always = "always"
+    random = "random"
+
+
+class JobType(int, Enum):
+    pow = 0
+    classify = 1
+    batch_classify = 2
 
 
 class ClassifyContext(BaseModel):
@@ -48,39 +61,6 @@ class QueryJobRequest(BaseModel):
     job_ids: list[str] = Field(alias="jobIds")
 
 
-class DataLabelResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    label: str
-    score: float
-
-
-class WetContext(BaseModel):
-    warc_id: str = Field(alias="warcId")
-    uri: str
-    languages: list[str]
-    crawled_at: int = Field(alias="crawledAt")
-
-
-class ClassifyResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    wet_context: WetContext = Field(alias="wetContext")
-    labels: list[DataLabelResult]
-
-
-class WorkerJobResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    job_id: str = Field(alias="jobId")
-    job_type: JobType = Field(alias="jobType")
-    classify_result: list[str] | None = Field(alias="classifyResult", default=None)
-    pow_result: str | None = Field(alias="powResult", default=None)
-    batch_classify_result: list[ClassifyResult] | None = Field(
-        alias="batchClassifyResult"
-    )
-
-
 class DataJob(DataJobPayload):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -116,6 +96,18 @@ class WorkerJob(DataJobPayload):
     model_config = ConfigDict(populate_by_name=True)
 
     job_id: str = Field(alias="jobId")
+
+
+class WorkerJobResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str = Field(alias="jobId")
+    job_type: JobType = Field(alias="jobType")
+    classify_result: list[str] | None = Field(alias="classifyResult", default=None)
+    pow_result: str | None = Field(alias="powResult", default=None)
+    batch_classify_result: list[ClassifyResult] | None = Field(
+        alias="batchClassifyResult"
+    )
 
 
 def build_worker_job(job: DataJob) -> WorkerJob:

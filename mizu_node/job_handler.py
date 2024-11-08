@@ -13,16 +13,16 @@ from mizu_node.constants import (
 )
 
 from mizu_node.security import is_worker_blocked
-from mizu_node.types.common import JobType
-from mizu_node.types.data_job import (
+from mizu_node.types.job import (
     DataJob,
+    JobType,
     PublishJobRequest,
     QueryJobRequest,
     WorkerJob,
     WorkerJobResult,
     build_worker_job,
 )
-from mizu_node.types.job_queue_v2 import JobQueueV2
+from mizu_node.types.job_queue import JobQueueV2
 
 BACKEND_SERVICE_URL = os.environ["BACKEND_SERVICE_URL"]
 

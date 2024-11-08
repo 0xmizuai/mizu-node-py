@@ -24,9 +24,13 @@ from mizu_node.job_handler import (
     handle_queue_len,
 )
 from mizu_node.security import verify_jwt, verify_api_key
-from mizu_node.types.common import JobType
-from mizu_node.types.config import ClassifierConfig
-from mizu_node.types.data_job import PublishJobRequest, QueryJobRequest, WorkerJobResult
+from mizu_node.types.classifier import ClassifierConfig
+from mizu_node.types.job import (
+    JobType,
+    PublishJobRequest,
+    QueryJobRequest,
+    WorkerJobResult,
+)
 from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
