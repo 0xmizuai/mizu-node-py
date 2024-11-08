@@ -13,6 +13,7 @@ from mizu_node.constants import (
 )
 from mizu_node.security import block_worker
 from mizu_node.types.job import (
+    BatchClassifyContext,
     ClassifyContext,
     DataJobPayload,
     JobType,
@@ -81,13 +82,29 @@ def _build_pow_ctx():
     return PowContext(difficulty=1, seed=str(uuid4()))
 
 
+def _build_batch_classify_ctx():
+    return BatchClassifyContext(
+        data_url="https://example.com/data",
+        batch_size=1000,
+        bytesize=5000000,
+        decompressed_bytesize=20000000,
+        checksum_md5="0x",
+        classifer_id="classifier1",
+    )
+
+
 def _new_data_job_payload(job_type: str, r2_key: str) -> DataJobPayload:
     if job_type == JobType.classify:
         return DataJobPayload(
             job_type=JobType.classify, classify_ctx=_build_classify_ctx(r2_key)
         )
-    else:
+    elif job_type == JobType.pow:
         return DataJobPayload(job_type=JobType.pow, pow_ctx=_build_pow_ctx())
+    elif job_type == JobType.batch_classify:
+        return DataJobPayload(
+            job_type=JobType.batch_classify,
+            batch_classify_ctx=_build_batch_classify_ctx(),
+        )
 
 
 def _publish_jobs(job_type: JobType, num_jobs=3):
@@ -114,6 +131,7 @@ def mock_all(mock_job_queue):
     job_queues = {
         JobType.classify: JobQueueMock("classify"),
         JobType.pow: JobQueueMock("pow"),
+        JobType.batch_classify: JobQueueMock("batch_classify"),
     }
     mock_job_queue.side_effect = lambda job_type: job_queues[job_type]
     return job_queues
@@ -134,6 +152,11 @@ def test_publish_jobs(mock_job_queue, setenvvar):
     assert len(job_ids2) == 3
     assert job_queues[JobType.pow].queue_len() == 3
 
+    # Test publishing batch classify jobs
+    job_ids3 = _publish_jobs(JobType.batch_classify, 3)
+    assert len(job_ids3) == 3
+    assert job_queues[JobType.batch_classify].queue_len() == 3
+
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("mizu_node.job_handler.job_queue")
@@ -143,6 +166,7 @@ def test_take_job_ok(mock_job_queue, setenvvar):
     # Publish jobs first
     pids = _publish_jobs(JobType.pow, 3)
     cids = _publish_jobs(JobType.classify, 3)
+    bids = _publish_jobs(JobType.batch_classify, 3)
 
     # Take classify job 1
     worker1_jwt = jwt_token("worker1")
@@ -170,6 +194,19 @@ def test_take_job_ok(mock_job_queue, setenvvar):
     assert job2["jobType"] == JobType.pow
     assert job_queues[JobType.pow].queue_len() == 3
 
+    # Take batch classify job
+    worker3_jwt = jwt_token("worker3")
+    response3 = client.get(
+        "/take_job",
+        params={"jobType": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
+    )
+    assert response3.status_code == 200
+    job3 = response3.json()["data"]["job"]
+    assert job3["_id"] == bids[0]
+    assert job3["jobType"] == JobType.batch_classify
+    assert job_queues[JobType.batch_classify].queue_len() == 3
+
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("mizu_node.job_handler.job_queue")
@@ -180,7 +217,7 @@ def test_take_job_error(mock_job_queue, setenvvar):
     # No jobs published yet
     response = client.get(
         "/take_job",
-        params={"jobType": int(JobType.classify)},
+        params={"jobType": int(JobType.batch_classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -188,17 +225,17 @@ def test_take_job_error(mock_job_queue, setenvvar):
 
     response = client.get(
         "/take_job",
-        params={"jobType": int(JobType.classify)},
+        params={"jobType": int(JobType.batch_classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
-    # Wrong job type (pow jobs published, trying to take classify job)
+    # Wrong job type (pow jobs published, trying to take batch classify job)
     _publish_jobs(JobType.pow, 3)
     worker2_jwt = jwt_token("worker2")
     response = client.get(
         "/take_job",
-        params={"jobType": int(JobType.classify)},
+        params={"jobType": int(JobType.batch_classify)},
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response.status_code == 200
@@ -209,7 +246,7 @@ def test_take_job_error(mock_job_queue, setenvvar):
     block_worker(app.rclient, "worker3")
     response = client.get(
         "/take_job",
-        params={"jobType": int(JobType.classify)},
+        params={"jobType": int(JobType.batch_classify)},
         headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -224,7 +261,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     mock_all(mock_job_queue)
 
     # Publish jobs
-    cids = _publish_jobs(JobType.classify, 3)
+    bids = _publish_jobs(JobType.batch_classify, 3)
     pids = _publish_jobs(JobType.pow, 3)
 
     # Take jobs
@@ -247,7 +284,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
 
     # Case 1: job 1 finished by worker1
     r1 = WorkerJobResult(
-        job_id=cids[0],
+        job_id=bids[0],
         job_type=JobType.classify,
         classify_result=["t1"],
     )
@@ -259,8 +296,8 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     assert response.status_code == 200
 
     # Verify job 1 in database
-    j1 = app.mdb("jobs").find_one({"_id": cids[0]})
-    assert j1["jobType"] == JobType.classify
+    j1 = app.mdb("jobs").find_one({"_id": bids[0]})
+    assert j1["jobType"] == JobType.batch_classify
     assert j1["classifyResult"] == ["t1"]
     assert j1["worker"] == "worker1"
     assert j1["finishedAt"] is not None
@@ -293,7 +330,7 @@ def test_finish_job_error(mock_requests, mock_job_queue, setenvvar):
     worker1_jwt = jwt_token("worker1")
     result = WorkerJobResult(
         job_id="invalid_job_id",
-        job_type=JobType.classify,
+        job_type=JobType.batch_classify,
         classify_result=["t1"],
     )
     response = client.post(
@@ -305,12 +342,12 @@ def test_finish_job_error(mock_requests, mock_job_queue, setenvvar):
     assert response.json()["message"] == "job not found"
 
     # Publish jobs
-    _publish_jobs(JobType.classify, 3)
+    _publish_jobs(JobType.batch_classify, 3)
 
     # Take job as worker1
     response = client.get(
         "/take_job",
-        params={"jobType": int(JobType.classify)},
+        params={"jobType": int(JobType.batch_classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -319,7 +356,7 @@ def test_finish_job_error(mock_requests, mock_job_queue, setenvvar):
     # Finish job first time - should succeed
     result = WorkerJobResult(
         job_id=job["_id"],
-        job_type=JobType.classify,
+        job_type=JobType.batch_classify,
         classify_result=["t1"],
     )
     response = client.post(
@@ -347,9 +384,9 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
     mock_all(mock_job_queue)
 
     # Publish jobs
-    cids = _publish_jobs(JobType.classify, 3)
+    bids = _publish_jobs(JobType.batch_classify, 3)
     pids = _publish_jobs(JobType.pow, 2)
-    all_job_ids = cids + pids
+    all_job_ids = bids + pids
 
     # Check initial status
     response = client.post(
@@ -361,11 +398,11 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
     initial_statuses = response.json()["data"]["jobs"]
     assert len(initial_statuses) == 5
 
-    # Take and finish a classify job
+    # Take and finish a batch classify job
     worker1_jwt = jwt_token("worker1")
     response = client.get(
         "/take_job",
-        params={"jobType": int(JobType.classify)},
+        params={"jobType": int(JobType.batch_classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -373,7 +410,7 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
 
     result1 = WorkerJobResult(
         job_id=classify_job["_id"],
-        job_type=JobType.classify,
+        job_type=JobType.batch_classify,
         classify_result=["t1"],
     )
     response = client.post(
