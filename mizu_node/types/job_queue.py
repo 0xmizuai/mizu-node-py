@@ -1,3 +1,4 @@
+import os
 from fastapi.encoders import jsonable_encoder
 import pika
 from redis import Redis
@@ -6,11 +7,16 @@ from mizu_node.types.job import WorkerJob
 
 TTL = 600000  # 10mins
 
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "127.0.0.1")
+RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", 5672)
+
 
 class PikaBase(object):
     def __init__(self, qname: str):
         self.qname = qname
-        connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host=RABBITMQ_HOST, port=RABBITMQ_PORT)
+        )
         self.channel = connection.channel()
         self.queue = self.channel.queue_declare(queue=qname, durable=True)
 
