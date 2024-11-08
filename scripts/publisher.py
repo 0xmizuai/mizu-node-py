@@ -194,25 +194,23 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
             time.sleep(self.cool_down)
 
 
-class CommonCrawlDataJobLoader(threading.Thread):
+class CommonCrawlDataJobManager(threading.Thread):
     def __init__(
-        self, q: queue.Queue, cc_batch: str, metadata_type: str, num_of_publishers: int
+        self,
+        q: queue.Queue,
+        cc_batch: str,
+        metadata_type: str,
+        classifier_id: str,
+        num_of_publishers: int,
     ):
         self.q = q
         self.cc_batch = cc_batch
         self.metadata_type = metadata_type
+        self.classifier_id = classifier_id
         self.num_of_publishers = num_of_publishers
-        self.total_jobs = 0
+        self.total_processed = 0
         self.mclient = MongoClient(MONGO_URL)
         self.jobs_coll = self.mclient[MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
-
-    def load_one_file(self, filepath: str):
-        with requests.get(f"{R2_DATA_PREFIX}/{filepath}") as res:
-            decompressed = zlib.decompress(res.content)
-            lines = decompressed.decode("utf-8").split("\n")
-            for record_str in lines:
-                self.q.put_nowait(WetMetadata.model_validate_json(record_str))
-            self.total_jobs += len(lines)
 
     def query_status(self):
         pending_jobs = list(
@@ -246,7 +244,18 @@ class CommonCrawlDataJobLoader(threading.Thread):
                     }
                 },
             )
-        self.total_jobs -= len(result.json()["data"])
+
+        # if all jobs are finished, load more metadatas
+        if len(result.json()["data"]) == len(pending_jobs):
+            self.query_status()
+
+    def load_one_file(self, filepath: str):
+        with requests.get(f"{R2_DATA_PREFIX}/{filepath}") as res:
+            decompressed = zlib.decompress(res.content)
+            lines = decompressed.decode("utf-8").split("\n")
+            for record_str in lines:
+                self.q.put_nowait(WetMetadata.model_validate_json(record_str))
+            self.total_processed += len(lines)
 
     def load_metadatas(self):
         s3 = boto3.resource(
@@ -268,11 +277,23 @@ class CommonCrawlDataJobLoader(threading.Thread):
         while not self.q.empty():
             time.sleep(30)
 
+    def count_finished_jobs(self):
+        return self.jobs_coll.count_documents(
+            {
+                "batch": self.cc_batch,
+                "metadata_type": self.metadata_type,
+                "classifier_id": self.classifier_id,
+                "finished_at": {"$exists": True},
+            }
+        )
+
     def run(self):
         self.load_metadatas()
         self.wait_until_queue_empty()
-        while self.total_jobs > 0:
+        while True:
             self.query_status()
+            if self.count_finished_jobs() >= self.total_processed:
+                return
             time.sleep(60)
 
 
@@ -293,7 +314,7 @@ def publish_batch_classify_jobs(
     num_of_threads: int = 32,
 ):
     q = queue.Queue()
-    CommonCrawlDataJobLoader(q, cc_batch, metadata_type, num_of_threads).start()
+    CommonCrawlDataJobManager(q, cc_batch, metadata_type, num_of_threads).start()
     for _ in range(num_of_threads):
         CommonCrawlDataJobPublisher(
             api_key, q, cc_batch, classifier_id, metadata_type
