@@ -6,10 +6,8 @@ from fastapi.encoders import jsonable_encoder
 from pymongo.database import Collection
 from redis import Redis
 from fastapi import HTTPException, status
+import requests
 
-from mizu_node.constants import (
-    REDIS_JOB_QUEUE_NAME,
-)
 
 from mizu_node.security import is_worker_blocked
 from mizu_node.types.job import (
@@ -23,10 +21,9 @@ from mizu_node.types.job import (
 )
 from mizu_node.types.job_queue import JobQueueV2
 
-BACKEND_SERVICE_URL = os.environ["BACKEND_SERVICE_URL"]
 
 job_queues = {
-    job_type: JobQueueV2(REDIS_JOB_QUEUE_NAME + ":" + str(job_type))
+    job_type: JobQueueV2("job_queue_" + str(job_type))
     for job_type in [JobType.classify, JobType.pow, JobType.batch_classify]
 }
 
@@ -103,10 +100,13 @@ def handle_finish_job(
             detail="job already finished",
         )
     job_queue(result.job_type).ack(rclient, str(doc["_id"]))
-    # requests.post(
-    #     BACKEND_SERVICE_URL + "/settle_rewards",
-    #     json=jsonable_encoder({"job_id": doc["_id"], "job_type": doc["job_type"]}),
-    # )
+    requests.post(
+        os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
+        json=jsonable_encoder(
+            {"job_id": doc["_id"], "job_type": doc["jobType"], "worker": worker}
+        ),
+        headers={"Authorization": f"Bearer {os.environ['SHARED_SECRET']}"},
+    )
 
 
 def handle_queue_len(job_type: JobType) -> int:

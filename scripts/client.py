@@ -1,6 +1,6 @@
 import argparse
+import os
 
-from mizu_node.constants import VERIFY_KEY
 from mizu_node.security import verify_jwt
 from scripts.auth import get_api_keys, issue_api_key, sign_jwt
 from scripts.importer import CommonCrawlWetMetadataUploader, import_to_r2
@@ -103,7 +103,7 @@ def main():
         token = sign_jwt(args.user)
         print("Token: " + token)
     elif args.command == "verify_jwt":
-        user = verify_jwt(args.token, VERIFY_KEY)
+        user = verify_jwt(args.token, os.environ["VERIFY_KEY"])
         print("User: " + user)
     elif args.command == "import":
         [start, end] = [int(i) for i in args.range.split(",")]

@@ -1,10 +1,10 @@
 import json
 
 from fastapi import HTTPException
-from pymongo.database import Database
+from pymongo.database import Collection
 from redis import Redis
 
-from mizu_node.constants import API_KEY_COLLECTION, BLOCKED_WORKER_PREFIX
+from mizu_node.constants import BLOCKED_WORKER_PREFIX
 from mizu_node.utils import epoch
 import jwt
 
@@ -28,8 +28,8 @@ def verify_jwt(token: str, public_key: str) -> str:
         raise HTTPException(status_code=401, detail="Token verification failed")
 
 
-def verify_api_key(mdb: Database, token: str) -> str:
-    doc = mdb[API_KEY_COLLECTION].find_one({"api_key": token})
+def verify_api_key(mdb: Collection, token: str) -> str:
+    doc = mdb.find_one({"api_key": token})
     if doc is None:
         raise HTTPException(status_code=401, detail="API key is invalid")
     return doc["user"]

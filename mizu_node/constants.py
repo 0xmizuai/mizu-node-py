@@ -1,7 +1,6 @@
 import os
 
 # redis for pending/assigned jobs
-REDIS_JOB_QUEUE_NAME = os.environ.get("REDIS_JOB_QUEUE_NAME", "mizu_job_queue")
 REDIS_URL = os.environ.get("REDIS_URL")
 ASSIGNED_JOB_EXPIRE_TTL_SECONDS = int(
     os.environ.get("ASSIGNED_JOB_EXPIRE_TTL_SECONDS", 3600)
@@ -16,8 +15,6 @@ COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = int(
 API_KEY_COLLECTION = "api_keys"
 JOBS_COLLECTION = "jobs"
 CLASSIFIER_COLLECTION = "classifiers"
-
-VERIFY_KEY = os.environ["VERIFY_KEY"]
 
 R2_DATA_PREFIX = "https://rawdata.mizu.technology"
 

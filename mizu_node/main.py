@@ -9,12 +9,12 @@ import redis
 
 from mizu_node.error_handler import error_handler
 from mizu_node.constants import (
+    API_KEY_COLLECTION,
     CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
     MIZU_NODE_MONGO_DB_NAME,
     REDIS_URL,
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
-    VERIFY_KEY,
 )
 from mizu_node.job_handler import (
     handle_query_job,
@@ -34,30 +34,28 @@ from mizu_node.types.job import (
 from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
-rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-
-MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
-mclient = MongoClient(MIZU_NODE_MONGO_URL)
-mdb = mclient[MIZU_NODE_MONGO_DB_NAME]
+mclient = MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
 
 # Security scheme
 bearer_scheme = HTTPBearer()
 
 app = FastAPI()
+app.rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+app.mdb = lambda coll: mclient[MIZU_NODE_MONGO_DB_NAME][coll]
 
 
 def get_user(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    return verify_jwt(token, VERIFY_KEY)
+    return verify_jwt(token, os.environ["VERIFY_KEY"])
 
 
 def get_publisher(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    return verify_api_key(mdb, token)
+    return verify_api_key(app.mdb(API_KEY_COLLECTION), token)
 
 
 @app.get("/")
@@ -74,7 +72,7 @@ def register_classifier(
     if classifier.publisher != publisher:
         return build_json_response(status.HTTP_401_UNAUTHORIZED, "unauthorized")
 
-    result = mdb[CLASSIFIER_COLLECTION].insert_one(jsonable_encoder(classifier))
+    result = app.mdb(CLASSIFIER_COLLECTION).insert_one(jsonable_encoder(classifier))
     return build_json_response(
         status.HTTP_200_OK, "ok", {"id": str(result.inserted_id)}
     )
@@ -83,7 +81,7 @@ def register_classifier(
 @app.post("/classifer")
 @error_handler
 def get_classifier(id: str):
-    doc = mdb[CLASSIFIER_COLLECTION].find_one({"_id": ObjectId(id)})
+    doc = app.mdb(CLASSIFIER_COLLECTION).find_one({"_id": ObjectId(id)})
     if doc is None:
         return build_json_response(status.HTTP_404_NOT_FOUND, "classifier not found")
     return build_json_response(
@@ -95,36 +93,38 @@ def get_classifier(id: str):
 @error_handler
 def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
     # TODO: ensure it's called from whitelisted publisher
-    ids = list(handle_publish_jobs(publisher, req))
+    ids = list(handle_publish_jobs(app.mdb(JOBS_COLLECTION), publisher, req))
     return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
 
 
 @app.get("/job_status")
 @error_handler
-def finish_job(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
-    data = handle_query_job(mdb[JOBS_COLLECTION], publisher, req)
+def get_job_status(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
+    data = handle_query_job(app.mdb(JOBS_COLLECTION), publisher, req)
     return build_json_response(status.HTTP_200_OK, "ok", data)
 
 
 @app.get("/take_job")
 @error_handler
 def take_job(job_type: JobType, user: str = Depends(get_user)):
-    if not has_worker_cooled_down(rclient, user):
+    if not has_worker_cooled_down(app.rclient, user):
         message = f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}"
         return build_json_response(status.HTTP_429_TOO_MANY_REQUESTS, message)
-    job = handle_take_job(rclient, user, job_type)
+    job = handle_take_job(app.rclient, user, job_type)
     if job is None:
         return build_json_response(
             status.HTTP_200_OK, "no job available", {"job": None}
         )
     else:
-        return build_json_response(status.HTTP_200_OK, "ok", {"job": job.model_dump()})
+        return build_json_response(
+            status.HTTP_200_OK, "ok", {"job": jsonable_encoder(job)}
+        )
 
 
 @app.post("/finish_job")
 @error_handler
 def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
-    handle_finish_job(rclient, mdb[JOBS_COLLECTION], user, job)
+    handle_finish_job(app.rclient, app.mdb(JOBS_COLLECTION), user, job)
     return build_json_response(status.HTTP_200_OK, "ok")
 
 

@@ -8,8 +8,10 @@ class MongoMock:
             self.docs[doc["_id"]] = doc
 
     def find_one(self, query):
-        key = query["_id"]
-        return self.docs.get(key)
+        for doc in self.docs.values():
+            if all(doc[key] == query[key] for key in query):
+                return doc
+        return None
 
     def find_one_and_update(self, filter_dict, update_dict):
         """Mock implementation of find_one_and_update"""
