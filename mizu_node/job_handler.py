@@ -44,27 +44,29 @@ def handle_publish_jobs(
 
 
 def handle_query_job(
-    mdb: Collection, req: QueryJobRequest
+    mdb: Collection, publisher: str, req: QueryJobRequest
 ) -> list[WorkerJobResult] | None:
     job_ids = req.job_ids
     if not job_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
         )
-    jobs = mdb.find(
-        {"job_id": {"$in": job_ids.slice(1, 1000)}},
-        {
-            "_id": 1,
-            "jobType": 1,
-            "powResult": 1,
-            "classifyResult": 1,
-            "batchClassifyResult": 1,
-            "finishedAt": 1,
-        },
+    jobs = list(
+        mdb.find(
+            {"_id": {"$in": job_ids[0:1000]}, "publisher": publisher},
+            {
+                "_id": 1,
+                "jobType": 1,
+                "powResult": 1,
+                "classifyResult": 1,
+                "batchClassifyResult": 1,
+                "finishedAt": 1,
+            },
+        )
     )
     if not jobs:
         return None
-    return [WorkerJobResult(**job) for job in jobs]
+    return [jsonable_encoder(job) for job in jobs]
 
 
 def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob | None:

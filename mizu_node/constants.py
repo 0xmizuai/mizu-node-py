@@ -8,7 +8,7 @@ ASSIGNED_JOB_EXPIRE_TTL_SECONDS = int(
 BLOCKED_WORKER_PREFIX = "blocked_worker:"
 COOLDOWN_WORKER_PREFIX = "cooldown_worker:"
 COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = int(
-    os.environ.get("COOLDOWN_WORKER_EXPIRE_TTL_SECONDS", 30)
+    os.environ.get("COOLDOWN_WORKER_EXPIRE_TTL_SECONDS", 3)
 )
 
 # mongodb for finished jobs

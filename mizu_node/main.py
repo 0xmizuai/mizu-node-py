@@ -2,7 +2,7 @@ import os
 from bson import ObjectId
 from fastapi.encoders import jsonable_encoder
 import uvicorn
-from fastapi import FastAPI, Security, status, Depends
+from fastapi import FastAPI, Query, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pymongo import MongoClient
 import redis
@@ -97,16 +97,19 @@ def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)
     return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
 
 
-@app.get("/job_status")
+@app.post("/job_status")
 @error_handler
-def get_job_status(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
-    data = handle_query_job(app.mdb(JOBS_COLLECTION), publisher, req)
-    return build_json_response(status.HTTP_200_OK, "ok", data)
+def query_job_status(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
+    jobs = handle_query_job(app.mdb(JOBS_COLLECTION), publisher, req)
+    return build_json_response(status.HTTP_200_OK, "ok", {"jobs": jobs})
 
 
 @app.get("/take_job")
 @error_handler
-def take_job(job_type: JobType, user: str = Depends(get_user)):
+def take_job(
+    job_type: JobType = Query(JobType.batch_classify, alias="jobType"),
+    user: str = Depends(get_user),
+):
     if not has_worker_cooled_down(app.rclient, user):
         message = f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}"
         return build_json_response(status.HTTP_429_TOO_MANY_REQUESTS, message)

@@ -99,13 +99,13 @@ class DataJob(DataJobPayload):
 class WorkerJob(DataJobPayload):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="jobId")
+    job_id: str = Field(alias="_id")
 
 
 class WorkerJobResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="jobId")
+    job_id: str = Field(alias="_id")
     job_type: JobType = Field(alias="jobType")
     classify_result: list[str] | None = Field(alias="classifyResult", default=None)
     pow_result: str | None = Field(alias="powResult", default=None)

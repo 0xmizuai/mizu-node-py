@@ -148,12 +148,12 @@ def test_take_job_ok(mock_job_queue, setenvvar):
     worker1_jwt = jwt_token("worker1")
     response1 = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"jobType": int(JobType.classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response1.status_code == 200
     job1 = response1.json()["data"]["job"]
-    assert job1["jobId"] == cids[0]
+    assert job1["_id"] == cids[0]
     assert job1["jobType"] == JobType.classify
     assert job_queues[JobType.classify].queue_len() == 3
 
@@ -161,12 +161,12 @@ def test_take_job_ok(mock_job_queue, setenvvar):
     worker2_jwt = jwt_token("worker2")
     response2 = client.get(
         "/take_job",
-        params={"job_type": int(JobType.pow)},
+        params={"jobType": int(JobType.pow)},
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response2.status_code == 200
     job2 = response2.json()["data"]["job"]
-    assert job2["jobId"] == pids[0]
+    assert job2["_id"] == pids[0]
     assert job2["jobType"] == JobType.pow
     assert job_queues[JobType.pow].queue_len() == 3
 
@@ -180,7 +180,7 @@ def test_take_job_error(mock_job_queue, setenvvar):
     # No jobs published yet
     response = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"jobType": int(JobType.classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -188,7 +188,7 @@ def test_take_job_error(mock_job_queue, setenvvar):
 
     response = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"jobType": int(JobType.classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
@@ -198,7 +198,7 @@ def test_take_job_error(mock_job_queue, setenvvar):
     worker2_jwt = jwt_token("worker2")
     response = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"jobType": int(JobType.classify)},
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response.status_code == 200
@@ -209,7 +209,7 @@ def test_take_job_error(mock_job_queue, setenvvar):
     block_worker(app.rclient, "worker3")
     response = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"jobType": int(JobType.classify)},
         headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -233,14 +233,14 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
 
     response1 = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"jobType": int(JobType.classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response1.status_code == 200
 
     response2 = client.get(
         "/take_job",
-        params={"job_type": int(JobType.pow)},
+        params={"jobType": int(JobType.pow)},
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response2.status_code == 200
@@ -310,7 +310,7 @@ def test_finish_job_error(mock_requests, mock_job_queue, setenvvar):
     # Take job as worker1
     response = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"jobType": int(JobType.classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -318,7 +318,7 @@ def test_finish_job_error(mock_requests, mock_job_queue, setenvvar):
 
     # Finish job first time - should succeed
     result = WorkerJobResult(
-        job_id=job["jobId"],
+        job_id=job["_id"],
         job_type=JobType.classify,
         classify_result=["t1"],
     )
@@ -337,3 +337,91 @@ def test_finish_job_error(mock_requests, mock_job_queue, setenvvar):
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
     assert response.json()["message"] == "job already finished"
+
+
+@mongomock.patch((MOCK_MONGO_URL))
+@mock_patch("mizu_node.job_handler.job_queue")
+@mock_patch("requests.post")
+def test_job_status(mock_requests, mock_job_queue, setenvvar):
+    mock_requests.return_value = None
+    mock_all(mock_job_queue)
+
+    # Publish jobs
+    cids = _publish_jobs(JobType.classify, 3)
+    pids = _publish_jobs(JobType.pow, 2)
+    all_job_ids = cids + pids
+
+    # Check initial status
+    response = client.post(
+        "/job_status",
+        json={"jobIds": all_job_ids},
+        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+    )
+    assert response.status_code == 200
+    initial_statuses = response.json()["data"]["jobs"]
+    assert len(initial_statuses) == 5
+
+    # Take and finish a classify job
+    worker1_jwt = jwt_token("worker1")
+    response = client.get(
+        "/take_job",
+        params={"jobType": int(JobType.classify)},
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
+    classify_job = response.json()["data"]["job"]
+
+    result1 = WorkerJobResult(
+        job_id=classify_job["_id"],
+        job_type=JobType.classify,
+        classify_result=["t1"],
+    )
+    response = client.post(
+        "/finish_job",
+        json=result1.model_dump(),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
+
+    # Take and finish a pow job
+    worker2_jwt = jwt_token("worker2")
+    response = client.get(
+        "/take_job",
+        params={"jobType": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response.status_code == 200
+    pow_job = response.json()["data"]["job"]
+
+    result2 = WorkerJobResult(
+        job_id=pow_job["_id"],
+        job_type=JobType.pow,
+        pow_result="0x123",
+    )
+    response = client.post(
+        "/finish_job",
+        json=result2.model_dump(),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
+
+    # Check final status
+    response = client.post(
+        "/job_status",
+        json={"jobIds": all_job_ids},
+        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+    )
+    assert response.status_code == 200
+    final_statuses = response.json()["data"]["jobs"]
+    assert len(final_statuses) == 5
+
+    # Count finished jobs
+    finished_jobs = [s for s in final_statuses if s["finishedAt"] is not None]
+    assert len(finished_jobs) == 2
+
+    # Verify specific job statuses
+    for status in final_statuses:
+        if status["_id"] in [classify_job["_id"], pow_job["_id"]]:
+            assert status["finishedAt"] is not None
+        else:
+            assert status["finishedAt"] is None
