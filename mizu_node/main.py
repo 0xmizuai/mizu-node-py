@@ -69,23 +69,23 @@ def default():
 def register_classifier(
     classifier: ClassifierConfig, publisher: str = Depends(get_publisher)
 ):
-    if classifier.publisher != publisher:
-        return build_json_response(status.HTTP_401_UNAUTHORIZED, "unauthorized")
-
+    classifier.publisher = publisher
     result = app.mdb(CLASSIFIER_COLLECTION).insert_one(jsonable_encoder(classifier))
     return build_json_response(
         status.HTTP_200_OK, "ok", {"id": str(result.inserted_id)}
     )
 
 
-@app.post("/classifer")
+@app.get("/classifer_info")
 @error_handler
 def get_classifier(id: str):
     doc = app.mdb(CLASSIFIER_COLLECTION).find_one({"_id": ObjectId(id)})
     if doc is None:
         return build_json_response(status.HTTP_404_NOT_FOUND, "classifier not found")
     return build_json_response(
-        status.HTTP_200_OK, "ok", {"classifier": ClassifierConfig(**doc)}
+        status.HTTP_200_OK,
+        "ok",
+        {"classifier": jsonable_encoder(ClassifierConfig(**doc))},
     )
 
 

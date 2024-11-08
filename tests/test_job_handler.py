@@ -12,6 +12,7 @@ from mizu_node.constants import (
     API_KEY_COLLECTION,
 )
 from mizu_node.security import block_worker
+from mizu_node.types.classifier import ClassifierConfig, DataLabel
 from mizu_node.types.job import (
     BatchClassifyContext,
     ClassifyContext,
@@ -32,7 +33,8 @@ from mizu_node.main import app
 
 client = TestClient(app)
 
-TEST_API_KEY = "test"
+TEST_API_KEY1 = "test_api_key1"
+TEST_API_KEY2 = "test_api_key2"
 MOCK_MONGO_URL = "mongodb://localhost:27017"
 
 # Convert to PEM format
@@ -115,7 +117,7 @@ def _publish_jobs(job_type: JobType, num_jobs=3):
     response = client.post(
         "/publish_jobs",
         json={"data": payloads},
-        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
     )
     assert response.status_code == 200
     return response.json()["data"]["jobIds"]
@@ -127,7 +129,8 @@ def mock_all(mock_job_queue):
     app.mdb = lambda collection_name: mdb[collection_name]
     app.rclient = RedisMock()
 
-    mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY, "user": "test"})
+    mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY1, "user": "test_user1"})
+    mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY2, "user": "test_user2"})
     job_queues = {
         JobType.classify: JobQueueMock("classify"),
         JobType.pow: JobQueueMock("pow"),
@@ -392,7 +395,7 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
     response = client.post(
         "/job_status",
         json={"jobIds": all_job_ids},
-        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
     )
     assert response.status_code == 200
     initial_statuses = response.json()["data"]["jobs"]
@@ -446,7 +449,7 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
     response = client.post(
         "/job_status",
         json={"jobIds": all_job_ids},
-        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
     )
     assert response.status_code == 200
     final_statuses = response.json()["data"]["jobs"]
@@ -462,3 +465,68 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
             assert status["finishedAt"] is not None
         else:
             assert status["finishedAt"] is None
+
+
+@mongomock.patch((MOCK_MONGO_URL))
+def test_register_classifier(setenvvar):
+    classifier_config = ClassifierConfig(
+        name="test_classifier",
+        embedding_model="model1",
+        labels=[
+            DataLabel(label="0", description="0"),
+            DataLabel(label="1", description="1"),
+            DataLabel(label="2", description="2"),
+        ],
+    )
+
+    # Try with wrong API key first
+    response = client.post(
+        "/register_classifier",
+        json=classifier_config.model_dump(),
+        headers={"Authorization": "Bearer wrong_key"},
+    )
+    assert response.status_code == 401
+
+    # Try to get non-existent classifier
+    response = client.get(
+        "/classifer_info", params={"id": "507f1f77bcf86cd799439011"}  # Random ObjectId
+    )
+    assert response.status_code == 404
+
+    # Register with correct API key
+    response = client.post(
+        "/register_classifier",
+        json=classifier_config.model_dump(),
+        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
+    )
+    assert response.status_code == 200
+    classifier_id = response.json()["data"]["id"]
+    assert classifier_id is not None
+
+    # Get the classifier by id
+    response = client.get("/classifer_info", params={"id": classifier_id})
+    assert response.status_code == 200
+    retrieved_classifier = response.json()["data"]["classifier"]
+    assert retrieved_classifier["embedding_model"] == classifier_config.embedding_model
+    assert len(retrieved_classifier["labels"]) == len(classifier_config.labels)
+    assert retrieved_classifier["publisher"] == "test_user1"
+
+    # Try to register with mismatched publisher
+    bad_config = classifier_config.model_dump()
+    bad_config["name"] = "test_classifier2"
+    bad_config["publisher"] = "wrong_publisher"
+    response = client.post(
+        "/register_classifier",
+        json=bad_config,
+        headers={"Authorization": f"Bearer {TEST_API_KEY2}"},
+    )
+    assert response.status_code == 200
+    classifier_id = response.json()["data"]["id"]
+
+    # Get the classifier by id
+    response = client.get("/classifer_info", params={"id": classifier_id})
+    assert response.status_code == 200
+    retrieved_classifier = response.json()["data"]["classifier"]
+    assert retrieved_classifier["embedding_model"] == classifier_config.embedding_model
+    assert len(retrieved_classifier["labels"]) == len(classifier_config.labels)
+    assert retrieved_classifier["publisher"] == "test_user2"
