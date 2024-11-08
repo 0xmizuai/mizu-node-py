@@ -1,5 +1,4 @@
-import asyncio
-from contextlib import asynccontextmanager
+import os
 from bson import ObjectId
 from fastapi.encoders import jsonable_encoder
 import uvicorn
@@ -12,8 +11,7 @@ from mizu_node.error_handler import error_handler
 from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
-    MONGO_DB_NAME,
-    MONGO_URL,
+    MIZU_NODE_MONGO_DB_NAME,
     REDIS_URL,
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
     VERIFY_KEY,
@@ -23,7 +21,6 @@ from mizu_node.job_handler import (
     handle_take_job,
     handle_publish_jobs,
     handle_finish_job,
-    queue_clean,
     handle_queue_len,
 )
 from mizu_node.security import verify_jwt, verify_api_key
@@ -34,8 +31,10 @@ from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
 rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-mclient = MongoClient(MONGO_URL)
-mdb = mclient[MONGO_DB_NAME]
+
+MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
+mclient = MongoClient(MIZU_NODE_MONGO_URL)
+mdb = mclient[MIZU_NODE_MONGO_DB_NAME]
 
 # Security scheme
 bearer_scheme = HTTPBearer()

@@ -4,12 +4,18 @@ import time
 
 import jwt
 from pymongo import MongoClient
-from mizu_node.constants import MONGO_DB_NAME, MONGO_URL, API_KEY_COLLECTION
+from mizu_node.constants import (
+    MIZU_NODE_MONGO_DB_NAME,
+    API_KEY_COLLECTION,
+)
 from mizu_node.security import ALGORITHM
 
-print("Connecting to mongodb: " + MONGO_URL)
-mclient = MongoClient(MONGO_URL)
-api_keys = mclient[MONGO_DB_NAME][API_KEY_COLLECTION]
+
+def api_key_collection():
+    MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
+    print("Connecting to mongodb: " + MIZU_NODE_MONGO_URL)
+    mclient = MongoClient(MIZU_NODE_MONGO_URL)
+    return mclient[MIZU_NODE_MONGO_DB_NAME][API_KEY_COLLECTION]
 
 
 def generate_key():
@@ -18,12 +24,12 @@ def generate_key():
 
 def issue_api_key(publisher: str):
     key = generate_key()
-    api_keys.insert_one({"api_key": key, "publisher": publisher})
+    api_key_collection().insert_one({"api_key": key, "publisher": publisher})
     return key
 
 
 def get_api_keys(user: str):
-    docs = api_keys.find({"user": user}).to_list(length=1000)
+    docs = api_key_collection().find({"user": user}).to_list(length=1000)
     return [doc["api_key"] for doc in docs]
 
 

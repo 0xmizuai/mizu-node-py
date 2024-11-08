@@ -17,14 +17,15 @@ import requests
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
-R2_BUCKET_NAME = "mizu-cmc-compressed"
+R2_DATA_BUCKET_NAME = "mizu-cmc-compressed"
+R2_BACKCUP_BUCKET_NAME = "mongo-backup"
 
 COMMON_CRAWL_URL_PREFIX = "https://data.commoncrawl.org"
 CLOUDFRONT_URL_PREFIX = "https://d3k3zv3epk7z9d.cloudfront.net"
 
 NUM_OF_THREADS = int(os.environ.get("NUM_OF_THREADS", 32))
-MONGO_URL = os.environ["MONGO_URL"]
-MONGO_DB_NAME = "commoncrawl"
+CC_MONGO_URL = os.environ["CC_MONGO_URL"]
+CC_MONGO_DB_NAME = "commoncrawl"
 
 
 def get_cc_s3_file(filepath: str):
@@ -97,9 +98,9 @@ class CommonCrawlWetImporter(threading.Thread):
             aws_access_key_id=R2_ACCESS_KEY,
             aws_secret_access_key=R2_SECRET_KEY,
         )
-        self.mclient = MongoClient(MONGO_URL)
-        self.progress_coll = self.mclient[MONGO_DB_NAME]["progress"]
-        self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
+        self.mclient = MongoClient(CC_MONGO_URL)
+        self.progress_coll = self.mclient[CC_MONGO_DB_NAME]["progress"]
+        self.r2_metadata = self.mclient[CC_MONGO_DB_NAME]["metadata"]
 
     def _get_progress(self, filepath: str) -> Progress | None:
         doc = self.progress_coll.find_one({"_id": filepath})
@@ -116,7 +117,7 @@ class CommonCrawlWetImporter(threading.Thread):
         )
         compressed = zlib.compress("\n".join(cached.records).encode("utf-8"))
         self.s3.meta.client.put_object(
-            Bucket=R2_BUCKET_NAME,
+            Bucket=R2_DATA_BUCKET_NAME,
             Key=r2_key,
             Body=compressed,
             ContentLength=len(compressed),
@@ -239,13 +240,42 @@ class CommonCrawlWetImporter(threading.Thread):
                 return
 
 
+def import_to_r2(source: str, pathfile: str, start: int, end: int):
+    q = queue.Queue()
+    if source == "s3":
+        obj = get_cc_s3_file(pathfile)
+        extracted = gzip.decompress(obj["Body"].read())
+        lines = [line.decode() for line in extracted.split(b"\n")]
+    else:
+        url = (
+            f"{COMMON_CRAWL_URL_PREFIX}/{pathfile}"
+            if source == "cc"
+            else f"{CLOUDFRONT_URL_PREFIX}/{pathfile}"
+        )
+        res = requests.get(url, stream=True)
+        extracted = gzip.decompress(res.content)
+        lines = [line.decode() for line in extracted.split(b"\n")]
+
+    for i in range(start, end):
+        q.put_nowait(lines[i].strip())
+
+    for wid in range(NUM_OF_THREADS):
+        CommonCrawlWetImporter(wid, source, "CC-MAIN-2024-42", q).start()
+
+
 class CommonCrawlWetMigrator(threading.Thread):
     def __init__(self, q: queue.Queue):
         super().__init__()
         self.q = q
         self.r2_url_prefix = "https://rawdata.mizu.technology"
-        self.mclient = MongoClient(MONGO_URL)
-        self.r2_metadata = self.mclient[MONGO_DB_NAME]["metadata"]
+        self.mclient = MongoClient(CC_MONGO_URL)
+        self.r2_metadata = self.mclient[CC_MONGO_DB_NAME]["metadata"]
+        self.s3 = boto3.resource(
+            "s3",
+            endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
+        )
 
     def produce(self):
         for doc in self.r2_metadata.find({"decompressed_bytesize": {"$exists": False}}):
@@ -253,7 +283,7 @@ class CommonCrawlWetMigrator(threading.Thread):
             self.q.put_nowait(doc["_id"])
 
     def update_metadata(self, doc_id: str):
-        print(f"processing record {doc_id}")
+        print(f"processing record {doc_id}, current queue size is {self.q.qsize()}")
         doc = self.r2_metadata.find_one({"_id": doc_id})
         r2_key = f"{doc['batch']}/{doc['type']}/{doc['filename']}/{doc['chunk']}.zz"
         with requests.get(f"{self.r2_url_prefix}/{r2_key}") as res:
@@ -281,26 +311,6 @@ class CommonCrawlWetMigrator(threading.Thread):
             self.q.task_done()
 
 
-parser = argparse.ArgumentParser()
-subparsers = parser.add_subparsers(dest="command", required=True)
-
-upload_parser = subparsers.add_parser(
-    "upload", add_help=False, description="import data to r2"
-)
-upload_parser.add_argument("--range", type=str, action="store", help="e.g 10,20")
-upload_parser.add_argument(
-    "--source", type=str, action="store", default="s3", help="data source"
-)
-upload_parser.add_argument(
-    "--pathfile", type=str, action="store", help="paths file to download"
-)
-
-migrate_parser = subparsers.add_parser(
-    "migrate", add_help=False, description="migrate metadata"
-)
-args = parser.parse_args()
-
-
 def migrate():
     q = queue.Queue()
     CommonCrawlWetMigrator(q).produce()
@@ -313,32 +323,39 @@ def migrate():
         t.join()
 
 
-def run_upload(source: str, pathfile: str, start: int, end: int):
-    q = queue.Queue()
-    if source == "s3":
-        obj = get_cc_s3_file(pathfile)
-        extracted = gzip.decompress(obj["Body"].read())
-        lines = [line.decode() for line in extracted.split(b"\n")]
-    else:
-        url = (
-            f"{COMMON_CRAWL_URL_PREFIX}/{pathfile}"
-            if source == "cc"
-            else f"{CLOUDFRONT_URL_PREFIX}/{pathfile}"
+class CommonCrawlWetMetadataUploader(object):
+    def __init__(self, cc_batch: str, batch_size: int = 10000):
+        super().__init__()
+        self.cc_batch = cc_batch
+        self.batch_size = batch_size
+        self.s3 = boto3.resource(
+            "s3",
+            endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
         )
-        res = requests.get(url, stream=True)
-        extracted = gzip.decompress(res.content)
-        lines = [line.decode() for line in extracted.split(b"\n")]
+        self.mclient = MongoClient(CC_MONGO_URL)
+        self.r2_metadata = self.mclient[CC_MONGO_DB_NAME]["metadata"]
+        self.filter = {"batch": self.cc_batch, "type": "wet"}
 
-    for i in range(start, end):
-        q.put_nowait(lines[i].strip())
+    def upload_files(self, batch: list[str], batch_num: int):
+        compressed = zlib.compress("\n".join(batch).encode("utf-8"))
+        self.s3.meta.client.put_object(
+            Bucket=R2_BACKCUP_BUCKET_NAME,
+            Key=f"{self.cc_batch}/wet/metadata.{batch_num}.zz",
+            Body=compressed,
+            ContentLength=len(compressed),
+        )
 
-    for wid in range(NUM_OF_THREADS):
-        CommonCrawlWetImporter(wid, source, "CC-MAIN-2024-42", q).start()
+    def iterate_and_upload(self, processed=0, batch_num=0):
+        docs = list(
+            self.r2_metadata.find(self.filter).skip(processed).limit(self.batch_size)
+        )
+        batches = [json.dumps(doc) for doc in docs]
+        if len(batches) > 0:
+            self.upload_files(batches, batch_num)
 
-
-def main():
-    if args.command == "upload":
-        [start, end] = [int(i) for i in args.range.split(",")]
-        run_upload(args.source, args.pathfile, start, end)
-    elif args.command == "migrate":
-        migrate()
+        if len(batches) < self.batch_size:
+            return
+        else:
+            self.iterate_and_upload(processed + len(batches), batch_num + 1)

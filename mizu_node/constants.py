@@ -13,10 +13,12 @@ COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = int(
 )
 
 # mongodb for finished jobs
-MONGO_URL = os.environ["MONGO_URL"]
-MONGO_DB_NAME = os.environ["MONGO_DB_NAME"]
 API_KEY_COLLECTION = "api_keys"
 JOBS_COLLECTION = "jobs"
 CLASSIFIER_COLLECTION = "classifiers"
 
 VERIFY_KEY = os.environ["VERIFY_KEY"]
+
+R2_DATA_PREFIX = "https://rawdata.mizu.technology"
+
+MIZU_NODE_MONGO_DB_NAME = os.environ.get("MIZU_NODE_MONGO_DB_NAME", "mizu_node")

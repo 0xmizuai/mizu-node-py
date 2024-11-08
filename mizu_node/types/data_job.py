@@ -95,7 +95,7 @@ class DataJob(DataJobPayload):
     published_at: int = Field(alias="publishedAt")
     publisher: str
     finished_at: int = Field(alias="finishedAt")
-    worker: str
+    worker: str | None
 
     @classmethod
     def from_job_payload(

@@ -1,108 +1,15 @@
 import argparse
 import os
-import random
-from uuid import uuid4
-from fastapi.encoders import jsonable_encoder
-import requests
 
 from mizu_node.constants import VERIFY_KEY
 from mizu_node.security import verify_jwt
-from mizu_node.types.common import JobType
-from mizu_node.types.data_job import (
-    ClassifyContext,
-    DataJobPayload,
-    PowContext,
-    PublishJobRequest,
-    WorkerJob,
-    WorkerJobResult,
-)
 from scripts.auth import get_api_keys, issue_api_key, sign_jwt
+from scripts.importer import CommonCrawlWetMetadataUploader, import_to_r2
 
 SERVICE_URL = "http://localhost:8000"
-SECRET_KEY = os.environ["SECRET_KEY"]
-
-
-def _build_classify_job_payload():
-    return DataJobPayload(
-        job_type=JobType.classify,
-        classify_ctx=ClassifyContext(r2_key=str(uuid4()), byte_size=1, checksum="0x"),
-    )
-
-
-def _build_pow_job_payload():
-    return DataJobPayload(
-        job_type=JobType.pow,
-        pow_ctx=PowContext(difficulty=1, seed=str(uuid4())),
-    )
-
-
-def _build_job():
-    if bool(random.getrandbits(1)):
-        return _build_classify_job_payload()
-    else:
-        return _build_pow_job_payload()
-
-
-def _build_publish_job_request(num_jobs: int):
-    return PublishJobRequest(data=[_build_job() for _ in range(num_jobs)])
-
-
-def _build_job_result(job: WorkerJob):
-    if job.job_type == JobType.classify:
-        return WorkerJobResult(
-            job_id=job.job_id, job_type=job.job_type, classify_result=["tag1", "tag2"]
-        )
-    else:
-        return WorkerJobResult(
-            job_id=job.job_id, job_type=job.job_type, pow_result="0x"
-        )
-
-
-def publish_jobs(num_jobs: int, api_key: str) -> list[(str, int)]:
-    req = _build_publish_job_request(num_jobs)
-    result = requests.post(
-        SERVICE_URL + "/publish_jobs",
-        json=jsonable_encoder(req),
-        headers={"Authorization": "Bearer " + api_key},
-    )
-    jobs_id = result.json()["data"]["job_ids"]
-    return [(job_id, req.job_type) for job_id, req in zip(jobs_id, req.data)]
-
-
-def process_job(job_type: JobType, jwt: str) -> str:
-    res = requests.get(
-        SERVICE_URL + "/take_job?job_type=" + str(job_type),
-        headers={"Authorization": "Bearer " + jwt},
-    )
-    job_raw = res.json()["data"]["job"]
-    if job_raw:
-        job = WorkerJob.model_validate(job_raw)
-        print("processing job: " + job.model_dump_json())
-        requests.post(
-            SERVICE_URL + "/finish_job",
-            json=jsonable_encoder(_build_job_result(job)),
-            headers={"Authorization": "Bearer " + jwt},
-        )
-        return job.job_id
-    else:
-        print("no job available")
-
 
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="command", required=True)
-
-job_parser_publish = subparsers.add_parser(
-    "publish", add_help=False, description="publish jobs"
-)
-job_parser_publish.add_argument(
-    "--num", action="store", type=int, help="Number of jobs to publish"
-)
-job_parser_publish.add_argument(
-    "--api_key",
-    action="store",
-    type=str,
-    help="the api key",
-)
 
 job_parser_process = subparsers.add_parser(
     "process",
@@ -152,17 +59,40 @@ verify_jwt_parser.add_argument(
     "--token", action="store", type=str, help="the token to verify"
 )
 
+import_parser = subparsers.add_parser(
+    "import", add_help=False, description="import data to r2"
+)
+import_parser.add_argument("--range", type=str, action="store", help="e.g 10,20")
+import_parser.add_argument(
+    "--source", type=str, action="store", default="s3", help="data source"
+)
+import_parser.add_argument(
+    "--pathfile", type=str, action="store", help="paths file to download"
+)
+
+metadata_parser = subparsers.add_parser(
+    "metadata", add_help=False, description="backup metadata to r2"
+)
+metadata_parser.add_argument(
+    "--backup", type=str, action="store", default="", help="the batch to backup"
+)
+metadata_parser.add_argument(
+    "--restore", type=str, action="store", help="the batch to restore"
+)
+
+publish_parser = subparsers.add_parser(
+    "publish", add_help=False, description="import data to r2"
+)
+publish_parser.add_argument("--api_key", type=str, action="store")
+publish_parser.add_argument("--batch", type=str, action="store")
+publish_parser.add_argument("--classifier", type=str, action="store")
+
+
 args = parser.parse_args()
 
 
 def main():
-    if args.command == "publish":
-        job_ids = publish_jobs(args.num, args.api_key)
-        print("Published jobs: " + str(job_ids))
-    elif args.command == "process":
-        job_id = process_job(args.job_type, args.jwt)
-        print(f"Processed {args.job_type} job: {job_id}")
-    elif args.command == "new_api_key":
+    if args.command == "new_api_key":
         key = issue_api_key(args.user)
         print("API key: " + key)
     elif args.command == "get_api_keys":
@@ -170,10 +100,16 @@ def main():
         for key in keys:
             print("API key: " + key)
     elif args.command == "new_jwt":
-        token = sign_jwt(args.user, SECRET_KEY)
+        token = sign_jwt(args.user)
         print("Token: " + token)
     elif args.command == "verify_jwt":
         user = verify_jwt(args.token, VERIFY_KEY)
         print("User: " + user)
+    elif args.command == "import":
+        [start, end] = [int(i) for i in args.range.split(",")]
+        import_to_r2(args.source, args.pathfile, start, end)
+    elif args.command == "metadata":
+        if not args.backup:
+            CommonCrawlWetMetadataUploader(args.backup).iterate_and_upload()
     else:
         raise ValueError("Invalid arguments")
