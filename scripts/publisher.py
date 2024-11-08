@@ -139,8 +139,12 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
             ),
         )
 
-    def publish_and_record(self, jobs: list[(WetMetadata, DataJobPayload)]):
-        job_ids = list(self.publish([payload for _, payload in jobs]))
+    def publish_and_record(self, metadatas: list[WetMetadata]):
+        jobs = [
+            self._build_batch_classify_job(metadata, self.classifier_id)
+            for metadata in metadatas
+        ]
+        job_ids = list(self.publish(jobs))
         job_records = [
             ClientJobRecord(
                 id=metadata.id,
@@ -148,10 +152,10 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
                 classifier_id=self.classifier_id,
                 metadata_type=metadata.type,
                 job_id=job_id,
-                job_type=payload.job_type,
+                job_type=JobType.batch_classify,
                 created_at=int(time.time()),
             )
-            for job_id, (metadata, payload) in zip(job_ids, jobs)
+            for job_id, metadata in zip(job_ids, metadatas)
         ]
         self.jobs_coll.insert_many([record.model_dump_json() for record in job_records])
 
@@ -160,8 +164,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         for metadata in metadatas:
             if self.jobs_coll.count_documents({"_id": metadata.id}) > 0:
                 continue
-            job = self._build_batch_classify_job(metadata, self.classifier_id)
-            batch.append((metadata.id, job))
+            batch.append(metadata)
             if len(batch) == self.batch_size:
                 self.publish_and_record(batch)
                 batch = []

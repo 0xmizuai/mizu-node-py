@@ -7,7 +7,7 @@ from fastapi import status
 import mizu_node.job_handler as job_handler
 from mizu_node.security import block_worker
 from mizu_node.types.common import JobType
-from mizu_node.types.data_job import (
+from mizu_node.types.job import (
     ClassifyContext,
     DataJobPayload,
     PowContext,
