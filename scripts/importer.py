@@ -1,4 +1,3 @@
-import argparse
 import gzip
 import hashlib
 import json

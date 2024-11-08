@@ -4,6 +4,7 @@ from mizu_node.constants import VERIFY_KEY
 from mizu_node.security import verify_jwt
 from scripts.auth import get_api_keys, issue_api_key, sign_jwt
 from scripts.importer import CommonCrawlWetMetadataUploader, import_to_r2
+from scripts.publisher import publish_batch_classify_jobs, publish_pow_jobs
 
 SERVICE_URL = "http://localhost:8000"
 
@@ -114,5 +115,10 @@ def main():
             raise ValueError("command not implemented yet")
         else:
             raise ValueError("either backup or restore must be presented")
+    elif args.command == "publish":
+        if args.batch:
+            publish_batch_classify_jobs(args.api_key, args.batch, args.classifier)
+        else:
+            publish_pow_jobs(args.api_key)
     else:
         raise ValueError("Invalid arguments")

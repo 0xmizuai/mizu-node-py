@@ -8,6 +8,7 @@ import time
 from typing import Iterator
 import zlib
 
+import boto3
 from fastapi.encoders import jsonable_encoder
 from pymongo import MongoClient
 import requests
@@ -21,23 +22,29 @@ from mizu_node.types.data_job import (
     PowContext,
     PublishJobRequest,
 )
+from scripts.importer import (
+    R2_ACCESS_KEY,
+    R2_ACCOUNT_ID,
+    R2_BACKCUP_BUCKET_NAME,
+    R2_SECRET_KEY,
+)
 
-MONGO_URL = os.environ["MONGO_URL"]
+MONGO_URL = os.environ["CC_MONGO_URL"]
 MONGO_DB_NAME = "commoncrawl"
 DATA_LINK_PREFIX = "https://rawdata.mizu.technology/"
 
 
-NODE_SERVICE_URL = os.environ["NODE_SERVICE_URL"]
-
-
 class DataJobPublisher(threading.Thread):
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, service_url: str | None = None):
         super().__init__()
         self.api_key = api_key
+        self.service_url = service_url or os.environ.get(
+            "NODE_SERVICE_URL", "http://localhost:8000"
+        )
 
     def publish(self, jobs: list[DataJobPayload]) -> Iterator[str]:
         result = requests.post(
-            NODE_SERVICE_URL + "/publish_jobs",
+            self.service_url + "/publish_jobs",
             json=jsonable_encoder(PublishJobRequest(data=jobs)),
             headers={"Authorization": "Bearer " + self.api_key},
         )
@@ -56,8 +63,9 @@ class PowDataJobPublisher(DataJobPublisher):
         batch_size: int = 100,
         cool_down: int = 600,  # 600 seconds
         threshold: int = 100000,  # auto-publish when queue length is below 100000
+        service_url: str | None = None,
     ):
-        super().__init__(api_key)
+        super().__init__(api_key, service_url)
         self.batch_size = batch_size
         self.threshold = threshold
         self.num_of_threads = num_of_threads
@@ -71,7 +79,7 @@ class PowDataJobPublisher(DataJobPublisher):
 
     def check_queue_stats(self):
         result = requests.post(
-            NODE_SERVICE_URL + "/stats/queue_len?job_type=0",
+            self.service_url + "/stats/queue_len?job_type=0",
         )
         length = result.json()["data"]["length"]
         if length > self.threshold:
@@ -106,8 +114,9 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         classifier_id: str,
         batch_size: int = 100,
         cool_down: int = 600,
+        service_url: str | None = None,
     ):
-        super().__init__(api_key)
+        super().__init__(api_key, service_url)
         self.cc_batch = cc_batch
         self.q = q
         self.batch_size = batch_size
@@ -133,7 +142,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
     def query_status(self):
         for doc in self.dest.find({"finished_at": {"$exists": False}}):
             result = requests.post(
-                NODE_SERVICE_URL + "/query_jobs",
+                self.service_url + "/query_jobs",
                 json=jsonable_encoder({"job_ids": [doc["_id"]]}),
                 headers={"Authorization": "Bearer " + self.api_key},
             )
@@ -170,6 +179,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         while True:
             try:
                 r2_key = self.q.get(timeout=3)  # 3s timeout
+                print("processing metadata file: ", r2_key)
                 self.publish_all(r2_key)
                 time.sleep(self.cool_down)
             except queue.Empty:
@@ -177,7 +187,25 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
             self.q.task_done()
 
 
-def publish_pow_jobs(api_key: str, num_of_threads: int):
+class CommonCrawlMetadataLoader(threading.Thread):
+    def __init__(self, cc_batch: str, q: queue.Queue):
+        super().__init__()
+        self.cc_batch = cc_batch
+        self.q = q
+        self.s3 = boto3.resource(
+            "s3",
+            endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
+        )
+
+    def run(self):
+        bucket = self.s3.Bucket(R2_BACKCUP_BUCKET_NAME)
+        for obj in bucket.objects.filter(Prefix=f"{self.cc_batch}/"):
+            self.q.put(obj.key)
+
+
+def publish_pow_jobs(api_key: str, num_of_threads: int = 32):
     threads = []
     for _ in range(num_of_threads):
         threads.append(PowDataJobPublisher(api_key))
@@ -187,17 +215,19 @@ def publish_pow_jobs(api_key: str, num_of_threads: int):
 
 
 def publish_batch_classify_jobs(
-    api_key: str, cc_batch: str, classifier_id: str, num_of_threads: int
+    api_key: str, cc_batch: str, classifier_id: str, num_of_threads: int = 32
 ):
     q = queue.Queue()
-    with requests.get(f"{R2_DATA_PREFIX}/{cc_batch}/metadata.path.zz") as res:
-        extracted = zlib.decompress(res.content)
-        for line in [line.decode() for line in extracted.split(b"\n")]:
-            q.put(line)
+    loader = CommonCrawlMetadataLoader(cc_batch, q)
+    loader.start()
 
-    threads = []
+    publishers = []
     for _ in range(num_of_threads):
-        threads.append(CommonCrawlDataJobPublisher(api_key, q, cc_batch, classifier_id))
-        threads[-1].start()
-    for t in threads:
+        publishers.append(
+            CommonCrawlDataJobPublisher(api_key, q, cc_batch, classifier_id)
+        )
+        publishers[-1].start()
+
+    loader.join()
+    for t in publishers:
         t.join()
