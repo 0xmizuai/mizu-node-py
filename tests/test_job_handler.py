@@ -2,7 +2,6 @@ import os
 import time
 from unittest import mock
 from uuid import uuid4
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import pymongo
 import pytest
@@ -12,7 +11,6 @@ from unittest.mock import patch as mock_patch
 from mizu_node.constants import (
     API_KEY_COLLECTION,
 )
-import mizu_node.job_handler as job_handler
 from mizu_node.security import block_worker
 from mizu_node.types.job import (
     ClassifyContext,
@@ -22,7 +20,6 @@ from mizu_node.types.job import (
     WorkerJobResult,
 )
 from tests.job_queue_mock import JobQueueMock
-from tests.mongo_mock import MongoMock
 from tests.redis_mock import RedisMock
 import mongomock
 
