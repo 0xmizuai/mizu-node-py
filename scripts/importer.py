@@ -324,7 +324,7 @@ def migrate():
 
 
 class CommonCrawlWetMetadataUploader(object):
-    def __init__(self, cc_batch: str, batch_size: int = 10000):
+    def __init__(self, cc_batch: str, batch_size: int = 50000):
         super().__init__()
         self.cc_batch = cc_batch
         self.batch_size = batch_size
@@ -347,11 +347,17 @@ class CommonCrawlWetMetadataUploader(object):
             ContentLength=len(compressed),
         )
 
+    def datetime_handler(self, obj):
+        if isinstance(obj, datetime):
+            return int(obj.timestamp())  # Convert to Unix epoch seconds
+        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
     def iterate_and_upload(self, processed=0, batch_num=0):
+        print(f"Processed {processed} records")
         docs = list(
             self.r2_metadata.find(self.filter).skip(processed).limit(self.batch_size)
         )
-        batches = [json.dumps(doc) for doc in docs]
+        batches = [json.dumps(doc, default=self.datetime_handler) for doc in docs]
         if len(batches) > 0:
             self.upload_files(batches, batch_num)
 

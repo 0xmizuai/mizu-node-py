@@ -17,8 +17,8 @@ pytest-mock = "^3.14.0"
 pytest-mock-resources = {extras = ["redis"], version = "^2.12.1"}
 pymongo = "4.10.0"
 pyjwt = {extras = ["crypto"], version = "^2.9.0"}
-
 warcio = "^1.7.4"
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 pre-commit = "^4.0.1"

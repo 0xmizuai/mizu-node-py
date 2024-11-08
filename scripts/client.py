@@ -1,5 +1,4 @@
 import argparse
-import os
 
 from mizu_node.constants import VERIFY_KEY
 from mizu_node.security import verify_jwt
@@ -74,7 +73,7 @@ metadata_parser = subparsers.add_parser(
     "metadata", add_help=False, description="backup metadata to r2"
 )
 metadata_parser.add_argument(
-    "--backup", type=str, action="store", default="", help="the batch to backup"
+    "--backup", type=str, action="store", help="the batch to backup"
 )
 metadata_parser.add_argument(
     "--restore", type=str, action="store", help="the batch to restore"
@@ -109,7 +108,11 @@ def main():
         [start, end] = [int(i) for i in args.range.split(",")]
         import_to_r2(args.source, args.pathfile, start, end)
     elif args.command == "metadata":
-        if not args.backup:
+        if args.backup:
             CommonCrawlWetMetadataUploader(args.backup).iterate_and_upload()
+        elif args.restore:
+            raise ValueError("command not implemented yet")
+        else:
+            raise ValueError("either backup or restore must be presented")
     else:
         raise ValueError("Invalid arguments")
