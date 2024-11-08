@@ -14,7 +14,7 @@ def error_handler(func):
         except HTTPException as e:
             return build_json_response(e.status_code, e.detail)
         except Exception as e:
-            print(traceback.format_exc(e))
+            print(traceback.format_exc())
             return build_json_response(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "unknown server error",

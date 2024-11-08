@@ -6,7 +6,6 @@ from fastapi.encoders import jsonable_encoder
 from pymongo.database import Collection
 from redis import Redis
 from fastapi import HTTPException, status
-import requests
 
 from mizu_node.constants import (
     REDIS_JOB_QUEUE_NAME,
@@ -32,6 +31,10 @@ job_queues = {
 }
 
 
+def job_queue(job_type: JobType):
+    return job_queues[job_type]
+
+
 def handle_publish_jobs(
     jobs_coll: Collection, publisher: str, req: PublishJobRequest
 ) -> Iterator[str]:
@@ -39,7 +42,7 @@ def handle_publish_jobs(
     jobs_coll.insert_many([jsonable_encoder(job) for job in jobs])
     for job in jobs:
         worker_job = build_worker_job(job)
-        job_queues[job.job_type].add_item(jsonable_encoder(worker_job))
+        job_queue(job.job_type).add_item(jsonable_encoder(worker_job))
         yield job.job_id
 
 
@@ -55,11 +58,11 @@ def handle_query_job(
         {"job_id": {"$in": job_ids.slice(1, 1000)}},
         {
             "_id": 1,
-            "job_type": 1,
-            "pow_result": 1,
-            "classify_result": 1,
-            "batch_classify_result": 1,
-            "finished_at": 1,
+            "jobType": 1,
+            "powResult": 1,
+            "classifyResult": 1,
+            "batchClassifyResult": 1,
+            "finishedAt": 1,
         },
     )
     if not jobs:
@@ -72,19 +75,21 @@ def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="worker is blocked"
         )
-    return job_queues[job_type].get(rclient)
+    return job_queue(job_type).get(rclient)
 
 
-def handle_finish_job(jobs: Collection, worker: str, result: WorkerJobResult):
+def handle_finish_job(
+    rclient: Redis, jobs: Collection, worker: str, result: WorkerJobResult
+):
     doc = jobs.find_one_and_update(
         {"_id": result.job_id},
         {
             "$set": {
-                "finished_at": int(time.time()),
+                "finishedAt": int(time.time()),
                 "worker": worker,
-                "classify_result": result.classify_result,
-                "pow_result": result.pow_result,
-                "batch_classify_result": result.batch_classify_result,
+                "classifyResult": result.classify_result,
+                "powResult": result.pow_result,
+                "batchClassifyResult": result.batch_classify_result,
             }
         },
     )
@@ -92,7 +97,12 @@ def handle_finish_job(jobs: Collection, worker: str, result: WorkerJobResult):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
         )
-    job_queues[result.job_type].ack(str(doc["_id"]))
+    if doc.get("finishedAt", None) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="job already finished",
+        )
+    job_queue(result.job_type).ack(rclient, str(doc["_id"]))
     # requests.post(
     #     BACKEND_SERVICE_URL + "/settle_rewards",
     #     json=jsonable_encoder({"job_id": doc["_id"], "job_type": doc["job_type"]}),
@@ -100,4 +110,4 @@ def handle_finish_job(jobs: Collection, worker: str, result: WorkerJobResult):
 
 
 def handle_queue_len(job_type: JobType) -> int:
-    return job_queues[job_type].queue_len()
+    return job_queue(job_type).queue_len()

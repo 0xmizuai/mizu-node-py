@@ -66,23 +66,27 @@ class DataJob(DataJobPayload):
 
     job_id: str = Field(alias="_id")
     job_type: JobType = Field(alias="jobType")
-    classify_ctx: ClassifyContext | None = Field(alias="classifyCtx")
-    classify_result: list[str] | None = Field(alias="classifyResult")
-    pow_ctx: PowContext | None = Field(alias="powCtx")
-    pow_result: str | None = Field(alias="powResult")
-    batch_classify_ctx: list[ClassifyResult] | None = Field(alias="batchClassifyCtx")
-    batch_classify_result: list[str] | None = Field(alias="batchClassifyResult")
+    classify_ctx: ClassifyContext | None = Field(alias="classifyCtx", default=None)
+    classify_result: list[str] | None = Field(alias="classifyResult", default=None)
+    pow_ctx: PowContext | None = Field(alias="powCtx", default=None)
+    pow_result: str | None = Field(alias="powResult", default=None)
+    batch_classify_ctx: BatchClassifyContext | None = Field(
+        alias="batchClassifyCtx", default=None
+    )
+    batch_classify_result: list[ClassifyResult] | None = Field(
+        alias="batchClassifyResult", default=None
+    )
     published_at: int = Field(alias="publishedAt")
     publisher: str
-    finished_at: int = Field(alias="finishedAt")
-    worker: str | None
+    finished_at: int | None = Field(alias="finishedAt", default=None)
+    worker: str | None = Field(default=None)
 
     @classmethod
     def from_job_payload(
         cls, publisher: str, payload: DataJobPayload, job_id: str | None = None
     ):
         return cls(
-            job_id=job_id | str(uuid.uuid4()),
+            job_id=job_id or str(uuid.uuid4()),
             job_type=payload.job_type,
             publisher=publisher,
             published_at=int(time.time()),
@@ -106,7 +110,7 @@ class WorkerJobResult(BaseModel):
     classify_result: list[str] | None = Field(alias="classifyResult", default=None)
     pow_result: str | None = Field(alias="powResult", default=None)
     batch_classify_result: list[ClassifyResult] | None = Field(
-        alias="batchClassifyResult"
+        alias="batchClassifyResult", default=None
     )
 
 

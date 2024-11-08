@@ -3,24 +3,21 @@ from fastapi import HTTPException
 import pytest
 from redis import Redis
 from fastapi import status
+from unittest.mock import patch as mock_patch
 
 import mizu_node.job_handler as job_handler
 from mizu_node.security import block_worker
-from mizu_node.types.common import JobType
 from mizu_node.types.job import (
     ClassifyContext,
     DataJobPayload,
+    JobType,
     PowContext,
     PublishJobRequest,
     WorkerJobResult,
 )
+from tests.job_queue_mock import JobQueueMock
 from tests.mongo_mock import MongoMock
 from tests.redis_mock import RedisMock
-from mizu_node.job_handler import job_queues
-
-
-pow_queue = job_queues[JobType.pow]
-classify_queue = job_queues[JobType.classify]
 
 
 def _build_classify_ctx(key: str):
@@ -44,52 +41,72 @@ def _new_data_job_payload(job_type: str, r2_key: str) -> DataJobPayload:
         return DataJobPayload(job_type=JobType.pow, pow_ctx=_build_pow_ctx())
 
 
-def _publish_jobs(rclient: Redis, job_type: JobType, num_jobs=3):
+def _publish_jobs(mdb: MongoMock, job_type: JobType, num_jobs=3):
     payloads = [_new_data_job_payload(job_type, str(i + 1)) for i in range(num_jobs)]
-    return job_handler.handle_publish_jobs(
-        rclient, "worker1", PublishJobRequest(data=payloads)
+    return list(
+        job_handler.handle_publish_jobs(
+            mdb, "worker1", PublishJobRequest(data=payloads)
+        )
     )
 
 
-def test_publish_jobs():
-    rclient = RedisMock()
-    job_ids1 = _publish_jobs(rclient, JobType.classify, 3)
+@mock_patch("mizu_node.job_handler.job_queue")
+def test_publish_jobs(mock_job_queue):
+    job_queues = {
+        JobType.classify: JobQueueMock("classify"),
+        JobType.pow: JobQueueMock("pow"),
+    }
+    mock_job_queue.side_effect = lambda job_type: job_queues[job_type]
+    mdb = MongoMock()
+
+    job_ids1 = _publish_jobs(mdb, JobType.classify, 3)
     assert len(job_ids1) == 3
-    classify_queue.queue_len(rclient) == 3
-    classify_queue.processing_len(rclient) == 0
+    assert job_queues[JobType.classify].queue_len() == 3
 
-    job_ids2 = _publish_jobs(rclient, JobType.pow, 3)
+    job_ids2 = _publish_jobs(mdb, JobType.pow, 3)
     assert len(job_ids2) == 3
-    pow_queue.queue_len(rclient) == 3
-    pow_queue.processing_len(rclient) == 0
+    assert job_queues[JobType.pow].queue_len() == 3
 
 
-def test_take_job_ok():
+@mock_patch("mizu_node.job_handler.job_queue")
+def test_take_job_ok(mock_job_queue):
+    job_queues = {
+        JobType.classify: JobQueueMock("classify"),
+        JobType.pow: JobQueueMock("pow"),
+    }
+    mock_job_queue.side_effect = lambda job_type: job_queues[job_type]
     rclient = RedisMock()
-    pids = _publish_jobs(rclient, JobType.pow, 3)
-    cids = _publish_jobs(rclient, JobType.classify, 3)
+    mdb = MongoMock()
+    pids = _publish_jobs(mdb, JobType.pow, 3)
+    cids = _publish_jobs(mdb, JobType.classify, 3)
 
     # take classify job 1
     job1 = job_handler.handle_take_job(rclient, "worker1", JobType.classify)
     assert job1.job_id == cids[0]
     assert job1.job_type == JobType.classify
-    classify_queue.queue_len(rclient) == 3
-    classify_queue.processing_len(rclient) == 1
+    assert job_queues[JobType.classify].queue_len() == 3
 
     # take pow job 1
     job2 = job_handler.handle_take_job(rclient, "worker2", JobType.pow)
     assert job2.job_id == pids[0]
     assert job2.job_type == JobType.pow
-    pow_queue.queue_len(rclient) == 3
-    pow_queue.processing_len(rclient) == 1
+    assert job_queues[JobType.pow].queue_len() == 3
 
 
-def test_take_job_error():
+@mock_patch("mizu_node.job_handler.job_queue")
+def test_take_job_error(mock_job_queue):
+    job_queues = {
+        JobType.classify: JobQueueMock("classify"),
+        JobType.pow: JobQueueMock("pow"),
+    }
+    mock_job_queue.side_effect = lambda job_type: job_queues[job_type]
     rclient = RedisMock()
+    mdb = MongoMock()
+    # No jobs published yet
     job = job_handler.handle_take_job(rclient, "worker1", JobType.classify)
     assert job is None
 
-    _publish_jobs(rclient, JobType.pow, 3)
+    _publish_jobs(mdb, JobType.pow, 3)
     job = job_handler.handle_take_job(rclient, "worker1", JobType.classify)
     assert job is None
 
@@ -100,11 +117,17 @@ def test_take_job_error():
     assert e.value.detail == "worker is blocked"
 
 
-def test_finish_job_ok():
+@mock_patch("mizu_node.job_handler.job_queue")
+def test_finish_job_ok(mock_job_queue):
+    job_queues = {
+        JobType.classify: JobQueueMock("classify"),
+        JobType.pow: JobQueueMock("pow"),
+    }
+    mock_job_queue.side_effect = lambda job_type: job_queues[job_type]
     rclient = RedisMock()
     mdb = MongoMock()
-    cids = _publish_jobs(rclient, JobType.classify, 3)
-    pids = _publish_jobs(rclient, JobType.pow, 3)
+    cids = _publish_jobs(mdb, JobType.classify, 3)
+    pids = _publish_jobs(mdb, JobType.pow, 3)
 
     job_handler.handle_take_job(rclient, "worker1", JobType.classify)
     job_handler.handle_take_job(rclient, "worker2", JobType.pow)
@@ -132,10 +155,17 @@ def test_finish_job_ok():
     assert j2["finishedAt"] is not None
 
 
-def test_finish_job_error():
+@mock_patch("mizu_node.job_handler.job_queue")
+def test_finish_job_error(mock_job_queue):
+    job_queues = {
+        JobType.classify: JobQueueMock("classify"),
+        JobType.pow: JobQueueMock("pow"),
+    }
+    mock_job_queue.side_effect = lambda job_type: job_queues[job_type]
     rclient = RedisMock()
     mdb = MongoMock()
-    _publish_jobs(rclient, JobType.classify, 3)
+
+    cids = _publish_jobs(mdb, JobType.classify, 3)
     job = job_handler.handle_take_job(rclient, "worker1", JobType.classify)
 
     r2 = WorkerJobResult(
@@ -147,4 +177,4 @@ def test_finish_job_error():
     with pytest.raises(HTTPException) as e:
         job_handler.handle_finish_job(rclient, mdb, "worker1", r2)
     assert e.value.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-    assert e.value.detail == "job expired or not exists"
+    assert e.value.detail == "job already finished"

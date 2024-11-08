@@ -130,11 +130,11 @@ def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
 
 @app.get("/stats/queue_len")
 @error_handler
-def queue_len(job_type: JobType = JobType.classify):
+def queue_len(job_type: JobType = JobType.pow):
     """
     Return the number of queued classify jobs.
     """
-    q_len = handle_queue_len(rclient, job_type)
+    q_len = handle_queue_len(job_type)
     return build_json_response(status.HTTP_200_OK, "ok", {"length": q_len})
 
 
