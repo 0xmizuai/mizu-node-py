@@ -1,3 +1,4 @@
+from hashlib import sha512
 import os
 import time
 from typing import Iterator
@@ -13,6 +14,7 @@ from mizu_node.security import is_worker_blocked
 from mizu_node.types.job import (
     DataJob,
     JobType,
+    PowContext,
     PublishJobRequest,
     QueryJobRequest,
     WorkerJob,
@@ -21,6 +23,7 @@ from mizu_node.types.job import (
 )
 from mizu_node.types.job_queue import JobQueueV2
 
+DEFAULT_POW_DIFFICULTY = 5
 
 job_queues = {
     job_type: JobQueueV2("job_queue_" + str(job_type))
@@ -109,6 +112,43 @@ def handle_queue_len(job_type: JobType) -> int:
     return job_queue(job_type).queue_len()
 
 
+def _validate_batch_classify_result(result: WorkerJobResult):
+    if result.batch_classify_result is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="batch_classify_result is required",
+        )
+    filtered = [x for x in result.batch_classify_result if x.labels]
+    return {"batchClassifyResult": filtered}
+
+
+def _validate_pow_result(ctx: PowContext, result: WorkerJobResult):
+    if result.pow_result is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="pow_result is required",
+        )
+    nonce = result.pow_result.replace("0x", "")
+    try:
+        bytes_val = bytes.fromhex(nonce)
+        if len(bytes_val) != 32:  # bytes32 must be exactly 32 bytes
+            raise ValueError("invalid length")
+    except:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid pow_result: must be a valid bytes32 hex string",
+        )
+
+    hash_input = bytes.fromhex(ctx.seed) + bytes_val
+    hash_output = sha512(hash_input).digest()
+    if not all(b == 0 for b in hash_output[:DEFAULT_POW_DIFFICULTY]):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid pow_result: hash does not meet difficulty requirement",
+        )
+    return {"powResult": result.pow_result}
+
+
 def _validate_job_result(jobs: Collection, result: WorkerJobResult):
     doc = jobs.find_one({"_id": result.job_id})
     if doc is None:
@@ -128,19 +168,9 @@ def _validate_job_result(jobs: Collection, result: WorkerJobResult):
         )
 
     if doc["jobType"] == JobType.batch_classify:
-        if result.batch_classify_result is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="batch_classify_result is required",
-            )
-        return {"batchClassifyResult": result.batch_classify_result}
+        return _validate_batch_classify_result(result)
     elif doc["jobType"] == JobType.pow:
-        if result.pow_result is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="pow_result is required",
-            )
-        return {"powResult": result.pow_result}
+        return _validate_pow_result(PowContext(**doc["powCtx"]), result)
     elif doc["jobType"] == JobType.classify:
         if result.classify_result is None:
             raise HTTPException(
