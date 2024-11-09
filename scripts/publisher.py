@@ -124,7 +124,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         cc_batch: str,
         classifier_id: str,
         batch_size: int = 100,
-        cool_down: int = 10,
+        cool_down: int = 3,
         service_url: str | None = None,
     ):
         super().__init__(api_key, service_url)
@@ -182,10 +182,13 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
                 continue
             batch.append(metadata)
             if len(batch) == self.batch_size:
+                print(f"will publish {len(metadatas)} jobs")
                 self.publish_and_record(batch)
                 batch = []
         if len(batch) > 0:
             self.publish_and_record(batch)
+            return True
+        return False
 
     def get_one(self, retry=10) -> WetMetadata | None:
         if retry == 0:
@@ -208,11 +211,11 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         print("publisher running")
         while True:
             metadatas = list(self.get_batch())
-            print(f"will publish {len(metadatas)} jobs")
-            self.publish_all(metadatas)
+            published = self.publish_all(metadatas)
             if len(metadatas) < self.batch_size:
                 return
-            time.sleep(self.cool_down)
+            if published:
+                time.sleep(self.cool_down)
 
 
 class CommonCrawlDataJobManager(threading.Thread):
