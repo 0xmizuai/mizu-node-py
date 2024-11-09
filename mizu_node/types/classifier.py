@@ -10,7 +10,6 @@ class DataLabel(BaseModel):
 class ClassifierConfig(BaseModel):
     name: str
     embedding_model: str
-    threshold: float
     labels: list[DataLabel]
     publisher: str | None = None
 

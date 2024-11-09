@@ -472,7 +472,6 @@ def test_register_classifier(setenvvar):
     classifier_config = ClassifierConfig(
         name="test_classifier",
         embedding_model="model1",
-        threshold=0.5,
         labels=[
             DataLabel(label="0", description="0"),
             DataLabel(label="1", description="1"),
