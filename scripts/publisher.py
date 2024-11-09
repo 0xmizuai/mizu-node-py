@@ -177,8 +177,12 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
 
     def publish_all(self, metadatas: list[WetMetadata]):
         batch = []
+        print("processing metadatas")
+        ids = [metadata.id for metadata in metadatas]
+        docs = list(self.jobs_coll.find({"_id": {"$in": ids}}, {"_id": 1}))
+        processed_ids = set([doc["_id"] for doc in docs])
         for metadata in metadatas:
-            if self.jobs_coll.count_documents({"_id": metadata.id}) > 0:
+            if metadata.id in processed_ids:
                 continue
             batch.append(metadata)
             if len(batch) == self.batch_size:
@@ -186,6 +190,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
                 self.publish_and_record(batch)
                 batch = []
         if len(batch) > 0:
+            print(f"will publish {len(metadatas)} jobs")
             self.publish_and_record(batch)
             return True
         return False
@@ -210,6 +215,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
     def run(self):
         print("publisher running")
         while True:
+            print("collecting metadatas")
             metadatas = list(self.get_batch())
             published = self.publish_all(metadatas)
             if len(metadatas) < self.batch_size:
@@ -226,6 +232,7 @@ class CommonCrawlDataJobManager(threading.Thread):
         metadata_type: str,
         classifier_id: str,
         num_of_publishers: int,
+        max_processed_jobs: int = 1000,
     ):
         super().__init__()
         self.q = q
@@ -233,6 +240,7 @@ class CommonCrawlDataJobManager(threading.Thread):
         self.metadata_type = metadata_type
         self.classifier_id = classifier_id
         self.num_of_publishers = num_of_publishers
+        self.max_processed_jobs = max_processed_jobs
         self.total_processed = 0
         self.mclient = MongoClient(CC_MONGO_URL)
         self.jobs_coll = self.mclient[CC_MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
@@ -302,6 +310,8 @@ class CommonCrawlDataJobManager(threading.Thread):
         for obj in objs:
             self.load_one_file(obj.key)
             print(f"Loader: enqueued {self.total_processed} jobs")
+            if self.total_processed >= self.max_processed_jobs:
+                break
 
         for _ in range(self.num_of_publishers):
             self.q.put_nowait(None)  # for publisher to exit
