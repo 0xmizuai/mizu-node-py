@@ -5,17 +5,14 @@ from redis import Redis
 from mizu_node.types.job import WorkerJob
 
 
-TTL = 900  # 15mins
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "127.0.0.1")
-RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", 5672)
+ASSIGNED_JOB_EXPIRE_TTL_SECONDS = 900  # 15mins
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672")
 
 
 class PikaBase(object):
     def __init__(self, qname: str):
         self.qname = qname
-        connection = pika.BlockingConnection(
-            pika.ConnectionParameters(host=RABBITMQ_HOST, port=RABBITMQ_PORT)
-        )
+        connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL))
         self.channel = connection.channel()
         self.queue = self.channel.queue_declare(queue=qname, durable=True)
 
@@ -66,7 +63,11 @@ class JobQueueV2(object):
             return None
 
         worker_job = WorkerJob.model_validate_json(job_json)
-        rclient.setex(self._gen_rkey(worker_job.job_id), TTL, str(delivery_tag))
+        rclient.setex(
+            self._gen_rkey(worker_job.job_id),
+            ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
+            str(delivery_tag),
+        )
         return worker_job
 
     def ack(self, rclient: Redis, job_id: int):

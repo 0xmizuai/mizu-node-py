@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 import requests
 
 
+from mizu_node.constants import DEFAULT_POW_DIFFICULTY
 from mizu_node.security import is_worker_blocked
 from mizu_node.types.job import (
     DataJob,
@@ -22,7 +23,6 @@ from mizu_node.types.job import (
 )
 from mizu_node.types.job_queue import JobQueueV2
 
-DEFAULT_POW_DIFFICULTY = 5
 
 job_queues = {
     job_type: JobQueueV2("job_queue_" + str(job_type))
