@@ -6,15 +6,15 @@ from mizu_node.types.job import WorkerJob
 
 
 ASSIGNED_JOB_EXPIRE_TTL_SECONDS = 900  # 15mins
-RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672")
+RABBITMQ_URL = os.getenv(
+    "RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672?heartbeat=0"
+)
 
 
 class PikaBase(object):
     def __init__(self, qname: str):
         self.qname = qname
-        connection = pika.BlockingConnection(
-            pika.URLParameters(RABBITMQ_URL), heartbeat=0  # disable hb
-        )
+        connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL))
         self.channel = connection.channel()
         self.queue = self.channel.queue_declare(queue=qname, durable=True)
 
