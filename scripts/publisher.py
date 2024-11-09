@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import queue
@@ -215,6 +216,7 @@ class CommonCrawlDataJobManager(threading.Thread):
         classifier_id: str,
         num_of_publishers: int,
     ):
+        super().__init__()
         self.q = q
         self.cc_batch = cc_batch
         self.metadata_type = metadata_type
@@ -223,6 +225,12 @@ class CommonCrawlDataJobManager(threading.Thread):
         self.total_processed = 0
         self.mclient = MongoClient(CC_MONGO_URL)
         self.jobs_coll = self.mclient[CC_MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
+        self.s3 = boto3.resource(
+            "s3",
+            endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
+        )
 
     def query_status(self):
         pending_jobs = list(
@@ -262,12 +270,14 @@ class CommonCrawlDataJobManager(threading.Thread):
             self.query_status()
 
     def load_one_file(self, filepath: str):
-        with requests.get(f"{R2_DATA_PREFIX}/{filepath}") as res:
-            decompressed = zlib.decompress(res.content)
-            lines = decompressed.decode("utf-8").split("\n")
-            for record_str in lines:
-                self.q.put_nowait(WetMetadata.model_validate_json(record_str))
-            self.total_processed += len(lines)
+        obj = self.s3.meta.client.get_object(
+            Bucket=R2_BACKCUP_BUCKET_NAME, Key=filepath
+        )
+        decompressed = zlib.decompress(obj["Body"].read())
+        lines = decompressed.decode("utf-8").split("\n")
+        for record_str in lines:
+            self.q.put_nowait(WetMetadata.model_validate_json(record_str))
+        self.total_processed += len(lines)
 
     def load_metadatas(self):
         s3 = boto3.resource(
@@ -333,15 +343,31 @@ def publish_batch_classify_jobs(
     cc_batch: str,
     classifier_id: str,
     metadata_type: str = "wet",
-    num_of_threads: int = 32,
+    num_of_threads: int = 1,
 ):
     api_key = get_api_key(user)
     q = queue.Queue()
-    CommonCrawlDataJobManager(q, cc_batch, metadata_type, num_of_threads).start()
+    manager = CommonCrawlDataJobManager(
+        q, cc_batch, metadata_type, classifier_id, num_of_threads
+    )
+    manager.start()
+
+    publishers = []
     for _ in range(num_of_threads):
-        CommonCrawlDataJobPublisher(
-            api_key, q, cc_batch, classifier_id, metadata_type
-        ).start()
+        publisher = CommonCrawlDataJobPublisher(
+            api_key=api_key,
+            q=q,
+            cc_batch=cc_batch,
+            classifier_id=classifier_id,
+            batch_size=100,
+        )
+        publisher.start()
+        publishers.append(publisher)
+
+    # Wait for all threads to complete
+    for publisher in publishers:
+        publisher.join()
+    manager.join()
 
 
 def register_classifier(user: str):

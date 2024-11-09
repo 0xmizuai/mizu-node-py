@@ -1,12 +1,14 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from mizu_node.types.classifier import WetContext
 
 
 class WetMetadata(BaseModel):
-    id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(alias="_id")
     type: str = "wet"
     batch: str
     filename: str
@@ -19,6 +21,8 @@ class WetMetadata(BaseModel):
 
 
 class ClientJobRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(alias="_id")
     batch: str
     job_type: str

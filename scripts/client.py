@@ -3,7 +3,11 @@ import os
 
 from mizu_node.security import verify_jwt
 from scripts.auth import get_api_keys, issue_api_key, sign_jwt
-from scripts.importer import CommonCrawlWetMetadataUploader, import_to_r2
+from scripts.importer import (
+    CommonCrawlWetMetadataUploader,
+    import_to_r2,
+    migrate_metadata,
+)
 from scripts.publisher import (
     list_classifiers,
     publish_batch_classify_jobs,
@@ -87,6 +91,9 @@ classifer_parser.add_argument("--register", action="store_true")
 classifer_parser.add_argument("--list", action="store_true")
 classifer_parser.add_argument("--user", type=str, action="store")
 
+migrate_parser = subparsers.add_parser(
+    "migrate", add_help=False, description="migrate metadata to mongodb"
+)
 
 args = parser.parse_args()
 
@@ -120,6 +127,8 @@ def main():
             publish_batch_classify_jobs(args.user, args.batch, args.classifier)
         else:
             publish_pow_jobs(args.user)
+    elif args.command == "migrate":
+        migrate_metadata()
     elif args.command == "classifier":
         if args.register:
             register_classifier(args.user)

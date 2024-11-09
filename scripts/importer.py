@@ -262,8 +262,9 @@ class CommonCrawlWetMigrator(threading.Thread):
         )
 
     def produce(self):
-        for doc in self.r2_metadata.find({"decompressed_bytesize": {"$exists": False}}):
-            print("id: ", doc["_id"])
+        total = self.r2_metadata.count_documents({"md5": {"$exists": False}})
+        print(f"will process {total} records")
+        for doc in self.r2_metadata.find({"md5": {"$exists": False}}):
             self.q.put_nowait(doc["_id"])
 
     def update_metadata(self, doc_id: str):
@@ -272,13 +273,14 @@ class CommonCrawlWetMigrator(threading.Thread):
         r2_key = f"{doc['batch']}/{doc['type']}/{doc['filename']}/{doc['chunk']}.zz"
         with requests.get(f"{self.r2_url_prefix}/{r2_key}") as res:
             decompressed = zlib.decompress(res.content)
+            md5 = hashlib.md5(decompressed).hexdigest()
             self.r2_metadata.update_one(
                 {
                     "_id": hashlib.sha256(r2_key.encode("utf-8")).hexdigest(),
                 },
                 {
                     "$set": {
-                        "decompressed_bytesize": len(decompressed),
+                        "md5": md5,
                     }
                 },
                 upsert=True,
@@ -295,11 +297,11 @@ class CommonCrawlWetMigrator(threading.Thread):
             self.q.task_done()
 
 
-def migrate():
+def migrate_metadata():
     q = queue.Queue()
     CommonCrawlWetMigrator(q).produce()
     threads = []
-    for _ in range(NUM_OF_THREADS):
+    for _ in range(8):
         threads.append(CommonCrawlWetMigrator(q))
         threads[-1].start()
 
