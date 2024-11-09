@@ -100,7 +100,9 @@ def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)
 @error_handler
 def query_job_status(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
     jobs = handle_query_job(app.mdb(JOBS_COLLECTION), publisher, req)
-    return build_json_response(status.HTTP_200_OK, "ok", {"jobs": jobs})
+    return build_json_response(
+        status.HTTP_200_OK, "ok", {"jobs": [jsonable_encoder(j) for j in jobs]}
+    )
 
 
 @app.get("/take_job")

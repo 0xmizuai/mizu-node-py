@@ -66,7 +66,7 @@ def handle_query_job(
     )
     if not jobs:
         return None
-    return [jsonable_encoder(job) for job in jobs]
+    return [WorkerJobResult(**job) for job in jobs]
 
 
 def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob | None:
