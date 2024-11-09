@@ -65,7 +65,7 @@ class JobQueueV2(object):
         if delivery_tag is None:
             return None
 
-        worker_job = WorkerJob(**job_json)
+        worker_job = WorkerJob.model_validate_json(job_json)
         rclient.setex(self._gen_rkey(worker_job.job_id), TTL / 1000 * 2, delivery_tag)
         return worker_job
 
