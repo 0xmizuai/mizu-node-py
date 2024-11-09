@@ -16,7 +16,6 @@ import requests
 from mizu_node.constants import (
     API_KEY_COLLECTION,
     CLASSIFIER_COLLECTION,
-    R2_DATA_PREFIX,
 )
 from mizu_node.types.classifier import ClassifierConfig, DataLabel
 from mizu_node.types.job import (
@@ -49,16 +48,20 @@ class DataJobPublisher(threading.Thread):
         super().__init__()
         self.api_key = api_key
         self.service_url = service_url or os.environ.get(
-            "NODE_SERVICE_URL", "http://localhost:8000"
+            "NODE_SERVICE_URL", "http://127.0.0.1:8000"
         )
 
     def publish(self, jobs: list[DataJobPayload]) -> Iterator[str]:
-        result = requests.post(
+        response = requests.post(
             self.service_url + "/publish_jobs",
             json=jsonable_encoder(PublishJobRequest(data=jobs)),
             headers={"Authorization": "Bearer " + self.api_key},
         )
-        for job_id in result.json()["data"]["job_ids"]:
+        if response.status_code != 200:
+            print("failed to publish jobs with response", response.json())
+            raise ValueError("failed to publish jobs")
+
+        for job_id in response.json()["data"]["jobIds"]:
             yield job_id
 
     def run(self):
@@ -71,7 +74,7 @@ class PowDataJobPublisher(DataJobPublisher):
         api_key: str,
         num_of_threads: int,
         batch_size: int = 100,
-        cool_down: int = 600,  # 600 seconds
+        cool_down: int = 10,  # 10 seconds
         threshold: int = 100000,  # auto-publish when queue length is below 100000
         service_url: str | None = None,
     ):
@@ -123,7 +126,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         cc_batch: str,
         classifier_id: str,
         batch_size: int = 100,
-        cool_down: int = 600,
+        cool_down: int = 10,
         service_url: str | None = None,
     ):
         super().__init__(api_key, service_url)
@@ -132,8 +135,10 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         self.batch_size = batch_size
         self.classifier_id = classifier_id
         self.cool_down = cool_down
-        self.mclient = MongoClient(CC_MONGO_URL)
-        self.jobs_coll = self.mclient[CC_MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
+        self.mclient = MongoClient(MIZU_NODE_MONGO_URL)
+        self.jobs_coll = self.mclient[MIZU_NODE_MONGO_DB_NAME][
+            PUBLISHED_JOBS_COLLECTION
+        ]
 
     def _build_batch_classify_job(self, doc: WetMetadata, classifier_id: str):
         r2_key = f"{doc.batch}/{doc.type}/{doc.filename}/{doc.chunk}.zz"
@@ -155,19 +160,20 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
             for metadata in metadatas
         ]
         job_ids = list(self.publish(jobs))
-        job_records = [
-            ClientJobRecord(
-                id=metadata.id,
-                batch=self.cc_batch,
-                classifier_id=self.classifier_id,
-                metadata_type=metadata.type,
-                job_id=job_id,
-                job_type=JobType.batch_classify,
-                created_at=int(time.time()),
-            )
-            for job_id, metadata in zip(job_ids, metadatas)
-        ]
-        self.jobs_coll.insert_many([record.model_dump_json() for record in job_records])
+        if job_ids:
+            job_records = [
+                ClientJobRecord(
+                    id=metadata.id,
+                    batch=self.cc_batch,
+                    classifier_id=self.classifier_id,
+                    metadata_type=metadata.type,
+                    job_id=job_id,
+                    job_type=JobType.batch_classify,
+                    created_at=int(time.time()),
+                )
+                for job_id, metadata in zip(job_ids, metadatas)
+            ]
+            self.jobs_coll.insert_many([record.model_dump() for record in job_records])
 
     def publish_all(self, metadatas: list[WetMetadata]):
         batch = []
@@ -199,8 +205,10 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
                 yield metadata
 
     def run(self):
+        print("publisher running")
         while True:
             metadatas = list(self.get_batch())
+            print(f"will publish {len(metadatas)} jobs")
             self.publish_all(metadatas)
             if len(metadatas) < self.batch_size:
                 return
@@ -290,7 +298,7 @@ class CommonCrawlDataJobManager(threading.Thread):
         objs = bucket.objects.filter(Prefix=f"{self.cc_batch}")
         for obj in objs:
             self.load_one_file(obj.key)
-            print(f"Loader: enqueued {self.total_jobs} jobs")
+            print(f"Loader: enqueued {self.total_processed} jobs")
 
         for _ in range(self.num_of_publishers):
             self.q.put_nowait(None)  # for publisher to exit
@@ -310,6 +318,7 @@ class CommonCrawlDataJobManager(threading.Thread):
         )
 
     def run(self):
+        print("manager running")
         self.load_metadatas()
         self.wait_until_queue_empty()
         while True:

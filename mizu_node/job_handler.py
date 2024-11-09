@@ -42,7 +42,7 @@ def handle_publish_jobs(
     jobs_coll.insert_many([jsonable_encoder(job) for job in jobs])
     for job in jobs:
         worker_job = build_worker_job(job)
-        job_queue(job.job_type).add_item(jsonable_encoder(worker_job))
+        job_queue(job.job_type).add_item(worker_job)
         yield job.job_id
 
 
