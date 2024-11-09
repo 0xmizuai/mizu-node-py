@@ -87,7 +87,10 @@ def _build_classify_ctx(key: str):
 
 
 def _build_pow_ctx():
-    return PowContext(difficulty=1, seed=str(uuid4()))
+    return PowContext(
+        difficulty=5,
+        seed="3af90f60e5705ccfa68106768481e78b08241a3f53620468b91565a9c742fd3e",
+    )
 
 
 def _build_batch_classify_ctx():
@@ -330,7 +333,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     assert response.status_code == 422
     assert response.json()["message"] == "job type mismatch"
 
-    # Case 1.2: finishing batch classify job
+    # Case 1.2: wrong job result
     r12 = WorkerJobResult(
         job_id=bids[0], job_type=JobType.batch_classify, classify_result=["t1"]
     )
@@ -351,6 +354,10 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
                 labels=["t1"],
                 wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
             ),
+            ClassifyResult(
+                labels=[],
+                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
+            ),
         ],
     )
     response = client.post(
@@ -364,6 +371,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     # Verify job 1 in database
     j1 = app.mdb("jobs").find_one({"_id": bids[0]})
     assert j1["jobType"] == JobType.batch_classify
+    # the empty labels are filtered out
     assert len(j1["batchClassifyResult"]) == 1
     assert j1["worker"] == "worker1"
     assert j1["finishedAt"] is not None
@@ -389,7 +397,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     assert response.json()["message"] == "job already finished"
 
     # Case 2: job 2 finished by worker2
-    r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="0x")
+    r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="166189")
     response = client.post(
         "/finish_job",
         json=jsonable_encoder(r2),
@@ -400,7 +408,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     # Verify job 2 in database
     j2 = app.mdb("jobs").find_one({"_id": pids[0]})
     assert j2["jobType"] == JobType.pow
-    assert j2["powResult"] == "0x"
+    assert j2["powResult"] == "166189"
     assert j2["worker"] == "worker2"
     assert j2["finishedAt"] is not None
 
@@ -465,13 +473,11 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
     pow_job = response.json()["data"]["job"]
 
     result2 = WorkerJobResult(
-        job_id=pow_job["_id"],
-        job_type=JobType.pow,
-        pow_result="0x123",
+        job_id=pow_job["_id"], job_type=JobType.pow, pow_result="166189"
     )
     response = client.post(
         "/finish_job",
-        json=result2.model_dump(),
+        json=jsonable_encoder(result2),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -561,3 +567,66 @@ def test_register_classifier(setenvvar):
     assert retrieved_classifier["embeddingModel"] == classifier_config.embedding_model
     assert len(retrieved_classifier["labels"]) == len(classifier_config.labels)
     assert retrieved_classifier["publisher"] == "test_user2"
+
+
+@mongomock.patch((MOCK_MONGO_URL))
+@mock_patch("mizu_node.job_handler.job_queue")
+@mock_patch("requests.post")
+def test_pow_validation(mock_requests, mock_job_queue, setenvvar):
+    mock_requests.return_value = None
+    mock_all(mock_job_queue)
+
+    # Publish a PoW job
+    pids = _publish_jobs(JobType.pow, 1)
+    worker_jwt = jwt_token("worker1")
+
+    # Take the job
+    response = client.get(
+        "/take_job",
+        params={"jobType": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker_jwt}"},
+    )
+    assert response.status_code == 200
+
+    # Case 1: missing pow result
+    result = WorkerJobResult(
+        job_id=pids[0],
+        job_type=JobType.pow,
+    )
+    response = client.post(
+        "/finish_job",
+        json=jsonable_encoder(result),
+        headers={"Authorization": f"Bearer {worker_jwt}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["message"] == "pow_result is required"
+
+    # Case 2: invalid pow result
+    result = WorkerJobResult(
+        job_id=pids[0],
+        job_type=JobType.pow,
+        pow_result="invalid_nonce",
+    )
+    response = client.post(
+        "/finish_job",
+        json=jsonable_encoder(result),
+        headers={"Authorization": f"Bearer {worker_jwt}"},
+    )
+    assert response.status_code == 422
+    assert (
+        response.json()["message"]
+        == "invalid pow_result: hash does not meet difficulty requirement"
+    )
+
+    # Case 2: valid pow result
+    result = WorkerJobResult(
+        job_id=pids[0],
+        job_type=JobType.pow,
+        pow_result="166189",
+    )
+    response = client.post(
+        "/finish_job",
+        json=jsonable_encoder(result),
+        headers={"Authorization": f"Bearer {worker_jwt}"},
+    )
+    assert response.status_code == 200

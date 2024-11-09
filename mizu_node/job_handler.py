@@ -128,20 +128,8 @@ def _validate_pow_result(ctx: PowContext, result: WorkerJobResult):
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="pow_result is required",
         )
-    nonce = result.pow_result.replace("0x", "")
-    try:
-        bytes_val = bytes.fromhex(nonce)
-        if len(bytes_val) != 32:  # bytes32 must be exactly 32 bytes
-            raise ValueError("invalid length")
-    except:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="invalid pow_result: must be a valid bytes32 hex string",
-        )
-
-    hash_input = bytes.fromhex(ctx.seed) + bytes_val
-    hash_output = sha512(hash_input).digest()
-    if not all(b == 0 for b in hash_output[:DEFAULT_POW_DIFFICULTY]):
+    hash_output = sha512((ctx.seed + result.pow_result).encode("utf-8")).hexdigest()
+    if not all(b == "0" for b in hash_output[:DEFAULT_POW_DIFFICULTY]):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="invalid pow_result: hash does not meet difficulty requirement",
