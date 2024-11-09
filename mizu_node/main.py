@@ -108,7 +108,7 @@ def query_job_status(req: QueryJobRequest, publisher: str = Depends(get_publishe
 @app.get("/take_job")
 @error_handler
 def take_job(
-    job_type: JobType = Query(JobType.batch_classify, alias="jobType"),
+    job_type: JobType,
     user: str = Depends(get_user),
 ):
     if not has_worker_cooled_down(app.rclient, user):
