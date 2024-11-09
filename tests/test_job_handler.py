@@ -143,12 +143,14 @@ def mock_all(mock_job_queue):
         JobType.pow: JobQueueMock("pow"),
         JobType.batch_classify: JobQueueMock("batch_classify"),
     }
-    mock_job_queue.side_effect = lambda job_type: job_queues[job_type]
+    mock_job_queue.return_value.__enter__.side_effect = lambda job_type: job_queues[
+        job_type
+    ]
     return job_queues
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-@mock_patch("mizu_node.job_handler.job_queue")
+@mock_patch("mizu_node.types.job_queue")
 def test_publish_jobs(mock_job_queue, setenvvar):
     job_queues = mock_all(mock_job_queue)
 
@@ -169,7 +171,7 @@ def test_publish_jobs(mock_job_queue, setenvvar):
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-@mock_patch("mizu_node.job_handler.job_queue")
+@mock_patch("mizu_node.types.job_queue")
 def test_take_job_ok(mock_job_queue, setenvvar):
     job_queues = mock_all(mock_job_queue)
 
@@ -219,7 +221,7 @@ def test_take_job_ok(mock_job_queue, setenvvar):
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-@mock_patch("mizu_node.job_handler.job_queue")
+@mock_patch("mizu_node.types.job_queue")
 def test_take_job_error(mock_job_queue, setenvvar):
     mock_all(mock_job_queue)
     worker1_jwt = jwt_token("worker1")
@@ -264,7 +266,7 @@ def test_take_job_error(mock_job_queue, setenvvar):
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-@mock_patch("mizu_node.job_handler.job_queue")
+@mock_patch("mizu_node.types.job_queue")
 @mock_patch("requests.post")
 def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     mock_requests.return_value = None
@@ -431,7 +433,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-@mock_patch("mizu_node.job_handler.job_queue")
+@mock_patch("mizu_node.types.job_queue")
 @mock_patch("requests.post")
 def test_job_status(mock_requests, mock_job_queue, setenvvar):
     mock_requests.return_value = None
@@ -587,7 +589,7 @@ def test_register_classifier(setenvvar):
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-@mock_patch("mizu_node.job_handler.job_queue")
+@mock_patch("mizu_node.types.job_queue")
 @mock_patch("requests.post")
 def test_pow_validation(mock_requests, mock_job_queue, setenvvar):
     mock_requests.return_value = None

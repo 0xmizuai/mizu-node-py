@@ -21,17 +21,7 @@ from mizu_node.types.job import (
     WorkerJobResult,
     build_worker_job,
 )
-from mizu_node.types.job_queue import JobQueueV2
-
-
-job_queues = {
-    job_type: JobQueueV2("job_queue_" + str(job_type))
-    for job_type in [JobType.classify, JobType.pow, JobType.batch_classify]
-}
-
-
-def job_queue(job_type: JobType):
-    return job_queues[job_type]
+from mizu_node.types.job_queue import job_queue
 
 
 def handle_publish_jobs(
@@ -40,9 +30,9 @@ def handle_publish_jobs(
     jobs = [DataJob.from_job_payload(publisher, job) for job in req.data]
     jobs_coll.insert_many([job.model_dump(by_alias=True) for job in jobs])
     for job in jobs:
-        worker_job = build_worker_job(job)
-        job_queue(job.job_type).add_item(worker_job)
-        yield job.job_id
+        with job_queue(job.job_type, mode="producer") as q:
+            q.add_item(build_worker_job(job))
+            yield job.job_id
 
 
 def handle_query_job(
@@ -76,15 +66,17 @@ def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="worker is blocked"
         )
-    return job_queue(job_type).get(rclient)
+    with job_queue(job_type) as q:
+        return q.get(rclient)
 
 
 def handle_finish_job(
     rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
 ):
     update_data = _validate_job_result(jobs, job_result)
-    if not job_queue(job_result.job_type).ack(rclient, job_result.job_id):
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="job expired")
+    with job_queue(job_result.job_type) as q:
+        if not q.ack(rclient, job_result.job_id):
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail="job expired")
     jobs.update_one(
         {"_id": job_result.job_id},
         {
@@ -107,7 +99,8 @@ def handle_finish_job(
 
 
 def handle_queue_len(job_type: JobType) -> int:
-    return job_queue(job_type).queue_len()
+    with job_queue(job_type) as q:
+        return q.queue_len()
 
 
 def _validate_batch_classify_result(result: WorkerJobResult):

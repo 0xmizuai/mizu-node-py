@@ -3,7 +3,6 @@ import queue
 from redis import Redis
 
 from mizu_node.types.job import WorkerJob
-from mizu_node.types.job_queue import TTL
 
 
 class JobQueueMock:
