@@ -268,7 +268,7 @@ def test_take_job_error(mock_job_queue, setenvvar):
 @mock_patch("requests.post")
 def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     mock_requests.return_value = None
-    mock_all(mock_job_queue)
+    job_queues = mock_all(mock_job_queue)
 
     # Take jobs
     worker1_jwt = jwt_token("worker1")
@@ -391,7 +391,6 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 422
-    print(response.json())
     assert response.json()["message"] == "job already finished"
 
     # Case 2: job 2 finished by worker2
@@ -409,6 +408,26 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     assert j2["powResult"] == "166189"
     assert j2["worker"] == "worker2"
     assert j2["finishedAt"] is not None
+
+    # Case 3: job expired
+    worker4_jwt = jwt_token("worker4")
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker4_jwt}"},
+    )
+    assert response.status_code == 200
+    job_id = response.json()["data"]["job"]["_id"]
+
+    r3 = WorkerJobResult(job_id=job_id, job_type=JobType.pow, pow_result="166189")
+    job_queues[JobType.pow].expire_job(job_id)
+    response = client.post(
+        "/finish_job",
+        json=r3.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response.status_code == 410
+    assert response.json()["message"] == "job expired"
 
 
 @mongomock.patch((MOCK_MONGO_URL))

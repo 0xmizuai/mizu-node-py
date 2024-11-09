@@ -4,8 +4,8 @@ from redis import Redis
 
 from mizu_node.types.job import WorkerJob
 
-TTL = 600000  # 10mins
 
+TTL = 900  # 15mins
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "127.0.0.1")
 RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", 5672)
 
@@ -42,7 +42,7 @@ class PikaConsumer(PikaBase):
         return (method.delivery_tag if method else None, body)
 
     def ack(self, delivery_tag: int):
-        self.channel.basic_ack(int(delivery_tag), False)
+        self.channel.basic_ack(delivery_tag, False)
 
     def queue_len(self):
         return self.queue.method.message_count
@@ -66,13 +66,14 @@ class JobQueueV2(object):
             return None
 
         worker_job = WorkerJob.model_validate_json(job_json)
-        rclient.setex(self._gen_rkey(worker_job.job_id), TTL / 1000 * 2, delivery_tag)
+        rclient.setex(self._gen_rkey(worker_job.job_id), TTL, delivery_tag)
         return worker_job
 
     def ack(self, rclient: Redis, job_id: int):
         delivery_tag = rclient.get(self._gen_rkey(job_id))
         if delivery_tag:
             self.consumer.ack(int(delivery_tag))
+        return delivery_tag is not None
 
     def queue_len(self):
         return self.consumer.queue_len()

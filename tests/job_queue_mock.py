@@ -22,8 +22,13 @@ class JobQueueMock:
         self.processing[job.job_id] = job
         return job
 
-    def ack(self, rclient: Redis, job_id: str):
+    def expire_job(self, job_id: str):
         self.processing.pop(job_id, None)
+        self.q.put_nowait(job_id)
+
+    def ack(self, rclient: Redis, job_id: str):
+        result = self.processing.pop(job_id, None)
+        return result is not None
 
     def queue_len(self):
         return self.q.qsize() + len(self.processing)

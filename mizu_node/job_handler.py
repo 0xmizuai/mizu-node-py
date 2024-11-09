@@ -83,6 +83,8 @@ def handle_finish_job(
     rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
 ):
     update_data = _validate_job_result(jobs, job_result)
+    if not job_queue(job_result.job_type).ack(rclient, job_result.job_id):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="job expired")
     jobs.update_one(
         {"_id": job_result.job_id},
         {
@@ -93,7 +95,6 @@ def handle_finish_job(
             }
         },
     )
-    job_queue(job_result.job_type).ack(rclient, job_result.job_id)
     requests.post(
         os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
         json={
