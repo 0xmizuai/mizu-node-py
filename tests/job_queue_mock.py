@@ -1,7 +1,5 @@
 import queue
-from uuid import uuid4
 
-from fastapi.encoders import jsonable_encoder
 from redis import Redis
 
 from mizu_node.types.job import WorkerJob
@@ -15,12 +13,12 @@ class JobQueueMock:
         self.processing = {}
 
     def add_item(self, job: WorkerJob):
-        self.q.put_nowait(jsonable_encoder(job))
+        self.q.put_nowait(job.model_dump_json(by_alias=True))
 
     def get(self, rclient: Redis):
         if self.q.empty():
             return None
-        job = WorkerJob(**self.q.get())
+        job = WorkerJob.model_validate_json(self.q.get())
         self.processing[job.job_id] = job
         return job
 

@@ -1,6 +1,5 @@
 import os
 from bson import ObjectId
-from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Query, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -69,7 +68,9 @@ def register_classifier(
     classifier: ClassifierConfig, publisher: str = Depends(get_publisher)
 ):
     classifier.publisher = publisher
-    result = app.mdb(CLASSIFIER_COLLECTION).insert_one(jsonable_encoder(classifier))
+    result = app.mdb(CLASSIFIER_COLLECTION).insert_one(
+        classifier.model_dump(by_alias=True)
+    )
     return build_json_response(
         status.HTTP_200_OK, "ok", {"id": str(result.inserted_id)}
     )
@@ -84,7 +85,7 @@ def get_classifier(id: str):
     return build_json_response(
         status.HTTP_200_OK,
         "ok",
-        {"classifier": jsonable_encoder(ClassifierConfig(**doc))},
+        {"classifier": ClassifierConfig(**doc).model_dump(by_alias=True)},
     )
 
 
@@ -101,7 +102,7 @@ def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)
 def query_job_status(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
     jobs = handle_query_job(app.mdb(JOBS_COLLECTION), publisher, req)
     return build_json_response(
-        status.HTTP_200_OK, "ok", {"jobs": [jsonable_encoder(j) for j in jobs]}
+        status.HTTP_200_OK, "ok", {"jobs": [j.model_dump(by_alias=True) for j in jobs]}
     )
 
 
@@ -121,7 +122,7 @@ def take_job(
         )
     else:
         return build_json_response(
-            status.HTTP_200_OK, "ok", {"job": jsonable_encoder(job)}
+            status.HTTP_200_OK, "ok", {"job": job.model_dump(by_alias=True)}
         )
 
 

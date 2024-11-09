@@ -1,8 +1,6 @@
 import os
 import time
 from unittest import mock
-from uuid import uuid4
-from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
 import pymongo
 import pytest
@@ -362,7 +360,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=jsonable_encoder(r13),
+        json=r13.model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -389,7 +387,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=jsonable_encoder(r14),
+        json=r14.model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 422
@@ -400,7 +398,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="166189")
     response = client.post(
         "/finish_job",
-        json=jsonable_encoder(r2),
+        json=r2.model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response.status_code == 200
@@ -457,7 +455,7 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=jsonable_encoder(result1),
+        json=result1.model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -477,7 +475,7 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=jsonable_encoder(result2),
+        json=result2.model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -595,7 +593,7 @@ def test_pow_validation(mock_requests, mock_job_queue, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=jsonable_encoder(result),
+        json=result.model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker_jwt}"},
     )
     assert response.status_code == 422
@@ -609,7 +607,7 @@ def test_pow_validation(mock_requests, mock_job_queue, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=jsonable_encoder(result),
+        json=result.model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker_jwt}"},
     )
     assert response.status_code == 422
@@ -626,7 +624,7 @@ def test_pow_validation(mock_requests, mock_job_queue, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=jsonable_encoder(result),
+        json=result.model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker_jwt}"},
     )
     assert response.status_code == 200

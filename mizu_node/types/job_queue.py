@@ -1,6 +1,4 @@
-import json
 import os
-from fastapi.encoders import jsonable_encoder
 import pika
 from redis import Redis
 
@@ -57,7 +55,7 @@ class JobQueueV2(object):
         self.consumer = PikaConsumer(qname)
 
     def add_item(self, job: WorkerJob):
-        self.producer.add_item(json.dumps(jsonable_encoder(job)))
+        self.producer.add_item(job.model_dump_json(by_alias=True))
 
     def _gen_rkey(self, job_id: str) -> str:
         return f"{self.qname}:delivery_tag:{job_id}"

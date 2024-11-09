@@ -3,7 +3,6 @@ import os
 import time
 from typing import Iterator
 
-from fastapi.encoders import jsonable_encoder
 from pymongo.database import Collection
 from redis import Redis
 from fastapi import HTTPException, status
@@ -39,7 +38,7 @@ def handle_publish_jobs(
     jobs_coll: Collection, publisher: str, req: PublishJobRequest
 ) -> Iterator[str]:
     jobs = [DataJob.from_job_payload(publisher, job) for job in req.data]
-    jobs_coll.insert_many([jsonable_encoder(job) for job in jobs])
+    jobs_coll.insert_many([job.model_dump(by_alias=True) for job in jobs])
     for job in jobs:
         worker_job = build_worker_job(job)
         job_queue(job.job_type).add_item(worker_job)
@@ -83,7 +82,7 @@ def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob
 def handle_finish_job(
     rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
 ):
-    update_data = jsonable_encoder(_validate_job_result(jobs, job_result))
+    update_data = _validate_job_result(jobs, job_result)
     jobs.update_one(
         {"_id": job_result.job_id},
         {
@@ -97,13 +96,11 @@ def handle_finish_job(
     job_queue(job_result.job_type).ack(rclient, job_result.job_id)
     requests.post(
         os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
-        json=jsonable_encoder(
-            {
-                "job_id": job_result.job_id,
-                "job_type": job_result.job_type,
-                "worker": user,
-            }
-        ),
+        json={
+            "job_id": job_result.job_id,
+            "job_type": job_result.job_type,
+            "worker": user,
+        },
         headers={"Authorization": f"Bearer {os.environ['SHARED_SECRET']}"},
     )
 
@@ -118,7 +115,9 @@ def _validate_batch_classify_result(result: WorkerJobResult):
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="batch_classify_result is required",
         )
-    filtered = [x for x in result.batch_classify_result if x.labels]
+    filtered = [
+        x.model_dump(by_alias=True) for x in result.batch_classify_result if x.labels
+    ]
     return {"batchClassifyResult": filtered}
 
 

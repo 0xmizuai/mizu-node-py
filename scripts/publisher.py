@@ -1,4 +1,3 @@
-import json
 import math
 import os
 import queue
@@ -9,7 +8,6 @@ from typing import Iterator
 import zlib
 
 import boto3
-from fastapi.encoders import jsonable_encoder
 from pymongo import MongoClient
 import requests
 
@@ -54,7 +52,7 @@ class DataJobPublisher(threading.Thread):
     def publish(self, jobs: list[DataJobPayload]) -> Iterator[str]:
         response = requests.post(
             self.service_url + "/publish_jobs",
-            json=jsonable_encoder(PublishJobRequest(data=jobs)),
+            json=PublishJobRequest(data=jobs).model_dump(by_alias=True),
             headers={"Authorization": "Bearer " + self.api_key},
         )
         if response.status_code != 200:
@@ -173,7 +171,9 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
                 )
                 for job_id, metadata in zip(job_ids, metadatas)
             ]
-            self.jobs_coll.insert_many([record.model_dump() for record in job_records])
+            self.jobs_coll.insert_many(
+                [record.model_dump(by_alias=True) for record in job_records]
+            )
 
     def publish_all(self, metadatas: list[WetMetadata]):
         batch = []
@@ -259,7 +259,7 @@ class CommonCrawlDataJobManager(threading.Thread):
 
         result = requests.post(
             self.service_url + "/job_status",
-            json=jsonable_encoder({"job_ids": [doc["_id"] for doc in pending_jobs]}),
+            json={"job_ids": [str(doc["_id"]) for doc in pending_jobs]},
             headers={"Authorization": "Bearer " + self.api_key},
         )
         for job_result in result.json()["data"]:
@@ -409,7 +409,7 @@ def register_classifier(user: str):
     )
     response = requests.post(
         f"{os.environ['NODE_SERVICE_URL']}/register_classifier",
-        json=jsonable_encoder(config),
+        json=config.model_dump(by_alias=True),
         headers={"Authorization": "Bearer " + api_key},
     )
     response.raise_for_status()
