@@ -24,7 +24,7 @@ def generate_key():
 
 def issue_api_key(publisher: str):
     key = generate_key()
-    api_key_collection().insert_one({"api_key": key, "publisher": publisher})
+    api_key_collection().insert_one({"api_key": key, "user": publisher})
     return key
 
 
