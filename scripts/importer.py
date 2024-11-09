@@ -13,7 +13,7 @@ import requests
 from warcio.archiveiterator import ArchiveIterator
 import requests
 
-from scripts.models import WetMetadata
+from scripts.models import WetMetadata, WetRecord
 
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
@@ -37,21 +37,6 @@ def get_cc_s3_file(filepath: str):
         aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
     )
     return client.get_object(Bucket="commoncrawl", Key=filepath)
-
-
-class WetRecord(object):
-    def __init__(self, record: any):
-        self.languages = (
-            record.rec_headers.get_header("WARC-Identified-Content-Language") or ""
-        ).split(",")
-        self.content_length = record.rec_headers.get_header("Content-Length")
-        self.uri = record.rec_headers.get_header("WARC-Target-URI")
-        self.warc_id = record.rec_headers.get_header("WARC-Record-ID")
-        record_date = record.rec_headers.get_header("WARC-Date")
-        self.crawled_at = int(
-            round(datetime.strptime(record_date, "%Y-%m-%dT%H:%M:%SZ").timestamp())
-        )
-        self.text = record.content_stream().read().decode("utf-8")
 
 
 class Progress(object):

@@ -64,12 +64,16 @@ metadata_parser.add_argument(
 )
 
 publish_parser = subparsers.add_parser(
-    "publish", add_help=False, description="import data to r2"
+    "publish", add_help=False, description="publish jobs"
 )
 publish_parser.add_argument("--user", type=str, action="store")
 publish_parser.add_argument("--batch", type=str, action="store")
 publish_parser.add_argument("--classifier", type=str, action="store")
 
+process_parser = subparsers.add_parser(
+    "process", add_help=False, description="process jobs"
+)
+process_parser.add_argument("--user", type=str, action="store")
 
 args = parser.parse_args()
 

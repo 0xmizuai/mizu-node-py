@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 
+from mizu_node.types.classifier import WetContext
+
 
 class WetMetadata(BaseModel):
     id: str
@@ -25,3 +27,18 @@ class ClientJobRecord(BaseModel):
     metadata_type: str
     finished_at: Optional[datetime] = None
     created_at: int
+
+
+class WetRecord(object):
+    def __init__(self, record: any):
+        self.languages = (
+            record.rec_headers.get_header("WARC-Identified-Content-Language") or ""
+        ).split(",")
+        self.content_length = record.rec_headers.get_header("Content-Length")
+        self.uri = record.rec_headers.get_header("WARC-Target-URI")
+        self.warc_id = record.rec_headers.get_header("WARC-Record-ID")
+        record_date = record.rec_headers.get_header("WARC-Date")
+        self.crawled_at = int(
+            round(datetime.strptime(record_date, "%Y-%m-%dT%H:%M:%SZ").timestamp())
+        )
+        self.text = record.content_stream().read().decode("utf-8")

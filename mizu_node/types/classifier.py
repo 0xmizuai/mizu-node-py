@@ -4,11 +4,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class DataLabel(BaseModel):
     label: str
     description: str
+    embedding: list[float] | None = None
 
 
 class ClassifierConfig(BaseModel):
     name: str
     embedding_model: str
+    threshold: float
     labels: list[DataLabel]
     publisher: str | None = None
 

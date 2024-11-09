@@ -1,6 +1,6 @@
 import json
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from pymongo.database import Collection
 from redis import Redis
 
@@ -20,18 +20,26 @@ def verify_jwt(token: str, public_key: str) -> str:
         payload = jwt.decode(jwt=token, key=public_key, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
         if user_id is None:
-            raise HTTPException(status_code=401, detail="Token is invalid")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is invalid"
+            )
         return str(user_id)
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"
+        )
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Token verification failed")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token verification failed"
+        )
 
 
 def verify_api_key(mdb: Collection, token: str) -> str:
     doc = mdb.find_one({"api_key": token})
     if doc is None:
-        raise HTTPException(status_code=401, detail="API key is invalid")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="API key is invalid"
+        )
     return doc["user"]
 
 
