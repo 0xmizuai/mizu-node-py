@@ -46,7 +46,7 @@ def get_user(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    return verify_jwt(token, os.environ["VERIFY_KEY"])
+    return verify_jwt(token, os.environ["JWT_VERIFY_KEY"])
 
 
 def get_publisher(

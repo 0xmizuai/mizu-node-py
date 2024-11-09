@@ -107,10 +107,10 @@ def main():
         for key in keys:
             print("API key: " + key)
     elif args.command == "new_jwt":
-        token = sign_jwt(args.user, os.environ["SECRET_KEY"])
+        token = sign_jwt(args.user, os.environ["JWT_SECRET_KEY"])
         print("Token: " + token)
     elif args.command == "verify_jwt":
-        user = verify_jwt(args.token, os.environ["VERIFY_KEY"])
+        user = verify_jwt(args.token, os.environ["JWT_VERIFY_KEY"])
         print("User: " + user)
     elif args.command == "import":
         [start, end] = [int(i) for i in args.range.split(",")]
