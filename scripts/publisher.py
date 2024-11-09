@@ -226,7 +226,6 @@ class CommonCrawlDataJobManager(threading.Thread):
         metadata_type: str,
         classifier_id: str,
         num_of_publishers: int,
-        max_to_process: int = 1000,
     ):
         super().__init__()
         self.q = q
@@ -235,7 +234,6 @@ class CommonCrawlDataJobManager(threading.Thread):
         self.classifier_id = classifier_id
         self.num_of_publishers = num_of_publishers
         self.total_processed = 0
-        self.max_to_process = max_to_process
         self.mclient = MongoClient(CC_MONGO_URL)
         self.jobs_coll = self.mclient[CC_MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
         self.s3 = boto3.resource(
@@ -304,8 +302,6 @@ class CommonCrawlDataJobManager(threading.Thread):
         for obj in objs:
             self.load_one_file(obj.key)
             print(f"Loader: enqueued {self.total_processed} jobs")
-            if self.total_processed > self.max_to_process:
-                break
 
         for _ in range(self.num_of_publishers):
             self.q.put_nowait(None)  # for publisher to exit

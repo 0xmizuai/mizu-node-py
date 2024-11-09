@@ -1,5 +1,4 @@
 import os
-import time
 from bson import ObjectId
 import uvicorn
 from fastapi import FastAPI, Query, Security, status, Depends
@@ -70,10 +69,7 @@ def register_classifier(
 ):
     classifier.publisher = publisher
     result = app.mdb(CLASSIFIER_COLLECTION).insert_one(
-        {
-            "createdAt": int(time.time()),
-            **classifier.model_dump(by_alias=True),
-        }
+        classifier.model_dump(by_alias=True)
     )
     return build_json_response(
         status.HTTP_200_OK, "ok", {"id": str(result.inserted_id)}
