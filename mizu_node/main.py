@@ -34,14 +34,13 @@ from mizu_node.types.job import (
 from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
-mclient = MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
-
 # Security scheme
 bearer_scheme = HTTPBearer()
 
 app = FastAPI()
 app.rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-app.mdb = lambda coll: mclient[MIZU_NODE_MONGO_DB_NAME][coll]
+app.mclient = MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
+app.mdb = lambda coll: app.mclient[MIZU_NODE_MONGO_DB_NAME][coll]
 
 
 def get_user(
