@@ -12,7 +12,9 @@ RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672")
 class PikaBase(object):
     def __init__(self, qname: str):
         self.qname = qname
-        connection = pika.BlockingConnection(pika.URLParameters(RABBITMQ_URL))
+        connection = pika.BlockingConnection(
+            pika.URLParameters(RABBITMQ_URL), heartbeat=0  # disable hb
+        )
         self.channel = connection.channel()
         self.queue = self.channel.queue_declare(queue=qname, durable=True)
 
