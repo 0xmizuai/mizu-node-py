@@ -68,7 +68,7 @@ def setenvvar(monkeypatch):
             "MIZU_NODE_MONGO_URL": MOCK_MONGO_URL,
             "MIZU_NODE_MONGO_DB_NAME": "mizu_node",
             "JWT_VERIFY_KEY": public_key_str,
-            "SHARED_SECRET": "some-secret",
+            "API_SECRET_KEY": "some-secret",
             "BACKEND_SERVICE_URL": "http://localhost:3000",
         }
         for k, v in envvars.items():

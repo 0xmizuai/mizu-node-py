@@ -102,7 +102,7 @@ def handle_finish_job(
             "job_type": job_result.job_type,
             "worker": user,
         },
-        headers={"Authorization": f"Bearer {os.environ['SHARED_SECRET']}"},
+        headers={"Authorization": f"Bearer {os.environ['API_SECRET_KEY']}"},
     )
 
 
