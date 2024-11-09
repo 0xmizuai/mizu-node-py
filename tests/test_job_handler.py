@@ -349,7 +349,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
         batch_classify_result=[
             ClassifyResult(
                 labels=["t1"],
-                wetContext=WetContext(warcId="", uri="", languages=[], crawledAt=0),
+                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
             ),
         ],
     )
@@ -375,7 +375,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
         batch_classify_result=[
             ClassifyResult(
                 labels=["t1"],
-                wetContext=WetContext(warcId="", uri="", languages=[], crawledAt=0),
+                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
             ),
         ],
     )
@@ -437,14 +437,19 @@ def test_job_status(mock_requests, mock_job_queue, setenvvar):
     assert response.status_code == 200
     classify_job = response.json()["data"]["job"]
 
+    wet_context = WetContext(warc_id="", uri="", languages=[], crawled_at=0)
+    classify_result = ClassifyResult(
+        labels=["t1"],
+        wet_context=wet_context,
+    )
     result1 = WorkerJobResult(
         job_id=classify_job["_id"],
         job_type=JobType.batch_classify,
-        classify_result=["t1"],
+        batch_classify_result=[classify_result],
     )
     response = client.post(
         "/finish_job",
-        json=result1.model_dump(),
+        json=jsonable_encoder(result1),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -533,7 +538,7 @@ def test_register_classifier(setenvvar):
     response = client.get("/classifer_info", params={"id": classifier_id})
     assert response.status_code == 200
     retrieved_classifier = response.json()["data"]["classifier"]
-    assert retrieved_classifier["embedding_model"] == classifier_config.embedding_model
+    assert retrieved_classifier["embeddingModel"] == classifier_config.embedding_model
     assert len(retrieved_classifier["labels"]) == len(classifier_config.labels)
     assert retrieved_classifier["publisher"] == "test_user1"
 
@@ -553,6 +558,6 @@ def test_register_classifier(setenvvar):
     response = client.get("/classifer_info", params={"id": classifier_id})
     assert response.status_code == 200
     retrieved_classifier = response.json()["data"]["classifier"]
-    assert retrieved_classifier["embedding_model"] == classifier_config.embedding_model
+    assert retrieved_classifier["embeddingModel"] == classifier_config.embedding_model
     assert len(retrieved_classifier["labels"]) == len(classifier_config.labels)
     assert retrieved_classifier["publisher"] == "test_user2"
