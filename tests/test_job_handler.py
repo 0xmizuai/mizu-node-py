@@ -2,6 +2,7 @@ import os
 import time
 from unittest import mock
 from uuid import uuid4
+from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
 import pymongo
 import pytest
@@ -12,7 +13,12 @@ from mizu_node.constants import (
     API_KEY_COLLECTION,
 )
 from mizu_node.security import block_worker
-from mizu_node.types.classifier import ClassifierConfig, DataLabel
+from mizu_node.types.classifier import (
+    ClassifierConfig,
+    ClassifyResult,
+    DataLabel,
+    WetContext,
+)
 from mizu_node.types.job import (
     BatchClassifyContext,
     ClassifyContext,
@@ -263,74 +269,12 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     mock_requests.return_value = None
     mock_all(mock_job_queue)
 
-    # Publish jobs
-    bids = _publish_jobs(JobType.batch_classify, 3)
-    pids = _publish_jobs(JobType.pow, 3)
-
     # Take jobs
     worker1_jwt = jwt_token("worker1")
     worker2_jwt = jwt_token("worker2")
-
-    response1 = client.get(
-        "/take_job",
-        params={"jobType": int(JobType.classify)},
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
-    )
-    assert response1.status_code == 200
-
-    response2 = client.get(
-        "/take_job",
-        params={"jobType": int(JobType.pow)},
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
-    )
-    assert response2.status_code == 200
-
-    # Case 1: job 1 finished by worker1
-    r1 = WorkerJobResult(
-        job_id=bids[0],
-        job_type=JobType.classify,
-        classify_result=["t1"],
-    )
-    response = client.post(
-        "/finish_job",
-        json=r1.model_dump(),
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
-    )
-    assert response.status_code == 200
-
-    # Verify job 1 in database
-    j1 = app.mdb("jobs").find_one({"_id": bids[0]})
-    assert j1["jobType"] == JobType.batch_classify
-    assert j1["classifyResult"] == ["t1"]
-    assert j1["worker"] == "worker1"
-    assert j1["finishedAt"] is not None
-
-    # Case 2: job 2 finished by worker2
-    r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="0x")
-    response = client.post(
-        "/finish_job",
-        json=r2.model_dump(),
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
-    )
-    assert response.status_code == 200
-
-    # Verify job 2 in database
-    j2 = app.mdb("jobs").find_one({"_id": pids[0]})
-    assert j2["jobType"] == JobType.pow
-    assert j2["powResult"] == "0x"
-    assert j2["worker"] == "worker2"
-    assert j2["finishedAt"] is not None
-
-
-@mongomock.patch((MOCK_MONGO_URL))
-@mock_patch("mizu_node.job_handler.job_queue")
-@mock_patch("requests.post")
-def test_finish_job_error(mock_requests, mock_job_queue, setenvvar):
-    mock_requests.return_value = None
-    mock_all(mock_job_queue)
+    worker3_jwt = jwt_token("worker3")
 
     # Try to finish job not in recorded - should fail
-    worker1_jwt = jwt_token("worker1")
     result = WorkerJobResult(
         job_id="invalid_job_id",
         job_type=JobType.batch_classify,
@@ -345,38 +289,120 @@ def test_finish_job_error(mock_requests, mock_job_queue, setenvvar):
     assert response.json()["message"] == "job not found"
 
     # Publish jobs
-    _publish_jobs(JobType.batch_classify, 3)
+    bids = _publish_jobs(JobType.batch_classify, 3)
+    pids = _publish_jobs(JobType.pow, 3)
 
-    # Take job as worker1
-    response = client.get(
+    response1 = client.get(
         "/take_job",
-        params={"jobType": int(JobType.batch_classify)},
+        params={"jobType": int(JobType.classify)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
-    assert response.status_code == 200
-    job = response.json()["data"]["job"]
+    assert response1.status_code == 200
+    assert response1.json()["data"]["job"] is None
 
-    # Finish job first time - should succeed
-    result = WorkerJobResult(
-        job_id=job["_id"],
-        job_type=JobType.batch_classify,
+    response2 = client.get(
+        "/take_job",
+        params={"jobType": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response2.status_code == 200
+    assert response2.json()["data"]["job"] is not None
+
+    response3 = client.get(
+        "/take_job",
+        params={"jobType": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
+    )
+    assert response3.status_code == 200
+    assert response3.json()["data"]["job"] is not None
+
+    # Case 1.1: finishing batch classify job with classify result
+    r11 = WorkerJobResult(
+        job_id=bids[0],
+        job_type=JobType.classify,
         classify_result=["t1"],
     )
     response = client.post(
         "/finish_job",
-        json=result.model_dump(),
+        json=r11.model_dump(),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["message"] == "job type mismatch"
+
+    # Case 1.2: finishing batch classify job
+    r12 = WorkerJobResult(
+        job_id=bids[0], job_type=JobType.batch_classify, classify_result=["t1"]
+    )
+    response = client.post(
+        "/finish_job",
+        json=r12.model_dump(),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["message"] == "batch_classify_result is required"
+
+    # Case 1.3: finishing batch classify job
+    r13 = WorkerJobResult(
+        job_id=bids[0],
+        job_type=JobType.batch_classify,
+        batch_classify_result=[
+            ClassifyResult(
+                labels=["t1"],
+                wetContext=WetContext(warcId="", uri="", languages=[], crawledAt=0),
+            ),
+        ],
+    )
+    response = client.post(
+        "/finish_job",
+        json=jsonable_encoder(r13),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
+    assert response.json()["message"] == "ok"
 
-    # Try to finish same job again - should fail
+    # Verify job 1 in database
+    j1 = app.mdb("jobs").find_one({"_id": bids[0]})
+    assert j1["jobType"] == JobType.batch_classify
+    assert len(j1["batchClassifyResult"]) == 1
+    assert j1["worker"] == "worker1"
+    assert j1["finishedAt"] is not None
+
+    # Case 1.3: finishing finished jobs
+    r14 = WorkerJobResult(
+        job_id=bids[0],
+        job_type=JobType.batch_classify,
+        batch_classify_result=[
+            ClassifyResult(
+                labels=["t1"],
+                wetContext=WetContext(warcId="", uri="", languages=[], crawledAt=0),
+            ),
+        ],
+    )
     response = client.post(
         "/finish_job",
-        json=result.model_dump(),
+        json=jsonable_encoder(r14),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == 422
+    print(response.json())
     assert response.json()["message"] == "job already finished"
+
+    # Case 2: job 2 finished by worker2
+    r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="0x")
+    response = client.post(
+        "/finish_job",
+        json=jsonable_encoder(r2),
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response.status_code == 200
+
+    # Verify job 2 in database
+    j2 = app.mdb("jobs").find_one({"_id": pids[0]})
+    assert j2["jobType"] == JobType.pow
+    assert j2["powResult"] == "0x"
+    assert j2["worker"] == "worker2"
+    assert j2["finishedAt"] is not None
 
 
 @mongomock.patch((MOCK_MONGO_URL))

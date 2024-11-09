@@ -21,15 +21,8 @@ class WetContext(BaseModel):
     crawled_at: int = Field(alias="crawledAt")
 
 
-class DataLabelResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    label: str
-    score: float
-
-
 class ClassifyResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     wet_context: WetContext = Field(alias="wetContext")
-    labels: list[DataLabelResult]
+    labels: list[str]

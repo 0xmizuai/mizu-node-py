@@ -78,34 +78,28 @@ def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob
 
 
 def handle_finish_job(
-    rclient: Redis, jobs: Collection, worker: str, result: WorkerJobResult
+    rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
 ):
-    doc = jobs.find_one_and_update(
-        {"_id": result.job_id},
+    update_data = jsonable_encoder(_validate_job_result(jobs, job_result))
+    jobs.update_one(
+        {"_id": job_result.job_id},
         {
             "$set": {
+                "worker": user,
                 "finishedAt": int(time.time()),
-                "worker": worker,
-                "classifyResult": result.classify_result,
-                "powResult": result.pow_result,
-                "batchClassifyResult": result.batch_classify_result,
+                **update_data,
             }
         },
     )
-    if doc is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
-        )
-    if doc.get("finishedAt", None) is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="job already finished",
-        )
-    job_queue(result.job_type).ack(rclient, str(doc["_id"]))
+    job_queue(job_result.job_type).ack(rclient, job_result.job_id)
     requests.post(
         os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
         json=jsonable_encoder(
-            {"job_id": doc["_id"], "job_type": doc["jobType"], "worker": worker}
+            {
+                "job_id": job_result.job_id,
+                "job_type": job_result.job_type,
+                "worker": user,
+            }
         ),
         headers={"Authorization": f"Bearer {os.environ['SHARED_SECRET']}"},
     )
@@ -113,3 +107,49 @@ def handle_finish_job(
 
 def handle_queue_len(job_type: JobType) -> int:
     return job_queue(job_type).queue_len()
+
+
+def _validate_job_result(jobs: Collection, result: WorkerJobResult):
+    doc = jobs.find_one({"_id": result.job_id})
+    if doc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
+        )
+
+    if doc.get("finishedAt", None) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="job already finished",
+        )
+
+    if doc["jobType"] != result.job_type:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="job type mismatch"
+        )
+
+    if doc["jobType"] == JobType.batch_classify:
+        if result.batch_classify_result is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="batch_classify_result is required",
+            )
+        return {"batchClassifyResult": result.batch_classify_result}
+    elif doc["jobType"] == JobType.pow:
+        if result.pow_result is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="pow_result is required",
+            )
+        return {"powResult": result.pow_result}
+    elif doc["jobType"] == JobType.classify:
+        if result.classify_result is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="classify_result is required",
+            )
+        return {"classifyResult": result.classify_result}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid job type",
+        )
