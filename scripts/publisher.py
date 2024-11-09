@@ -12,7 +12,7 @@ from fastapi.encoders import jsonable_encoder
 from pymongo import MongoClient
 import requests
 
-from mizu_node.constants import R2_DATA_PREFIX
+from mizu_node.constants import API_KEY_COLLECTION, R2_DATA_PREFIX
 from mizu_node.types.job import (
     BatchClassifyContext,
     DataJobPayload,
@@ -28,8 +28,12 @@ from scripts.importer import (
 )
 from scripts.models import ClientJobRecord, WetMetadata
 
-MONGO_URL = os.environ["CC_MONGO_URL"]
-MONGO_DB_NAME = "commoncrawl"
+CC_MONGO_URL = os.environ["CC_MONGO_URL"]
+CC_MONGO_DB_NAME = "commoncrawl"
+
+MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
+MIZU_NODE_MONGO_DB_NAME = "mizu_node"
+
 PUBLISHED_JOBS_COLLECTION = "published_jobs"
 DATA_LINK_PREFIX = "https://rawdata.mizu.technology/"
 
@@ -122,8 +126,8 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         self.batch_size = batch_size
         self.classifier_id = classifier_id
         self.cool_down = cool_down
-        self.mclient = MongoClient(MONGO_URL)
-        self.jobs_coll = self.mclient[MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
+        self.mclient = MongoClient(CC_MONGO_URL)
+        self.jobs_coll = self.mclient[CC_MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
 
     def _build_batch_classify_job(self, doc: WetMetadata, classifier_id: str):
         r2_key = f"{doc.batch}/{doc.type}/{doc.filename}/{doc.chunk}.zz"
@@ -212,8 +216,8 @@ class CommonCrawlDataJobManager(threading.Thread):
         self.classifier_id = classifier_id
         self.num_of_publishers = num_of_publishers
         self.total_processed = 0
-        self.mclient = MongoClient(MONGO_URL)
-        self.jobs_coll = self.mclient[MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
+        self.mclient = MongoClient(CC_MONGO_URL)
+        self.jobs_coll = self.mclient[CC_MONGO_DB_NAME][PUBLISHED_JOBS_COLLECTION]
 
     def query_status(self):
         pending_jobs = list(
@@ -300,7 +304,17 @@ class CommonCrawlDataJobManager(threading.Thread):
             time.sleep(60)
 
 
-def publish_pow_jobs(api_key: str, num_of_threads: int = 32):
+def get_api_key(user: str):
+    mclient = MongoClient(MIZU_NODE_MONGO_URL)
+    api_keys = mclient[MIZU_NODE_MONGO_DB_NAME][API_KEY_COLLECTION]
+    doc = api_keys.find_one({"user": user})
+    if doc is None:
+        raise ValueError(f"User {user} not found")
+    return doc["api_key"]
+
+
+def publish_pow_jobs(user: str, num_of_threads: int = 32):
+    api_key = get_api_key(user)
     threads = []
     for _ in range(num_of_threads):
         threads.append(PowDataJobPublisher(api_key))
@@ -310,12 +324,13 @@ def publish_pow_jobs(api_key: str, num_of_threads: int = 32):
 
 
 def publish_batch_classify_jobs(
-    api_key: str,
+    user: str,
     cc_batch: str,
     classifier_id: str,
     metadata_type: str = "wet",
     num_of_threads: int = 32,
 ):
+    api_key = get_api_key(user)
     q = queue.Queue()
     CommonCrawlDataJobManager(q, cc_batch, metadata_type, num_of_threads).start()
     for _ in range(num_of_threads):

@@ -11,23 +11,6 @@ SERVICE_URL = "http://localhost:8000"
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="command", required=True)
 
-job_parser_process = subparsers.add_parser(
-    "process",
-    add_help=False,
-    description="take and finish jobs",
-)
-job_parser_process.add_argument(
-    "--jwt",
-    action="store",
-    type=str,
-    help="the jwt token for auth",
-)
-job_parser_process.add_argument(
-    "--job_type",
-    action="store",
-    type=int,
-    help="the job type to process",
-)
 
 new_api_key_parser = subparsers.add_parser(
     "new_api_key",
@@ -83,7 +66,7 @@ metadata_parser.add_argument(
 publish_parser = subparsers.add_parser(
     "publish", add_help=False, description="import data to r2"
 )
-publish_parser.add_argument("--api_key", type=str, action="store")
+publish_parser.add_argument("--user", type=str, action="store")
 publish_parser.add_argument("--batch", type=str, action="store")
 publish_parser.add_argument("--classifier", type=str, action="store")
 
@@ -100,7 +83,7 @@ def main():
         for key in keys:
             print("API key: " + key)
     elif args.command == "new_jwt":
-        token = sign_jwt(args.user)
+        token = sign_jwt(args.user, os.environ["SECRET_KEY"])
         print("Token: " + token)
     elif args.command == "verify_jwt":
         user = verify_jwt(args.token, os.environ["VERIFY_KEY"])
@@ -117,8 +100,8 @@ def main():
             raise ValueError("either backup or restore must be presented")
     elif args.command == "publish":
         if args.batch:
-            publish_batch_classify_jobs(args.api_key, args.batch, args.classifier)
+            publish_batch_classify_jobs(args.user, args.batch, args.classifier)
         else:
-            publish_pow_jobs(args.api_key)
+            publish_pow_jobs(args.user)
     else:
         raise ValueError("Invalid arguments")
