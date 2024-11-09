@@ -114,6 +114,18 @@ class WorkerJobResult(BaseModel):
     )
 
 
+class WorkerJobResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str = Field(alias="jobId")
+    job_type: JobType = Field(alias="jobType")
+    classify_result: list[str] | None = Field(alias="classifyResult", default=None)
+    pow_result: str | None = Field(alias="powResult", default=None)
+    batch_classify_result: list[ClassifyResult] | None = Field(
+        alias="batchClassifyResult"
+    )
+
+
 def build_worker_job(job: DataJob) -> WorkerJob:
     return WorkerJob(
         job_id=job.job_id,
