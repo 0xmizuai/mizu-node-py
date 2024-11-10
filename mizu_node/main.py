@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import os
 from bson import ObjectId
+from fastapi.responses import JSONResponse
 import uvicorn
 from fastapi import FastAPI, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -160,3 +161,11 @@ def start_dev():
 # the number of workers is defined by $WEB_CONCURRENCY env as default
 def start():
     uvicorn.run("mizu_node.main:app", host=["::", "0.0.0.0"], port=8000)
+
+
+def build_json_response(
+    status_code: status, message: str, data: dict = {}
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code, content={"message": message, "data": data}
+    )
