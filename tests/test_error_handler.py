@@ -1,7 +1,7 @@
 import json
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from mizu_node.error_handler import error_handler
+from mizu_node.common import error_handler
 from fastapi import status
 
 

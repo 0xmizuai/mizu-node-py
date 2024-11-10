@@ -1,6 +1,5 @@
+from mizu_node.security import has_worker_cooled_down
 from tests.redis_mock import RedisMock
-
-from mizu_node.worker_handler import has_worker_cooled_down
 
 
 def test_has_worker_cooled_down():

@@ -2,8 +2,7 @@ from functools import wraps
 import traceback
 
 from fastapi import HTTPException, status
-
-from mizu_node.utils import build_json_response
+from fastapi.responses import JSONResponse
 
 
 def error_handler(func):
@@ -21,3 +20,11 @@ def error_handler(func):
             )
 
     return wrapper
+
+
+def build_json_response(
+    status_code: status, message: str, data: dict = {}
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code, content={"message": message, "data": data}
+    )
