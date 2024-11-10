@@ -7,7 +7,7 @@ from functools import wraps
 import logging
 import threading
 
-from mizu_node.types.job import WorkerJob
+from mizu_node.types.job import JobType, WorkerJob
 
 
 ASSIGNED_JOB_EXPIRE_TTL_SECONDS = 1800 - 60  # < 30mins
@@ -187,7 +187,8 @@ class PikaConsumer(PikaBase):
 
 
 @contextlib.contextmanager
-def job_queue(qname: str, connection_type: str = "consumer"):
+def job_queue(job_type: JobType, connection_type: str = "consumer"):
+    qname = f"job_queue_{str(job_type)}"
     queue = None
     try:
         if connection_type == "producer":
