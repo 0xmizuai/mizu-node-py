@@ -39,30 +39,6 @@ def job_queue(job_type: JobType):
     return job_queues[job_type]
 
 
-def _validate_classifiers(mdb: Database, jobs: list[DataJob]):
-    cids = list(
-        set(
-            [
-                job.batch_classify_ctx.classifer_id
-                for job in jobs
-                if job.job_type == JobType.batch_classify
-            ]
-        )
-    )
-    docs = list(
-        mdb[CLASSIFIER_COLLECTION].find(
-            {"_id": {"$in": [ObjectId(cid) for cid in cids]}}, {"_id": 1}
-        )
-    )
-    find = set(str(doc["_id"]) for doc in docs)
-    missing = [cid for cid in cids if cid not in find]
-    if len(missing) > 0:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"classifier {','.join(missing)} not found",
-        )
-
-
 def handle_publish_jobs(
     mdb: Database, publisher: str, req: PublishJobRequest
 ) -> Iterator[str]:
@@ -138,6 +114,37 @@ def handle_finish_job(
 
 def handle_queue_len(job_type: JobType) -> int:
     return job_queue(job_type).queue_len()
+
+
+def _validate_classifiers(mdb: Database, jobs: list[DataJob]):
+    cids = list(
+        set(
+            [
+                job.batch_classify_ctx.classifer_id
+                for job in jobs
+                if job.job_type == JobType.batch_classify
+            ]
+        )
+    )
+    for cid in cids:
+        if not ObjectId.is_valid(cid):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"invalid classifier {cid}",
+            )
+
+    docs = list(
+        mdb[CLASSIFIER_COLLECTION].find(
+            {"_id": {"$in": [ObjectId(cid) for cid in cids]}}, {"_id": 1}
+        )
+    )
+    find = set(str(doc["_id"]) for doc in docs)
+    missing = [cid for cid in cids if cid not in find]
+    if len(missing) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"classifier {','.join(missing)} not found",
+        )
 
 
 def _validate_batch_classify_result(result: WorkerJobResult):

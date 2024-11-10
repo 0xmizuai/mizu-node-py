@@ -39,7 +39,7 @@ bearer_scheme = HTTPBearer()
 app = FastAPI()
 app.rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 app.mclient = MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
-app.mdb = lambda coll: app.mclient[MIZU_NODE_MONGO_DB_NAME][coll]
+app.mdb = app.mclient[MIZU_NODE_MONGO_DB_NAME]
 
 
 def get_user(
@@ -53,7 +53,7 @@ def get_publisher(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    return verify_api_key(app.mdb(API_KEY_COLLECTION), token)
+    return verify_api_key(app.mdb[API_KEY_COLLECTION], token)
 
 
 @app.get("/")
@@ -68,7 +68,7 @@ def register_classifier(
     classifier: ClassifierConfig, publisher: str = Depends(get_publisher)
 ):
     classifier.publisher = publisher
-    result = app.mdb(CLASSIFIER_COLLECTION).insert_one(
+    result = app.mdb[CLASSIFIER_COLLECTION].insert_one(
         classifier.model_dump(by_alias=True)
     )
     return build_json_response(
@@ -79,7 +79,7 @@ def register_classifier(
 @app.get("/classifer_info")
 @error_handler
 def get_classifier(id: str):
-    doc = app.mdb(CLASSIFIER_COLLECTION).find_one({"_id": ObjectId(id)})
+    doc = app.mdb[CLASSIFIER_COLLECTION].find_one({"_id": ObjectId(id)})
     if doc is None:
         return build_json_response(status.HTTP_404_NOT_FOUND, "classifier not found")
     return build_json_response(
@@ -100,7 +100,7 @@ def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)
 @app.post("/job_status")
 @error_handler
 def query_job_status(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
-    jobs = handle_query_job(app.mdb(JOBS_COLLECTION), publisher, req)
+    jobs = handle_query_job(app.mdb[JOBS_COLLECTION], publisher, req)
     return build_json_response(
         status.HTTP_200_OK, "ok", {"jobs": [j.model_dump(by_alias=True) for j in jobs]}
     )
@@ -129,7 +129,7 @@ def take_job(
 @app.post("/finish_job")
 @error_handler
 def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
-    handle_finish_job(app.rclient, app.mdb(JOBS_COLLECTION), user, job)
+    handle_finish_job(app.rclient, app.mdb[JOBS_COLLECTION], user, job)
     return build_json_response(status.HTTP_200_OK, "ok")
 
 
