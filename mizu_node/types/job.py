@@ -1,7 +1,5 @@
 from enum import Enum
-import time
 from pydantic import BaseModel, ConfigDict, Field
-import uuid
 
 from mizu_node.types.classifier import ClassifyResult
 
@@ -51,6 +49,8 @@ class DataJobPayload(BaseModel):
     batch_classify_ctx: BatchClassifyContext | None = Field(
         alias="batchClassifyCtx", default=None
     )
+    published_at: int | None = Field(alias="publishedAt", default=None)
+    publisher: str | None = Field(default=None)
 
 
 class PublishJobRequest(BaseModel):
@@ -65,35 +65,13 @@ class DataJob(DataJobPayload):
     model_config = ConfigDict(populate_by_name=True)
 
     job_id: str = Field(alias="_id")
-    job_type: JobType = Field(alias="jobType")
-    classify_ctx: ClassifyContext | None = Field(alias="classifyCtx", default=None)
     classify_result: list[str] | None = Field(alias="classifyResult", default=None)
-    pow_ctx: PowContext | None = Field(alias="powCtx", default=None)
     pow_result: str | None = Field(alias="powResult", default=None)
-    batch_classify_ctx: BatchClassifyContext | None = Field(
-        alias="batchClassifyCtx", default=None
-    )
     batch_classify_result: list[ClassifyResult] | None = Field(
         alias="batchClassifyResult", default=None
     )
-    published_at: int = Field(alias="publishedAt")
-    publisher: str
     finished_at: int | None = Field(alias="finishedAt", default=None)
     worker: str | None = Field(default=None)
-
-    @classmethod
-    def from_job_payload(
-        cls, publisher: str, payload: DataJobPayload, job_id: str | None = None
-    ):
-        return cls(
-            job_id=job_id or str(uuid.uuid4()),
-            job_type=payload.job_type,
-            publisher=publisher,
-            published_at=int(time.time()),
-            classify_ctx=payload.classify_ctx,
-            pow_ctx=payload.pow_ctx,
-            batch_classify_ctx=payload.batch_classify_ctx,
-        )
 
 
 class WorkerJob(DataJobPayload):
@@ -113,13 +91,3 @@ class WorkerJobResult(BaseModel):
         alias="batchClassifyResult", default=None
     )
     finished_at: int | None = Field(alias="finishedAt", default=None)
-
-
-def build_worker_job(job: DataJob) -> WorkerJob:
-    return WorkerJob(
-        job_id=job.job_id,
-        job_type=job.job_type,
-        classify_ctx=job.classify_ctx,
-        pow_ctx=job.pow_ctx,
-        batch_classify_ctx=job.batch_classify_ctx,
-    )

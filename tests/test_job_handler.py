@@ -1,4 +1,3 @@
-import contextlib
 import os
 import time
 from unittest import mock
@@ -297,7 +296,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
 
         # Try to finish job not in recorded - should fail
         result = WorkerJobResult(
-            job_id="invalid_job_id",
+            job_id="123456781234567812345678",  # invalid job id
             job_type=JobType.batch_classify,
             classify_result=["t1"],
         )
@@ -391,7 +390,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
         assert response.json()["message"] == "ok"
 
         # Verify job 1 in database
-        j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": bids[0]})
+        j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(bids[0])})
         assert j1["jobType"] == JobType.batch_classify
         # the empty labels are filtered out
         assert len(j1["batchClassifyResult"]) == 1
@@ -429,7 +428,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
         assert response.status_code == 200
 
         # Verify job 2 in database
-        j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": pids[0]})
+        j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(pids[0])})
         assert j2["jobType"] == JobType.pow
         assert j2["powResult"] == "166189"
         assert j2["worker"] == "worker2"

@@ -17,14 +17,13 @@ from mizu_node.constants import (
 )
 from mizu_node.security import is_worker_blocked
 from mizu_node.types.job import (
-    DataJob,
+    DataJobPayload,
     JobType,
     PowContext,
     PublishJobRequest,
     QueryJobRequest,
     WorkerJob,
     WorkerJobResult,
-    build_worker_job,
 )
 from mizu_node.types.job_queue import job_queue
 
@@ -32,39 +31,59 @@ from mizu_node.types.job_queue import job_queue
 def handle_publish_jobs(
     mdb: Database, publisher: str, req: PublishJobRequest
 ) -> Iterator[str]:
-    jobs = [DataJob.from_job_payload(publisher, job) for job in req.data]
-    _validate_classifiers(mdb, jobs)
-    mdb[JOBS_COLLECTION].insert_many([job.model_dump(by_alias=True) for job in jobs])
-    for job in jobs:
-        worker_job = build_worker_job(job)
-        job_queue(job.job_type, "producer").add_item(worker_job)
-        yield job.job_id
+    _validate_classifiers(mdb, req.data)
+    # Convert Pydantic objects to dictionaries before inserting
+    documents = [
+        DataJobPayload(
+            job_type=payload.job_type,
+            classify_ctx=payload.classify_ctx,
+            pow_ctx=payload.pow_ctx,
+            batch_classify_ctx=payload.batch_classify_ctx,
+            published_at=int(time.time()),
+            publisher=publisher,
+        ).model_dump(by_alias=True)
+        for payload in req.data
+    ]
+    result = mdb[JOBS_COLLECTION].insert_many(documents)
+
+    # Group jobs by job_type
+    jobs_by_type = {}
+    for job_id, payload in zip(result.inserted_ids, req.data):
+        if payload.job_type not in jobs_by_type:
+            jobs_by_type[payload.job_type] = []
+        jobs_by_type[payload.job_type].append(
+            WorkerJob(
+                job_id=str(job_id),
+                job_type=payload.job_type,
+                classify_ctx=payload.classify_ctx,
+                pow_ctx=payload.pow_ctx,
+                batch_classify_ctx=payload.batch_classify_ctx,
+            )
+        )
+
+    # Process each job type with a single queue instance
+    for job_type, type_jobs in jobs_by_type.items():
+        with job_queue(job_type, "producer") as queue:
+            for job in type_jobs:
+                queue.add_item(job)
+
+    return [str(id) for id in result.inserted_ids]
 
 
 def handle_query_job(
     mdb: Collection, publisher: str, req: QueryJobRequest
 ) -> list[WorkerJobResult] | None:
-    job_ids = req.job_ids
+    job_ids = [ObjectId(id) for id in req.job_ids]
     if not job_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
         )
-    jobs = list(
-        mdb.find(
-            {"_id": {"$in": job_ids[0:1000]}, "publisher": publisher},
-            {
-                "_id": 1,
-                "jobType": 1,
-                "powResult": 1,
-                "classifyResult": 1,
-                "batchClassifyResult": 1,
-                "finishedAt": 1,
-            },
-        )
-    )
+    jobs = list(mdb.find({"_id": {"$in": job_ids[0:1000]}}))
     if not jobs:
         return None
-    return [WorkerJobResult(**job) for job in jobs]
+    return [
+        WorkerJobResult.model_validate({**job, "_id": str(job["_id"])}) for job in jobs
+    ]
 
 
 def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob | None:
@@ -72,17 +91,19 @@ def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="worker is blocked"
         )
-    return job_queue(job_type).get(rclient)
+    with job_queue(job_type, "subscriber") as queue:
+        return queue.get(rclient)
 
 
 def handle_finish_job(
     rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
 ):
     update_data = _validate_job_result(jobs, job_result)
-    if not job_queue(job_result.job_type).ack(rclient, job_result.job_id):
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="job expired")
+    with job_queue(job_result.job_type, "subscriber") as queue:
+        if not queue.ack(rclient, job_result.job_id):
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail="job expired")
     jobs.update_one(
-        {"_id": job_result.job_id},
+        {"_id": ObjectId(job_result.job_id)},
         {
             "$set": {
                 "worker": user,
@@ -103,10 +124,11 @@ def handle_finish_job(
 
 
 def handle_queue_len(job_type: JobType) -> int:
-    return job_queue(job_type).queue_len()
+    with job_queue(job_type, "subscriber") as queue:
+        return queue.queue_len()
 
 
-def _validate_classifiers(mdb: Database, jobs: list[DataJob]):
+def _validate_classifiers(mdb: Database, jobs: list[DataJobPayload]):
     cids = list(
         set(
             [
@@ -165,7 +187,7 @@ def _validate_pow_result(ctx: PowContext, result: WorkerJobResult):
 
 
 def _validate_job_result(jobs: Collection, result: WorkerJobResult):
-    doc = jobs.find_one({"_id": result.job_id})
+    doc = jobs.find_one({"_id": ObjectId(result.job_id)})
     if doc is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
