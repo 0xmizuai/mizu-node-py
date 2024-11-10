@@ -163,6 +163,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         q: queue.Queue,
         cc_batch: str,
         classifier_id: str,
+        max_processed_jobs: int,
         batch_size: int = 100,
         cool_down: int = 3,
         service_url: str | None = None,
@@ -171,6 +172,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         self.cc_batch = cc_batch
         self.q = q
         self.batch_size = batch_size
+        self.max_processed_jobs = max_processed_jobs
         self.classifier_id = classifier_id
         self.cool_down = cool_down
         self.mclient = MongoClient(MIZU_NODE_MONGO_URL)
@@ -228,11 +230,12 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
             if len(batch) == self.batch_size:
                 print(f"will publish {len(metadatas)} jobs")
                 self.publish_and_record(batch)
+                self.max_processed_jobs -= len(batch)
                 batch = []
         if len(batch) > 0:
             print(f"will publish {len(metadatas)} jobs")
             self.publish_and_record(batch)
-            return True
+            self.max_processed_jobs -= len(batch)
         return False
 
     def get_one(self, retry=10) -> WetMetadata | None:
@@ -258,6 +261,9 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
             print("collecting metadatas")
             metadatas = list(self.get_batch())
             published = self.publish_all(metadatas)
+            if self.max_processed_jobs <= 0:
+                print("max_processed_jobs exceeded, exiting")
+                return
             if len(metadatas) < self.batch_size:
                 return
             if published:
@@ -272,7 +278,7 @@ class CommonCrawlDataJobManager(threading.Thread):
         metadata_type: str,
         classifier_id: str,
         num_of_publishers: int,
-        max_processed_jobs: int = 1000,
+        max_processed_jobs: int,
     ):
         super().__init__()
         self.q = q
@@ -351,6 +357,7 @@ class CommonCrawlDataJobManager(threading.Thread):
             self.load_one_file(obj.key)
             print(f"Loader: enqueued {self.total_processed} jobs")
             if self.total_processed >= self.max_processed_jobs:
+                print("max_processed_jobs exceeded, exiting")
                 break
 
         for _ in range(self.num_of_publishers):
@@ -406,11 +413,12 @@ def publish_batch_classify_jobs(
     classifier_id: str,
     metadata_type: str = "wet",
     num_of_threads: int = 1,
+    max_processed_jobs: int = 1000,
 ):
     api_key = get_api_key(user)
     q = queue.Queue()
     manager = CommonCrawlDataJobManager(
-        q, cc_batch, metadata_type, classifier_id, num_of_threads
+        q, cc_batch, metadata_type, classifier_id, num_of_threads, max_processed_jobs
     )
     manager.start()
 
@@ -421,6 +429,7 @@ def publish_batch_classify_jobs(
             q=q,
             cc_batch=cc_batch,
             classifier_id=classifier_id,
+            max_processed_jobs=max_processed_jobs,
             batch_size=100,
         )
         publisher.start()
