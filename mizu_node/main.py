@@ -76,7 +76,7 @@ def register_classifier(
     )
 
 
-@app.get("/classifer_info")
+@app.get("/classifier_info")
 @error_handler
 def get_classifier(id: str):
     doc = app.mdb[CLASSIFIER_COLLECTION].find_one({"_id": ObjectId(id)})

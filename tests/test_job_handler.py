@@ -556,7 +556,7 @@ def test_register_classifier(setenvvar):
 
     # Try to get non-existent classifier
     response = client.get(
-        "/classifer_info", params={"id": "507f1f77bcf86cd799439011"}  # Random ObjectId
+        "/classifier_info", params={"id": "507f1f77bcf86cd799439011"}  # Random ObjectId
     )
     assert response.status_code == 404
 
@@ -571,7 +571,7 @@ def test_register_classifier(setenvvar):
     assert classifier_id is not None
 
     # Get the classifier by id
-    response = client.get("/classifer_info", params={"id": classifier_id})
+    response = client.get("/classifier_info", params={"id": classifier_id})
     assert response.status_code == 200
     retrieved_classifier = response.json()["data"]["classifier"]
     assert retrieved_classifier["embeddingModel"] == classifier_config.embedding_model
@@ -591,7 +591,7 @@ def test_register_classifier(setenvvar):
     classifier_id = response.json()["data"]["id"]
 
     # Get the classifier by id
-    response = client.get("/classifer_info", params={"id": classifier_id})
+    response = client.get("/classifier_info", params={"id": classifier_id})
     assert response.status_code == 200
     retrieved_classifier = response.json()["data"]["classifier"]
     assert retrieved_classifier["embeddingModel"] == classifier_config.embedding_model

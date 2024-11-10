@@ -16,6 +16,7 @@ import requests
 from mizu_node.constants import (
     API_KEY_COLLECTION,
     CLASSIFIER_COLLECTION,
+    R2_DATA_PREFIX,
 )
 from mizu_node.types.classifier import ClassifierConfig, DataLabel
 from mizu_node.types.job import (
@@ -40,7 +41,6 @@ MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
 MIZU_NODE_MONGO_DB_NAME = "mizu_node"
 
 PUBLISHED_JOBS_COLLECTION = "published_jobs"
-DATA_LINK_PREFIX = "https://rawdata.mizu.technology"
 
 
 def retry_with_backoff(max_retries=3, initial_delay=1, max_delay=30):
@@ -185,7 +185,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
         return DataJobPayload(
             job_type=JobType.batch_classify,
             batch_classify_ctx=BatchClassifyContext(
-                data_url=f"{DATA_LINK_PREFIX}/{r2_key}",
+                data_url=f"{R2_DATA_PREFIX}/{r2_key}",
                 batch_size=doc.chunk_size,
                 bytesize=doc.bytesize,
                 checksum_md5=doc.md5,
