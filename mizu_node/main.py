@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 import os
 from bson import ObjectId
 import uvicorn
@@ -30,16 +32,25 @@ from mizu_node.types.job import (
     QueryJobRequest,
     WorkerJobResult,
 )
+from mizu_node.types.job_queue import queue_clean
 from mizu_node.utils import build_json_response
 from mizu_node.worker_handler import has_worker_cooled_down
 
 # Security scheme
 bearer_scheme = HTTPBearer()
+rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 app = FastAPI()
-app.rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+app.rclient = rclient
 app.mclient = MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
 app.mdb = app.mclient[MIZU_NODE_MONGO_DB_NAME]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, queue_clean, rclient)
+    yield
 
 
 def get_user(
@@ -92,7 +103,7 @@ def get_classifier(id: str):
 @app.post("/publish_jobs")
 @error_handler
 def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
-    ids = list(handle_publish_jobs(app.mdb, publisher, req))
+    ids = list(handle_publish_jobs(app.rclient, app.mdb, publisher, req))
     return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
 
 
@@ -138,7 +149,7 @@ def queue_len(job_type: JobType = JobType.pow):
     """
     Return the number of queued classify jobs.
     """
-    q_len = handle_queue_len(job_type)
+    q_len = handle_queue_len(app.rclient, job_type)
     return build_json_response(status.HTTP_200_OK, "ok", {"length": q_len})
 
 

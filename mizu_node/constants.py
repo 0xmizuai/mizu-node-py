@@ -3,7 +3,7 @@ import os
 # redis for pending/assigned jobs
 REDIS_URL = os.environ.get("REDIS_URL")
 ASSIGNED_JOB_EXPIRE_TTL_SECONDS = int(
-    os.environ.get("ASSIGNED_JOB_EXPIRE_TTL_SECONDS", 3600)
+    os.environ.get("ASSIGNED_JOB_EXPIRE_TTL_SECONDS", 600)
 )
 BLOCKED_WORKER_PREFIX = "blocked_worker:"
 COOLDOWN_WORKER_PREFIX = "cooldown_worker:"

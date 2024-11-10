@@ -1,198 +1,110 @@
-import contextlib
-import os
-import pika
-from redis import Redis
 import time
-from functools import wraps
-import logging
-import threading
+import uuid
+from redis import Redis
 
-from mizu_node.types.job import JobType, WorkerJob
+import uuid
+from redis import Redis
 
-
-ASSIGNED_JOB_EXPIRE_TTL_SECONDS = 1800 - 60  # < 30mins
-RABBITMQ_URL = os.getenv(
-    "RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672?heartbeat=0"
-)
+from mizu_node.types.job import JobType
+from mizu_node.types.key_prefix import KeyPrefix
 
 
-def retry_with_backoff(
-    max_retries=3, initial_delay=0.1, max_delay=5.0, exponential_base=2
-):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            delay = initial_delay
-            for retry in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except (
-                    pika.exceptions.AMQPConnectionError,
-                    pika.exceptions.AMQPChannelError,
-                ) as e:
-                    if retry == max_retries - 1:
-                        raise
-                    logging.warning(
-                        f"Connection error, retrying... ({retry + 1}/{max_retries})"
-                    )
-                    time.sleep(delay)
-                    delay = min(delay * exponential_base, max_delay)
-                    # Reconnect before retry
-                    args[0].ensure_connection()
-            return func(*args, **kwargs)
+class JobQueue(object):
+    """A work queue backed by a redis database"""
 
-        return wrapper
+    def __init__(self, name: KeyPrefix):
+        self._session = uuid.uuid4().hex
+        self._main_queue_key = name.of(":queue")
+        self._processing_key = name.of(":processing")
+        self._lease_key = KeyPrefix.concat(name, ":lease:")
+        self._item_data_key = KeyPrefix.concat(name, ":job:")
 
-    return decorator
+    def add_item(self, db: Redis, item_id: str, data: str) -> None:
+        db.set(self._item_data_key.of(item_id), data)
+        db.lpush(self._main_queue_key, item_id)
 
+    def queue_len(self, db: Redis) -> int:
+        return db.llen(self._main_queue_key)
 
-class RabbitMQConnection:
-    _producer_instance = None
-    _consumer_instance = None
-    _producer_connection = None
-    _consumer_connection = None
-    _lock = threading.Lock()
+    def processing_len(self, db: Redis) -> int:
+        # this is not accurate since we don't delete completed jobs
+        # until light clean
+        return db.llen(self._processing_key)
 
-    def __new__(cls, connection_type: str):
-        if connection_type == "producer":
-            if cls._producer_instance is None:
-                with cls._lock:
-                    if cls._producer_instance is None:
-                        cls._producer_instance = super().__new__(cls)
-            return cls._producer_instance
-        elif connection_type == "consumer":
-            if cls._consumer_instance is None:
-                with cls._lock:
-                    if cls._consumer_instance is None:
-                        cls._consumer_instance = super().__new__(cls)
-            return cls._consumer_instance
-        raise ValueError("Invalid connection type")
+    def get_item_data(self, db: Redis, item_id: str) -> str | None:
+        return db.get(self._item_data_key.of(item_id))
 
-    def __init__(self, connection_type: str):
-        self.connection_type = connection_type
-
-    def get_connection(self):
-        if self.connection_type == "producer":
-            if self._producer_connection is None or self._producer_connection.is_closed:
-                self._producer_connection = pika.BlockingConnection(
-                    pika.URLParameters(RABBITMQ_URL)
-                )
-            return self._producer_connection
-        else:
-            if self._consumer_connection is None or self._consumer_connection.is_closed:
-                self._consumer_connection = pika.BlockingConnection(
-                    pika.URLParameters(RABBITMQ_URL)
-                )
-            return self._consumer_connection
-
-    def close(self):
-        if self.connection_type == "producer":
-            if self._producer_connection and not self._producer_connection.is_closed:
-                self._producer_connection.close()
-                self._producer_connection = None
-        else:
-            if self._consumer_connection and not self._consumer_connection.is_closed:
-                self._consumer_connection.close()
-                self._consumer_connection = None
-
-
-class PikaBase(object):
-    def __init__(self, qname: str, connection_type: str):
-        self.qname = qname
-        self.channel = None
-        self.queue = None
-        self.connection_manager = RabbitMQConnection(connection_type)
-        self._connect()
-
-    def _connect(self):
-        if self.channel is None or self.channel.is_closed:
-            connection = self.connection_manager.get_connection()
-            self.channel = connection.channel()
-            self.queue = self.channel.queue_declare(queue=self.qname, durable=True)
-
-    def ensure_connection(self):
-        try:
-            self._connect()
-        except Exception as e:
-            logging.error(f"Failed to reconnect: {str(e)}")
-            raise
-
-    def close(self):
-        """Gracefully close the channel"""
-        if self.channel and not self.channel.is_closed:
-            try:
-                self.channel.close()
-            except Exception as e:
-                logging.error(f"Error closing channel: {str(e)}")
-            finally:
-                self.channel = None
-                self.queue = None
-
-    def __del__(self):
-        self.close()
-
-
-class PikaProducer(PikaBase):
-    def __init__(self, qname: str):
-        super().__init__(qname, "producer")
-
-    @retry_with_backoff()
-    def add_item(self, job: WorkerJob):
-        self.ensure_connection()
-        self.channel.basic_publish(
-            exchange="",
-            routing_key=self.qname,
-            body=job.model_dump_json(by_alias=True),
-            properties=pika.BasicProperties(delivery_mode=pika.DeliveryMode.Persistent),
+    def lease(self, db: Redis, ttl_secs: int) -> str | None:
+        maybe_item_id: bytes | str | None = db.lmove(
+            self._main_queue_key,
+            self._processing_key,
         )
-
-
-class PikaConsumer(PikaBase):
-    def __init__(self, qname: str):
-        super().__init__(qname, "consumer")
-
-    def _gen_rkey(self, job_id: str) -> str:
-        return f"{self.qname}:delivery_tag:{job_id}"
-
-    @retry_with_backoff()
-    def get(self, rclient: Redis) -> WorkerJob | None:
-        self.ensure_connection()
-        (method, _, body) = self.channel.basic_get(queue=self.qname, auto_ack=True)
-        if method is None:
+        if maybe_item_id is None:
             return None
 
-        worker_job = WorkerJob.model_validate_json(body)
-        rclient.setex(
-            self._gen_rkey(worker_job.job_id),
-            ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
-            str(method.delivery_tag),
+        data: str | None = db.get(self._item_data_key.of(maybe_item_id))
+        if data is None:
+            # the item will be cleaned up from processing queue in the next clean
+            return None
+
+        db.setex(
+            self._lease_key.of(maybe_item_id),
+            ttl_secs,
+            self._session,
         )
-        return worker_job
+        return data
 
-    @retry_with_backoff()
-    def ack(self, rclient: Redis, job_id: str):
-        self.ensure_connection()
-        delivery_tag = rclient.get(self._gen_rkey(job_id))
-        if delivery_tag:
-            self.channel.basic_ack(delivery_tag, False)
-        return delivery_tag is not None
+    def lease_exists(self, db: Redis, item_id: str | bytes) -> bool:
+        return db.exists(self._lease_key.of(item_id)) != 0
 
-    @retry_with_backoff()
-    def queue_len(self):
-        self.ensure_connection()
-        return self.queue.method.message_count
+    def complete(self, db: Redis, item_id: str) -> bool:
+        job_del_result, _ = (
+            db.pipeline()
+            .delete(self._item_data_key.of(item_id))
+            .delete(self._lease_key.of(item_id))
+            .execute()
+        )
+        return job_del_result is not None and job_del_result != 0
+
+    def light_clean(self, db: Redis):
+        processing: list[bytes | str] = db.lrange(
+            self._processing_key,
+            0,
+            -1,
+        )
+        for item_id in processing:
+            has_lease_key = self.lease_exists(db, item_id)
+            has_data_key = db.exists(self._item_data_key.of(item_id)) != 0
+
+            # job completed
+            if not has_data_key:
+                print(
+                    item_id,
+                    " has been completed, will be deleted from processing queue",
+                )
+                db.lrem(self._processing_key, 0, item_id)
+                continue
+
+            # lease expired
+            if not has_lease_key:
+                print(item_id, " lease has expired, will reset")
+                db.pipeline().lrem(self._processing_key, 0, item_id).lpush(
+                    self._main_queue_key, item_id
+                ).execute()
 
 
-@contextlib.contextmanager
-def job_queue(job_type: JobType, connection_type: str = "consumer"):
-    qname = f"job_queue_{str(job_type)}"
-    queue = None
-    try:
-        if connection_type == "producer":
-            queue = PikaProducer(qname)
-        else:
-            queue = PikaConsumer(qname)
-        yield queue
-    finally:
-        if queue:
-            queue.close()
+job_queues = {
+    job_type: JobQueue(KeyPrefix(f"job_queue_{job_type.name}"))
+    for job_type in [JobType.classify, JobType.pow, JobType.batch_classify]
+}
+
+
+def job_queue(job_type: JobType):
+    return job_queues[job_type]
+
+
+def queue_clean(rclient: Redis):
+    while True:
+        for queue in job_queues.values():
+            queue.light_clean(rclient)
+        time.sleep(60)

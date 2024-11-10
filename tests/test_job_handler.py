@@ -28,7 +28,8 @@ from mizu_node.types.job import (
     PowContext,
     WorkerJobResult,
 )
-from tests.job_queue_mock import JobQueueMock
+
+from mizu_node.types.job_queue import job_queues
 from tests.redis_mock import RedisMock
 import mongomock
 
@@ -152,399 +153,365 @@ def mock_all():
     )
 
 
-# Add a global variable to store job queues
-job_queues = {}
+@mongomock.patch((MOCK_MONGO_URL))
+def test_publish_jobs(setenvvar):
+    # Test publishing classify jobs
+    job_ids1 = _publish_jobs(JobType.classify, 3)
+    assert len(job_ids1) == 3
 
+    # Test publishing pow jobs
+    job_ids2 = _publish_jobs(JobType.pow, 3)
+    assert len(job_ids2) == 3
 
-@pytest.fixture
-def mock_job_queue():
-    """Fixture to create a mock job queue"""
-
-    def _mock_job_queue(job_type: str, connection_type: str = "consumer"):
-        if job_type not in job_queues:
-            job_queues[job_type] = JobQueueMock(job_type, connection_type)
-        return job_queues[job_type]
-
-    return _mock_job_queue
+    # Test publishing batch classify jobs
+    job_ids3 = _publish_jobs(JobType.batch_classify, 3)
+    assert len(job_ids3) == 3
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-def test_publish_jobs(mock_job_queue, setenvvar):
-    with mock_patch("mizu_node.job_handler.job_queue", mock_job_queue):
-        mock_all()
-        job_queues.clear()  # Clear any existing queues
+def test_take_job_ok(setenvvar):
+    mock_all()
 
-        # Test publishing classify jobs
-        job_ids1 = _publish_jobs(JobType.classify, 3)
-        assert len(job_ids1) == 3
+    # Publish jobs first
+    pids = _publish_jobs(JobType.pow, 3)
+    cids = _publish_jobs(JobType.classify, 3)
+    bids = _publish_jobs(JobType.batch_classify, 3)
 
-        # Test publishing pow jobs
-        job_ids2 = _publish_jobs(JobType.pow, 3)
-        assert len(job_ids2) == 3
+    # Take classify job 1
+    worker1_jwt = jwt_token("worker1")
+    response1 = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.classify)},
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response1.status_code == 200
+    job1 = response1.json()["data"]["job"]
+    assert job1["_id"] == cids[0]
+    assert job1["jobType"] == JobType.classify
 
-        # Test publishing batch classify jobs
-        job_ids3 = _publish_jobs(JobType.batch_classify, 3)
-        assert len(job_ids3) == 3
+    # Take pow job 1
+    worker2_jwt = jwt_token("worker2")
+    response2 = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response2.status_code == 200
+    job2 = response2.json()["data"]["job"]
+    assert job2["_id"] == pids[0]
+    assert job2["jobType"] == JobType.pow
 
-
-@mongomock.patch((MOCK_MONGO_URL))
-def test_take_job_ok(mock_job_queue, setenvvar):
-    with mock_patch("mizu_node.job_handler.job_queue", mock_job_queue):
-        mock_all()
-        job_queues.clear()  # Clear any existing queues
-
-        # Publish jobs first
-        pids = _publish_jobs(JobType.pow, 3)
-        cids = _publish_jobs(JobType.classify, 3)
-        bids = _publish_jobs(JobType.batch_classify, 3)
-
-        # Take classify job 1
-        worker1_jwt = jwt_token("worker1")
-        response1 = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.classify)},
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response1.status_code == 200
-        job1 = response1.json()["data"]["job"]
-        assert job1["_id"] == cids[0]
-        assert job1["jobType"] == JobType.classify
-
-        # Take pow job 1
-        worker2_jwt = jwt_token("worker2")
-        response2 = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.pow)},
-            headers={"Authorization": f"Bearer {worker2_jwt}"},
-        )
-        assert response2.status_code == 200
-        job2 = response2.json()["data"]["job"]
-        assert job2["_id"] == pids[0]
-        assert job2["jobType"] == JobType.pow
-
-        # Take batch classify job
-        worker3_jwt = jwt_token("worker3")
-        response3 = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.batch_classify)},
-            headers={"Authorization": f"Bearer {worker3_jwt}"},
-        )
-        assert response3.status_code == 200
-        job3 = response3.json()["data"]["job"]
-        assert job3["_id"] == bids[0]
-        assert job3["jobType"] == JobType.batch_classify
+    # Take batch classify job
+    worker3_jwt = jwt_token("worker3")
+    response3 = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
+    )
+    assert response3.status_code == 200
+    job3 = response3.json()["data"]["job"]
+    assert job3["_id"] == bids[0]
+    assert job3["jobType"] == JobType.batch_classify
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-def test_take_job_error(mock_job_queue, setenvvar):
-    with mock_patch("mizu_node.job_handler.job_queue", mock_job_queue):
-        mock_all()
-        job_queues.clear()  # Clear any existing queues
-        worker1_jwt = jwt_token("worker1")
+def test_take_job_error(setenvvar):
+    mock_all()
+    worker1_jwt = jwt_token("worker1")
 
-        # No jobs published yet
-        response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.batch_classify)},
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == 200
-        assert response.json()["data"]["job"] is None
+    # No jobs published yet
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["job"] is None
 
-        response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.batch_classify)},
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
-        # Wrong job type (pow jobs published, trying to take batch classify job)
-        _publish_jobs(JobType.pow, 3)
-        worker2_jwt = jwt_token("worker2")
-        response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.batch_classify)},
-            headers={"Authorization": f"Bearer {worker2_jwt}"},
-        )
-        assert response.status_code == 200
-        assert response.json()["data"]["job"] is None
+    # Wrong job type (pow jobs published, trying to take batch classify job)
+    _publish_jobs(JobType.pow, 3)
+    worker2_jwt = jwt_token("worker2")
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["job"] is None
 
-        # Blocked worker
-        worker3_jwt = jwt_token("worker3")
-        block_worker(app.rclient, "worker3")
-        response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.batch_classify)},
-            headers={"Authorization": f"Bearer {worker3_jwt}"},
-        )
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
-        assert response.json()["message"] == "worker is blocked"
+    # Blocked worker
+    worker3_jwt = jwt_token("worker3")
+    block_worker(app.rclient, "worker3")
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
+    )
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert response.json()["message"] == "worker is blocked"
 
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
-def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
-    with mock_patch("mizu_node.job_handler.job_queue", mock_job_queue):
-        mock_all()
-        job_queues.clear()  # Clear any existing queues
-        mock_requests.return_value = None
+def test_finish_job_ok(mock_requests, setenvvar):
+    mock_all()
+    mock_requests.return_value = None
 
-        # Take jobs
-        worker1_jwt = jwt_token("worker1")
-        worker2_jwt = jwt_token("worker2")
-        worker3_jwt = jwt_token("worker3")
+    # Take jobs
+    worker1_jwt = jwt_token("worker1")
+    worker2_jwt = jwt_token("worker2")
+    worker3_jwt = jwt_token("worker3")
 
-        # Try to finish job not in recorded - should fail
-        result = WorkerJobResult(
-            job_id="123456781234567812345678",  # invalid job id
-            job_type=JobType.batch_classify,
-            classify_result=["t1"],
-        )
-        response = client.post(
-            "/finish_job",
-            json=result.model_dump(),
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == status.HTTP_404_NOT_FOUND
-        assert response.json()["message"] == "job not found"
+    # Try to finish job not in recorded - should fail
+    result = WorkerJobResult(
+        job_id="123456781234567812345678",  # invalid job id
+        job_type=JobType.batch_classify,
+        classify_result=["t1"],
+    )
+    response = client.post(
+        "/finish_job",
+        json=result.model_dump(),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["message"] == "job not found"
 
-        # Publish jobs
-        bids = _publish_jobs(JobType.batch_classify, 3)
-        pids = _publish_jobs(JobType.pow, 3)
+    # Publish jobs
+    bids = _publish_jobs(JobType.batch_classify, 3)
+    pids = _publish_jobs(JobType.pow, 3)
 
-        response1 = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.classify)},
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response1.status_code == 200
-        assert response1.json()["data"]["job"] is None
+    response1 = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.classify)},
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response1.status_code == 200
+    assert response1.json()["data"]["job"] is None
 
-        response2 = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.pow)},
-            headers={"Authorization": f"Bearer {worker2_jwt}"},
-        )
-        assert response2.status_code == 200
-        assert response2.json()["data"]["job"] is not None
+    response2 = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response2.status_code == 200
+    assert response2.json()["data"]["job"] is not None
 
-        response3 = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.batch_classify)},
-            headers={"Authorization": f"Bearer {worker3_jwt}"},
-        )
-        assert response3.status_code == 200
-        assert response3.json()["data"]["job"] is not None
+    response3 = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
+    )
+    assert response3.status_code == 200
+    assert response3.json()["data"]["job"] is not None
 
-        # Case 1.1: finishing batch classify job with classify result
-        r11 = WorkerJobResult(
-            job_id=bids[0],
-            job_type=JobType.classify,
-            classify_result=["t1"],
-        )
-        response = client.post(
-            "/finish_job",
-            json=r11.model_dump(),
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == 422
-        assert response.json()["message"] == "job type mismatch"
+    # Case 1.1: finishing batch classify job with classify result
+    r11 = WorkerJobResult(
+        job_id=bids[0],
+        job_type=JobType.classify,
+        classify_result=["t1"],
+    )
+    response = client.post(
+        "/finish_job",
+        json=r11.model_dump(),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["message"] == "job type mismatch"
 
-        # Case 1.2: wrong job result
-        r12 = WorkerJobResult(
-            job_id=bids[0], job_type=JobType.batch_classify, classify_result=["t1"]
-        )
-        response = client.post(
-            "/finish_job",
-            json=r12.model_dump(),
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == 422
-        assert response.json()["message"] == "batch_classify_result is required"
+    # Case 1.2: wrong job result
+    r12 = WorkerJobResult(
+        job_id=bids[0], job_type=JobType.batch_classify, classify_result=["t1"]
+    )
+    response = client.post(
+        "/finish_job",
+        json=r12.model_dump(),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["message"] == "batch_classify_result is required"
 
-        # Case 1.3: finishing batch classify job
-        r13 = WorkerJobResult(
-            job_id=bids[0],
-            job_type=JobType.batch_classify,
-            batch_classify_result=[
-                ClassifyResult(
-                    labels=["t1"],
-                    wet_context=WetContext(
-                        warc_id="", uri="", languages=[], crawled_at=0
-                    ),
-                ),
-                ClassifyResult(
-                    labels=[],
-                    wet_context=WetContext(
-                        warc_id="", uri="", languages=[], crawled_at=0
-                    ),
-                ),
-            ],
-        )
-        response = client.post(
-            "/finish_job",
-            json=r13.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == 200
-        assert response.json()["message"] == "ok"
+    # Case 1.3: finishing batch classify job
+    r13 = WorkerJobResult(
+        job_id=bids[0],
+        job_type=JobType.batch_classify,
+        batch_classify_result=[
+            ClassifyResult(
+                labels=["t1"],
+                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
+            ),
+            ClassifyResult(
+                labels=[],
+                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
+            ),
+        ],
+    )
+    response = client.post(
+        "/finish_job",
+        json=r13.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["message"] == "ok"
 
-        # Verify job 1 in database
-        j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(bids[0])})
-        assert j1["jobType"] == JobType.batch_classify
-        # the empty labels are filtered out
-        assert len(j1["batchClassifyResult"]) == 1
-        assert j1["worker"] == "worker1"
-        assert j1["finishedAt"] is not None
+    # Verify job 1 in database
+    j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(bids[0])})
+    assert j1["jobType"] == JobType.batch_classify
+    # the empty labels are filtered out
+    assert len(j1["batchClassifyResult"]) == 1
+    assert j1["worker"] == "worker1"
+    assert j1["finishedAt"] is not None
 
-        # Case 1.3: finishing finished jobs
-        r14 = WorkerJobResult(
-            job_id=bids[0],
-            job_type=JobType.batch_classify,
-            batch_classify_result=[
-                ClassifyResult(
-                    labels=["t1"],
-                    wet_context=WetContext(
-                        warc_id="", uri="", languages=[], crawled_at=0
-                    ),
-                ),
-            ],
-        )
-        response = client.post(
-            "/finish_job",
-            json=r14.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == 422
-        assert response.json()["message"] == "job already finished"
+    # Case 1.3: finishing finished jobs
+    r14 = WorkerJobResult(
+        job_id=bids[0],
+        job_type=JobType.batch_classify,
+        batch_classify_result=[
+            ClassifyResult(
+                labels=["t1"],
+                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
+            ),
+        ],
+    )
+    response = client.post(
+        "/finish_job",
+        json=r14.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["message"] == "job already finished"
 
-        # Case 2: job 2 finished by worker2
-        r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="166189")
-        response = client.post(
-            "/finish_job",
-            json=r2.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker2_jwt}"},
-        )
-        assert response.status_code == 200
+    # Case 2: job 2 finished by worker2
+    r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="166189")
+    response = client.post(
+        "/finish_job",
+        json=r2.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response.status_code == 200
 
-        # Verify job 2 in database
-        j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(pids[0])})
-        assert j2["jobType"] == JobType.pow
-        assert j2["powResult"] == "166189"
-        assert j2["worker"] == "worker2"
-        assert j2["finishedAt"] is not None
+    # Verify job 2 in database
+    j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(pids[0])})
+    assert j2["jobType"] == JobType.pow
+    assert j2["powResult"] == "166189"
+    assert j2["worker"] == "worker2"
+    assert j2["finishedAt"] is not None
 
-        # Case 3: job expired
-        worker4_jwt = jwt_token("worker4")
-        response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.pow)},
-            headers={"Authorization": f"Bearer {worker4_jwt}"},
-        )
-        assert response.status_code == 200
-        job_id = response.json()["data"]["job"]["_id"]
+    # Case 3: job expired
+    worker4_jwt = jwt_token("worker4")
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker4_jwt}"},
+    )
+    assert response.status_code == 200
+    job_id = response.json()["data"]["job"]["_id"]
 
-        r3 = WorkerJobResult(job_id=job_id, job_type=JobType.pow, pow_result="166189")
-        job_queues[JobType.pow].expire_job(job_id)
-        response = client.post(
-            "/finish_job",
-            json=r3.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker2_jwt}"},
-        )
-        assert response.status_code == 410
-        assert response.json()["message"] == "job expired"
+    r3 = WorkerJobResult(job_id=job_id, job_type=JobType.pow, pow_result="166189")
+    job_queues[JobType.pow].expire_job(job_id)
+    response = client.post(
+        "/finish_job",
+        json=r3.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response.status_code == 410
+    assert response.json()["message"] == "job expired"
 
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
-def test_job_status(mock_requests, mock_job_queue, setenvvar):
-    with mock_patch("mizu_node.job_handler.job_queue", mock_job_queue):
-        mock_all()
-        job_queues.clear()  # Clear any existing queues
-        mock_requests.return_value = None
+def test_job_status(mock_requests, setenvvar):
+    mock_all()
+    mock_requests.return_value = None
 
-        # Publish jobs
-        bids = _publish_jobs(JobType.batch_classify, 3)
-        pids = _publish_jobs(JobType.pow, 2)
-        all_job_ids = bids + pids
+    # Publish jobs
+    bids = _publish_jobs(JobType.batch_classify, 3)
+    pids = _publish_jobs(JobType.pow, 2)
+    all_job_ids = bids + pids
 
-        # Check initial status
-        response = client.post(
-            "/job_status",
-            json={"jobIds": all_job_ids},
-            headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
-        )
-        assert response.status_code == 200
-        initial_statuses = response.json()["data"]["jobs"]
-        assert len(initial_statuses) == 5
+    # Check initial status
+    response = client.post(
+        "/job_status",
+        json={"jobIds": all_job_ids},
+        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
+    )
+    assert response.status_code == 200
+    initial_statuses = response.json()["data"]["jobs"]
+    assert len(initial_statuses) == 5
 
-        # Take and finish a batch classify job
-        worker1_jwt = jwt_token("worker1")
-        response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.batch_classify)},
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == 200
-        classify_job = response.json()["data"]["job"]
+    # Take and finish a batch classify job
+    worker1_jwt = jwt_token("worker1")
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.batch_classify)},
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
+    classify_job = response.json()["data"]["job"]
 
-        wet_context = WetContext(warc_id="", uri="", languages=[], crawled_at=0)
-        classify_result = ClassifyResult(
-            labels=["t1"],
-            wet_context=wet_context,
-        )
-        result1 = WorkerJobResult(
-            job_id=classify_job["_id"],
-            job_type=JobType.batch_classify,
-            batch_classify_result=[classify_result],
-        )
-        response = client.post(
-            "/finish_job",
-            json=result1.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == 200
+    wet_context = WetContext(warc_id="", uri="", languages=[], crawled_at=0)
+    classify_result = ClassifyResult(
+        labels=["t1"],
+        wet_context=wet_context,
+    )
+    result1 = WorkerJobResult(
+        job_id=classify_job["_id"],
+        job_type=JobType.batch_classify,
+        batch_classify_result=[classify_result],
+    )
+    response = client.post(
+        "/finish_job",
+        json=result1.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
 
-        # Take and finish a pow job
-        worker2_jwt = jwt_token("worker2")
-        response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.pow)},
-            headers={"Authorization": f"Bearer {worker2_jwt}"},
-        )
-        assert response.status_code == 200
-        pow_job = response.json()["data"]["job"]
+    # Take and finish a pow job
+    worker2_jwt = jwt_token("worker2")
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response.status_code == 200
+    pow_job = response.json()["data"]["job"]
 
-        result2 = WorkerJobResult(
-            job_id=pow_job["_id"], job_type=JobType.pow, pow_result="166189"
-        )
-        response = client.post(
-            "/finish_job",
-            json=result2.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
-        )
-        assert response.status_code == 200
+    result2 = WorkerJobResult(
+        job_id=pow_job["_id"], job_type=JobType.pow, pow_result="166189"
+    )
+    response = client.post(
+        "/finish_job",
+        json=result2.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
 
-        # Check final status
-        response = client.post(
-            "/job_status",
-            json={"jobIds": all_job_ids},
-            headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
-        )
-        assert response.status_code == 200
-        final_statuses = response.json()["data"]["jobs"]
-        assert len(final_statuses) == 5
+    # Check final status
+    response = client.post(
+        "/job_status",
+        json={"jobIds": all_job_ids},
+        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
+    )
+    assert response.status_code == 200
+    final_statuses = response.json()["data"]["jobs"]
+    assert len(final_statuses) == 5
 
-        # Count finished jobs
-        finished_jobs = [s for s in final_statuses if s["finishedAt"] is not None]
-        assert len(finished_jobs) == 2
+    # Count finished jobs
+    finished_jobs = [s for s in final_statuses if s["finishedAt"] is not None]
+    assert len(finished_jobs) == 2
 
-        # Verify specific job statuses
-        for status in final_statuses:
-            if status["_id"] in [classify_job["_id"], pow_job["_id"]]:
-                assert status["finishedAt"] is not None
-            else:
-                assert status["finishedAt"] is None
+    # Verify specific job statuses
+    for status in final_statuses:
+        if status["_id"] in [classify_job["_id"], pow_job["_id"]]:
+            assert status["finishedAt"] is not None
+        else:
+            assert status["finishedAt"] is None
 
 
 @mongomock.patch((MOCK_MONGO_URL))
@@ -614,63 +581,61 @@ def test_register_classifier(setenvvar):
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
-def test_pow_validation(mock_requests, mock_job_queue, setenvvar):
-    with mock_patch("mizu_node.job_handler.job_queue", mock_job_queue):
-        mock_all()
-        job_queues.clear()  # Clear any existing queues
-        mock_requests.return_value = None
+def test_pow_validation(mock_requests, setenvvar):
+    mock_all()
+    mock_requests.return_value = None
 
-        # Publish a PoW job
-        pids = _publish_jobs(JobType.pow, 1)
-        worker_jwt = jwt_token("worker1")
+    # Publish a PoW job
+    pids = _publish_jobs(JobType.pow, 1)
+    worker_jwt = jwt_token("worker1")
 
-        # Take the job
-        response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.pow)},
-            headers={"Authorization": f"Bearer {worker_jwt}"},
-        )
-        assert response.status_code == 200
+    # Take the job
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker_jwt}"},
+    )
+    assert response.status_code == 200
 
-        # Case 1: missing pow result
-        result = WorkerJobResult(
-            job_id=pids[0],
-            job_type=JobType.pow,
-        )
-        response = client.post(
-            "/finish_job",
-            json=result.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker_jwt}"},
-        )
-        assert response.status_code == 422
-        assert response.json()["message"] == "pow_result is required"
+    # Case 1: missing pow result
+    result = WorkerJobResult(
+        job_id=pids[0],
+        job_type=JobType.pow,
+    )
+    response = client.post(
+        "/finish_job",
+        json=result.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker_jwt}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["message"] == "pow_result is required"
 
-        # Case 2: invalid pow result
-        result = WorkerJobResult(
-            job_id=pids[0],
-            job_type=JobType.pow,
-            pow_result="invalid_nonce",
-        )
-        response = client.post(
-            "/finish_job",
-            json=result.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker_jwt}"},
-        )
-        assert response.status_code == 422
-        assert (
-            response.json()["message"]
-            == "invalid pow_result: hash does not meet difficulty requirement"
-        )
+    # Case 2: invalid pow result
+    result = WorkerJobResult(
+        job_id=pids[0],
+        job_type=JobType.pow,
+        pow_result="invalid_nonce",
+    )
+    response = client.post(
+        "/finish_job",
+        json=result.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker_jwt}"},
+    )
+    assert response.status_code == 422
+    assert (
+        response.json()["message"]
+        == "invalid pow_result: hash does not meet difficulty requirement"
+    )
 
-        # Case 2: valid pow result
-        result = WorkerJobResult(
-            job_id=pids[0],
-            job_type=JobType.pow,
-            pow_result="166189",
-        )
-        response = client.post(
-            "/finish_job",
-            json=result.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {worker_jwt}"},
-        )
-        assert response.status_code == 200
+    # Case 2: valid pow result
+    result = WorkerJobResult(
+        job_id=pids[0],
+        job_type=JobType.pow,
+        pow_result="166189",
+    )
+    response = client.post(
+        "/finish_job",
+        json=result.model_dump(by_alias=True),
+        headers={"Authorization": f"Bearer {worker_jwt}"},
+    )
+    assert response.status_code == 200

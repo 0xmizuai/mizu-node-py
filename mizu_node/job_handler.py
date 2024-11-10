@@ -11,6 +11,7 @@ import requests
 
 
 from mizu_node.constants import (
+    ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
     CLASSIFIER_COLLECTION,
     DEFAULT_POW_DIFFICULTY,
     JOBS_COLLECTION,
@@ -29,7 +30,7 @@ from mizu_node.types.job_queue import job_queue
 
 
 def handle_publish_jobs(
-    mdb: Database, publisher: str, req: PublishJobRequest
+    rclient: Redis, mdb: Database, publisher: str, req: PublishJobRequest
 ) -> Iterator[str]:
     _validate_classifiers(mdb, req.data)
     # Convert Pydantic objects to dictionaries before inserting
@@ -45,33 +46,22 @@ def handle_publish_jobs(
         for payload in req.data
     ]
     result = mdb[JOBS_COLLECTION].insert_many(documents)
-
-    # Group jobs by job_type
-    jobs_by_type = {}
     for job_id, payload in zip(result.inserted_ids, req.data):
-        if payload.job_type not in jobs_by_type:
-            jobs_by_type[payload.job_type] = []
-        jobs_by_type[payload.job_type].append(
-            WorkerJob(
-                job_id=str(job_id),
-                job_type=payload.job_type,
-                classify_ctx=payload.classify_ctx,
-                pow_ctx=payload.pow_ctx,
-                batch_classify_ctx=payload.batch_classify_ctx,
-            )
+        worker_job = WorkerJob(
+            job_id=str(job_id),
+            job_type=payload.job_type,
+            classify_ctx=payload.classify_ctx,
+            pow_ctx=payload.pow_ctx,
+            batch_classify_ctx=payload.batch_classify_ctx,
         )
-
-    # Process each job type with a single queue instance
-    for job_type, type_jobs in jobs_by_type.items():
-        with job_queue(job_type, "producer") as queue:
-            for job in type_jobs:
-                queue.add_item(job)
-
+        job_queue(payload.job_type).add_item(
+            rclient, worker_job.job_id, worker_job.model_dump_json(by_alias=True)
+        )
     return [str(id) for id in result.inserted_ids]
 
 
 def handle_query_job(
-    mdb: Collection, publisher: str, req: QueryJobRequest
+    mdb: Collection, req: QueryJobRequest
 ) -> list[WorkerJobResult] | None:
     job_ids = [ObjectId(id) for id in req.job_ids]
     if not job_ids:
@@ -91,17 +81,15 @@ def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="worker is blocked"
         )
-    with job_queue(job_type, "subscriber") as queue:
-        return queue.get(rclient)
+    job = job_queue(job_type).lease(rclient, ASSIGNED_JOB_EXPIRE_TTL_SECONDS)
+    return WorkerJob.model_validate_json(job) if job else None
 
 
 def handle_finish_job(
     rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
 ):
     update_data = _validate_job_result(jobs, job_result)
-    with job_queue(job_result.job_type, "subscriber") as queue:
-        if not queue.ack(rclient, job_result.job_id):
-            raise HTTPException(status_code=status.HTTP_410_GONE, detail="job expired")
+    job_queue(job_result.job_type).complete(rclient, job_result.job_id)
     jobs.update_one(
         {"_id": ObjectId(job_result.job_id)},
         {
@@ -123,9 +111,8 @@ def handle_finish_job(
     )
 
 
-def handle_queue_len(job_type: JobType) -> int:
-    with job_queue(job_type, "subscriber") as queue:
-        return queue.queue_len()
+def handle_queue_len(rclient: Redis, job_type: JobType) -> int:
+    return job_queue(job_type).queue_len(rclient)
 
 
 def _validate_classifiers(mdb: Database, jobs: list[DataJobPayload]):
