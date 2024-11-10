@@ -1,3 +1,5 @@
+from functools import wraps
+import logging
 import math
 import os
 import queue
@@ -41,6 +43,29 @@ PUBLISHED_JOBS_COLLECTION = "published_jobs"
 DATA_LINK_PREFIX = "https://rawdata.mizu.technology/"
 
 
+def retry_with_backoff(max_retries=3, initial_delay=1, max_delay=30):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            for retry in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (requests.RequestException, ValueError) as e:
+                    if retry == max_retries - 1:  # Last retry
+                        raise
+                    wait = min(delay * (2**retry), max_delay)
+                    logging.warning(
+                        f"Attempt {retry + 1} failed: {str(e)}. Retrying in {wait} seconds..."
+                    )
+                    time.sleep(wait)
+            return func(*args, **kwargs)  # Final attempt
+
+        return wrapper
+
+    return decorator
+
+
 class DataJobPublisher(threading.Thread):
     def __init__(self, api_key: str, service_url: str | None = None):
         super().__init__()
@@ -49,18 +74,33 @@ class DataJobPublisher(threading.Thread):
             "NODE_SERVICE_URL", "http://127.0.0.1:8000"
         )
 
+    @retry_with_backoff(max_retries=3, initial_delay=2, max_delay=30)
     def publish(self, jobs: list[DataJobPayload]) -> Iterator[str]:
-        response = requests.post(
-            self.service_url + "/publish_jobs",
-            json=PublishJobRequest(data=jobs).model_dump(by_alias=True),
-            headers={"Authorization": "Bearer " + self.api_key},
-        )
-        if response.status_code != 200:
-            print("failed to publish jobs with response", response.json())
-            raise ValueError("failed to publish jobs")
+        try:
+            response = requests.post(
+                self.service_url + "/publish_jobs",
+                json=PublishJobRequest(data=jobs).model_dump(by_alias=True),
+                headers={"Authorization": "Bearer " + self.api_key},
+                timeout=30,  # Added timeout
+            )
+            response.raise_for_status()  # Raises HTTPError for bad status codes
 
-        for job_id in response.json()["data"]["jobIds"]:
-            yield job_id
+            data = response.json()
+            if "data" not in data or "jobIds" not in data["data"]:
+                raise ValueError("Invalid response format")
+
+            for job_id in data["data"]["jobIds"]:
+                yield job_id
+
+        except requests.exceptions.HTTPError as e:
+            logging.error(f"HTTP error occurred: {str(e)}, Response: {response.text}")
+            raise ValueError(f"Failed to publish jobs: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Network error occurred: {str(e)}")
+            raise
+        except Exception as e:
+            logging.error(f"Unexpected error: {str(e)}")
+            raise ValueError(f"Failed to publish jobs: {str(e)}")
 
     def run(self):
         raise NotImplementedError
