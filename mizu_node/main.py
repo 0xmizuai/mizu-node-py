@@ -109,8 +109,8 @@ def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)
 
 @app.post("/job_status")
 @error_handler
-def query_job_status(req: QueryJobRequest, publisher: str = Depends(get_publisher)):
-    jobs = handle_query_job(app.mdb[JOBS_COLLECTION], publisher, req)
+def query_job_status(req: QueryJobRequest, _publisher: str = Depends(get_publisher)):
+    jobs = handle_query_job(app.mdb[JOBS_COLLECTION], req)
     return build_json_response(
         status.HTTP_200_OK, "ok", {"jobs": [j.model_dump(by_alias=True) for j in jobs]}
     )

@@ -47,7 +47,9 @@ class RedisMock:
             self.lpush(key2, l)
         return self._check_pipeline(l)
 
-    def lrem(self, key, value):
+    def lrem(self, key, count, value):
+        if count != 0:
+            raise NotImplementedError("count != 0 is not implemented")
         data = self.get(key)
         if not data:
             return

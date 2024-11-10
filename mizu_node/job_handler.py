@@ -89,6 +89,8 @@ def handle_finish_job(
     rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
 ):
     update_data = _validate_job_result(jobs, job_result)
+    if not job_queue(job_result.job_type).lease_exists(rclient, job_result.job_id):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="job expired")
     job_queue(job_result.job_type).complete(rclient, job_result.job_id)
     jobs.update_one(
         {"_id": ObjectId(job_result.job_id)},

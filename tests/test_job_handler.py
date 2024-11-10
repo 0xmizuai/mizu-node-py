@@ -155,6 +155,9 @@ def mock_all():
 
 @mongomock.patch((MOCK_MONGO_URL))
 def test_publish_jobs(setenvvar):
+    # Add this line to set up the test environment
+    mock_all()
+
     # Test publishing classify jobs
     job_ids1 = _publish_jobs(JobType.classify, 3)
     assert len(job_ids1) == 3
@@ -414,7 +417,11 @@ def test_finish_job_ok(mock_requests, setenvvar):
     job_id = response.json()["data"]["job"]["_id"]
 
     r3 = WorkerJobResult(job_id=job_id, job_type=JobType.pow, pow_result="166189")
-    job_queues[JobType.pow].expire_job(job_id)
+
+    # Manually expire the job by removing it from both Redis queues
+    queue = job_queues[JobType.pow]
+    app.rclient.lrem(queue._processing_key, 0, job_id)
+
     response = client.post(
         "/finish_job",
         json=r3.model_dump(by_alias=True),
@@ -586,7 +593,7 @@ def test_pow_validation(mock_requests, setenvvar):
     mock_requests.return_value = None
 
     # Publish a PoW job
-    pids = _publish_jobs(JobType.pow, 1)
+    _publish_jobs(JobType.pow, 1)
     worker_jwt = jwt_token("worker1")
 
     # Take the job
@@ -596,10 +603,11 @@ def test_pow_validation(mock_requests, setenvvar):
         headers={"Authorization": f"Bearer {worker_jwt}"},
     )
     assert response.status_code == 200
+    job_id = response.json()["data"]["job"]["_id"]
 
     # Case 1: missing pow result
     result = WorkerJobResult(
-        job_id=pids[0],
+        job_id=job_id,
         job_type=JobType.pow,
     )
     response = client.post(
@@ -612,7 +620,7 @@ def test_pow_validation(mock_requests, setenvvar):
 
     # Case 2: invalid pow result
     result = WorkerJobResult(
-        job_id=pids[0],
+        job_id=job_id,
         job_type=JobType.pow,
         pow_result="invalid_nonce",
     )
@@ -629,7 +637,7 @@ def test_pow_validation(mock_requests, setenvvar):
 
     # Case 2: valid pow result
     result = WorkerJobResult(
-        job_id=pids[0],
+        job_id=job_id,
         job_type=JobType.pow,
         pow_result="166189",
     )
