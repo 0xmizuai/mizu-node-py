@@ -41,6 +41,8 @@ class JobQueue(object):
         maybe_item_id: bytes | str | None = db.lmove(
             self._main_queue_key,
             self._processing_key,
+            src="RGIHT",
+            dest="LEFT",
         )
         if maybe_item_id is None:
             return None
@@ -91,7 +93,8 @@ class JobQueue(object):
             # lease expired
             if not has_lease_key:
                 print(item_id, " lease has expired, will reset")
-                db.pipeline().lrem(self._processing_key, 0, item_id).lpush(
+                # move the job back to right of the queue
+                db.pipeline().lrem(self._processing_key, 0, item_id).rpush(
                     self._main_queue_key, item_id
                 ).execute()
 
