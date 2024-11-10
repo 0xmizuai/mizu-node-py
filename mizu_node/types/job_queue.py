@@ -94,7 +94,7 @@ class JobQueue(object):
 
 
 job_queues = {
-    job_type: JobQueue(KeyPrefix(f"job_queue_{job_type.name}"))
+    job_type: JobQueue(KeyPrefix(f"mizu_node_py:job_queue_{job_type.name}"))
     for job_type in [JobType.classify, JobType.pow, JobType.batch_classify]
 }
 
