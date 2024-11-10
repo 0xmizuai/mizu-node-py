@@ -88,7 +88,7 @@ class PikaConsumer(PikaBase):
     @retry_with_backoff()
     def get(self) -> str:
         self.ensure_connection()
-        (method, _, body) = self.channel.basic_get(queue=self.qname, auto_ack=True)
+        (method, _, body) = self.channel.basic_get(queue=self.qname, auto_ack=False)
         return (method.delivery_tag if method else None, body)
 
     @retry_with_backoff()
