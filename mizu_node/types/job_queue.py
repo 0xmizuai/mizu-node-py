@@ -8,7 +8,7 @@ import logging
 from mizu_node.types.job import WorkerJob
 
 
-ASSIGNED_JOB_EXPIRE_TTL_SECONDS = 900  # 15mins
+ASSIGNED_JOB_EXPIRE_TTL_SECONDS = 1800 - 60  # < 30mins
 RABBITMQ_URL = os.getenv(
     "RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672?heartbeat=0"
 )
