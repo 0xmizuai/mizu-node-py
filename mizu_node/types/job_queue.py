@@ -157,7 +157,7 @@ class PikaConsumer(PikaBase):
     @retry_with_backoff()
     def get(self, rclient: Redis) -> WorkerJob | None:
         self.ensure_connection()
-        (method, _, body) = self.channel.basic_get(queue=self.qname, auto_ack=False)
+        (method, _, body) = self.channel.basic_get(queue=self.qname, auto_ack=True)
         if method is None:
             return None
 
@@ -181,9 +181,6 @@ class PikaConsumer(PikaBase):
     def queue_len(self):
         self.ensure_connection()
         return self.queue.method.message_count
-
-    def queue_len(self):
-        return self.consumer.queue_len()
 
 
 @contextlib.contextmanager
