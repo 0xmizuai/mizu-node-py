@@ -3,13 +3,18 @@ import os
 import time
 from typing import Iterator
 
-from pymongo.database import Collection
+from bson import ObjectId
+from pymongo.database import Database, Collection
 from redis import Redis
 from fastapi import HTTPException, status
 import requests
 
 
-from mizu_node.constants import DEFAULT_POW_DIFFICULTY
+from mizu_node.constants import (
+    CLASSIFIER_COLLECTION,
+    DEFAULT_POW_DIFFICULTY,
+    JOBS_COLLECTION,
+)
 from mizu_node.security import is_worker_blocked
 from mizu_node.types.job import (
     DataJob,
@@ -34,11 +39,36 @@ def job_queue(job_type: JobType):
     return job_queues[job_type]
 
 
+def _validate_classifiers(mdb: Database, jobs: list[DataJob]):
+    cids = list(
+        set(
+            [
+                job.batch_classify_ctx.classifer_id
+                for job in jobs
+                if job.job_type == JobType.batch_classify
+            ]
+        )
+    )
+    docs = list(
+        mdb[CLASSIFIER_COLLECTION].find(
+            {"_id": {"$in": [ObjectId(cid) for cid in cids]}}, {"_id": 1}
+        )
+    )
+    find = set(str(doc["_id"]) for doc in docs)
+    missing = [cid for cid in cids if cid not in find]
+    if len(missing) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"classifier {','.join(missing)} not found",
+        )
+
+
 def handle_publish_jobs(
-    jobs_coll: Collection, publisher: str, req: PublishJobRequest
+    mdb: Database, publisher: str, req: PublishJobRequest
 ) -> Iterator[str]:
     jobs = [DataJob.from_job_payload(publisher, job) for job in req.data]
-    jobs_coll.insert_many([job.model_dump(by_alias=True) for job in jobs])
+    _validate_classifiers(mdb, jobs)
+    mdb[JOBS_COLLECTION].insert_many([job.model_dump(by_alias=True) for job in jobs])
     for job in jobs:
         worker_job = build_worker_job(job)
         job_queue(job.job_type).add_item(worker_job)
