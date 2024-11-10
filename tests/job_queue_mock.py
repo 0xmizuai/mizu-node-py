@@ -6,10 +6,11 @@ from mizu_node.types.job import WorkerJob
 
 
 class JobQueueMock:
-    def __init__(self, name):
+    def __init__(self, name, connection_type: str):
         self.name = name
         self.q = queue.Queue()
         self.processing = {}
+        self.connection_type = connection_type
 
     def add_item(self, job: WorkerJob):
         self.q.put_nowait(job.model_dump_json(by_alias=True))
@@ -31,3 +32,6 @@ class JobQueueMock:
 
     def queue_len(self):
         return self.q.qsize() + len(self.processing)
+
+    def close(self):
+        pass

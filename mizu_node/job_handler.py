@@ -26,17 +26,7 @@ from mizu_node.types.job import (
     WorkerJobResult,
     build_worker_job,
 )
-from mizu_node.types.job_queue import JobQueueV2
-
-
-job_queues = {
-    job_type: JobQueueV2("job_queue_" + str(job_type))
-    for job_type in [JobType.classify, JobType.pow, JobType.batch_classify]
-}
-
-
-def job_queue(job_type: JobType):
-    return job_queues[job_type]
+from mizu_node.types.job_queue import job_queue
 
 
 def handle_publish_jobs(
@@ -47,7 +37,7 @@ def handle_publish_jobs(
     mdb[JOBS_COLLECTION].insert_many([job.model_dump(by_alias=True) for job in jobs])
     for job in jobs:
         worker_job = build_worker_job(job)
-        job_queue(job.job_type).add_item(worker_job)
+        job_queue(job.job_type, "producer").add_item(worker_job)
         yield job.job_id
 
 
