@@ -12,9 +12,8 @@ services:
       - rabbitmq
     environment:
       MONGO_URL: "mongodb://mongo:27017"
-      MONGO_DB_NAME: "commoncrawl"
+      MONGO_DB_NAME: "mizu_node"
       REDIS_URL: "redis://redis:6379/0"
-      RABBITMQ_URL: "amqp://rabbitmq:5672"
       JWT_VERIFY_KEY: ${JWT_VERIFY_KEY}
     command: ["poetry", "run", "start"]
 
@@ -31,10 +30,3 @@ services:
     container_name: redis
     ports:
       - "6379:6379"
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"  # Management interface

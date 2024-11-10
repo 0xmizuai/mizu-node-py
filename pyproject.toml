@@ -12,9 +12,8 @@ uvicorn = "^0.31.1"
 redis = "^5.1.1"
 pymongo = "4.10.0"
 pyjwt = {extras = ["crypto"], version = "^2.9.0"}
-
 requests = "^2.32.3"
-aio-pika = "^9.4.3"
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 pre-commit = "^4.0.1"
