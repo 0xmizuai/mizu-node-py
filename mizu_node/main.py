@@ -25,7 +25,7 @@ from mizu_node.job_handler import (
     handle_finish_job,
     handle_queue_len,
 )
-from mizu_node.security import verify_jwt, verify_api_key
+from mizu_node.security import has_worker_cooled_down, verify_jwt, verify_api_key
 from mizu_node.types.classifier import ClassifierConfig
 from mizu_node.types.job import (
     JobType,
@@ -34,8 +34,6 @@ from mizu_node.types.job import (
     WorkerJobResult,
 )
 from mizu_node.types.job_queue import queue_clean
-from mizu_node.utils import build_json_response
-from mizu_node.worker_handler import has_worker_cooled_down
 
 # Security scheme
 bearer_scheme = HTTPBearer()
