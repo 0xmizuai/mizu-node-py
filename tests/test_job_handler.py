@@ -420,7 +420,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
 
     # Manually expire the job by removing it from both Redis queues
     queue = job_queues[JobType.pow]
-    app.rclient.lrem(queue._processing_key, 0, job_id)
+    app.rclient.delete(queue._lease_key.of(job_id))
 
     response = client.post(
         "/finish_job",
