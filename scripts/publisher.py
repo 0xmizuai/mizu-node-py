@@ -40,7 +40,7 @@ MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
 MIZU_NODE_MONGO_DB_NAME = "mizu_node"
 
 PUBLISHED_JOBS_COLLECTION = "published_jobs"
-DATA_LINK_PREFIX = "https://rawdata.mizu.technology/"
+DATA_LINK_PREFIX = "https://rawdata.mizu.technology"
 
 
 def retry_with_backoff(max_retries=3, initial_delay=1, max_delay=30):

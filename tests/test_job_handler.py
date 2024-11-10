@@ -133,7 +133,7 @@ def _publish_jobs(job_type: JobType, num_jobs=3):
 def mock_all(mock_job_queue):
     client = pymongo.MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
     mdb = client[os.environ["MIZU_NODE_MONGO_DB_NAME"]]
-    app.mdb = lambda collection_name: mdb[collection_name]
+    app.mdb = mdb
     app.rclient = RedisMock()
 
     mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY1, "user": "test_user1"})
