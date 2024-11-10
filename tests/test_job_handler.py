@@ -1,6 +1,7 @@
 import os
 import time
 from unittest import mock
+from bson import ObjectId
 from fastapi.testclient import TestClient
 import pymongo
 import pytest
@@ -9,6 +10,8 @@ from unittest.mock import patch as mock_patch
 
 from mizu_node.constants import (
     API_KEY_COLLECTION,
+    CLASSIFIER_COLLECTION,
+    JOBS_COLLECTION,
 )
 from mizu_node.security import block_worker
 from mizu_node.types.classifier import (
@@ -40,6 +43,7 @@ client = TestClient(app)
 TEST_API_KEY1 = "test_api_key1"
 TEST_API_KEY2 = "test_api_key2"
 MOCK_MONGO_URL = "mongodb://localhost:27017"
+CLASSIFIER_ID = ObjectId("666666666666666666666666")
 
 # Convert to PEM format
 private_key_obj = Ed25519PrivateKey.generate()
@@ -98,7 +102,7 @@ def _build_batch_classify_ctx():
         bytesize=5000000,
         decompressed_bytesize=20000000,
         checksum_md5="0x",
-        classifer_id="classifier1",
+        classifer_id=str(CLASSIFIER_ID),
     )
 
 
@@ -138,6 +142,15 @@ def mock_all(mock_job_queue):
 
     mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY1, "user": "test_user1"})
     mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY2, "user": "test_user2"})
+    mdb[CLASSIFIER_COLLECTION].insert_one(
+        {
+            "_id": CLASSIFIER_ID,
+            "publisher": "test_user1",
+            "name": "default",
+            "embedding_model": "test_embedding_model",
+        }
+    )
+
     job_queues = {
         JobType.classify: JobQueueMock("classify"),
         JobType.pow: JobQueueMock("pow"),
@@ -367,7 +380,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     assert response.json()["message"] == "ok"
 
     # Verify job 1 in database
-    j1 = app.mdb("jobs").find_one({"_id": bids[0]})
+    j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": bids[0]})
     assert j1["jobType"] == JobType.batch_classify
     # the empty labels are filtered out
     assert len(j1["batchClassifyResult"]) == 1
@@ -403,7 +416,7 @@ def test_finish_job_ok(mock_requests, mock_job_queue, setenvvar):
     assert response.status_code == 200
 
     # Verify job 2 in database
-    j2 = app.mdb("jobs").find_one({"_id": pids[0]})
+    j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": pids[0]})
     assert j2["jobType"] == JobType.pow
     assert j2["powResult"] == "166189"
     assert j2["worker"] == "worker2"
