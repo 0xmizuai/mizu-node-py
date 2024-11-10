@@ -107,4 +107,4 @@ def queue_clean(rclient: Redis):
     while True:
         for queue in job_queues.values():
             queue.light_clean(rclient)
-        time.sleep(60)
+        time.sleep(600)
