@@ -49,8 +49,6 @@ class DataJobPayload(BaseModel):
     batch_classify_ctx: BatchClassifyContext | None = Field(
         alias="batchClassifyCtx", default=None
     )
-    published_at: int | None = Field(alias="publishedAt", default=None)
-    publisher: str | None = Field(default=None)
 
 
 class PublishJobRequest(BaseModel):
@@ -72,6 +70,8 @@ class DataJob(DataJobPayload):
     )
     finished_at: int | None = Field(alias="finishedAt", default=None)
     worker: str | None = Field(default=None)
+    published_at: int | None = Field(alias="publishedAt", default=None)
+    publisher: str | None = Field(default=None)
 
 
 class WorkerJob(DataJobPayload):

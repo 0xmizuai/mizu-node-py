@@ -103,7 +103,7 @@ def get_classifier(id: str):
 @app.post("/publish_jobs")
 @error_handler
 def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
-    ids = list(handle_publish_jobs(app.rclient, app.mdb, publisher, req))
+    ids = handle_publish_jobs(app.rclient, app.mdb, publisher, req)
     return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
 
 

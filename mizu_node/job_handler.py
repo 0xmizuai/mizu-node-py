@@ -18,6 +18,7 @@ from mizu_node.constants import (
 )
 from mizu_node.security import is_worker_blocked
 from mizu_node.types.job import (
+    DataJob,
     DataJobPayload,
     JobType,
     PowContext,
@@ -35,28 +36,29 @@ def handle_publish_jobs(
     _validate_classifiers(mdb, req.data)
     # Convert Pydantic objects to dictionaries before inserting
     documents = [
-        DataJobPayload(
-            job_type=payload.job_type,
-            classify_ctx=payload.classify_ctx,
-            pow_ctx=payload.pow_ctx,
-            batch_classify_ctx=payload.batch_classify_ctx,
-            published_at=int(time.time()),
-            publisher=publisher,
-        ).model_dump(by_alias=True)
+        {
+            **payload.model_dump(by_alias=True),
+            "publishedAt": int(time.time()),
+            "publisher": publisher,
+        }
         for payload in req.data
     ]
     result = mdb[JOBS_COLLECTION].insert_many(documents)
+
+    # Group jobs by type and add to respective queues
+    jobs_by_type = {}
     for job_id, payload in zip(result.inserted_ids, req.data):
-        worker_job = WorkerJob(
-            job_id=str(job_id),
-            job_type=payload.job_type,
-            classify_ctx=payload.classify_ctx,
-            pow_ctx=payload.pow_ctx,
-            batch_classify_ctx=payload.batch_classify_ctx,
+        worker_job = WorkerJob(job_id=str(job_id), **payload.model_dump())
+        jobs_by_type.setdefault(payload.job_type, []).append(worker_job)
+
+    # Batch add jobs to their respective queues
+    for job_type, jobs in jobs_by_type.items():
+        job_queue(job_type).add_items(
+            rclient,
+            [job.job_id for job in jobs],
+            [job.model_dump_json(by_alias=True) for job in jobs],
         )
-        job_queue(payload.job_type).add_item(
-            rclient, worker_job.job_id, worker_job.model_dump_json(by_alias=True)
-        )
+
     return [str(id) for id in result.inserted_ids]
 
 

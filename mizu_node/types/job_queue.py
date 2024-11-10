@@ -19,9 +19,12 @@ class JobQueue(object):
         self._lease_key = KeyPrefix.concat(name, ":lease:")
         self._item_data_key = KeyPrefix.concat(name, ":job:")
 
-    def add_item(self, db: Redis, item_id: str, data: str) -> None:
-        db.set(self._item_data_key.of(item_id), data)
-        db.lpush(self._main_queue_key, item_id)
+    def add_items(self, db: Redis, item_ids: list[str], data: list[str]) -> None:
+        pipeline = db.pipeline()
+        for item_id, data in zip(item_ids, data):
+            pipeline.set(self._item_data_key.of(item_id), data)
+            pipeline.lpush(self._main_queue_key, item_id)
+        pipeline.execute()
 
     def queue_len(self, db: Redis) -> int:
         return db.llen(self._main_queue_key)
