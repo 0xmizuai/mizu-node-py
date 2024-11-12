@@ -1,22 +1,5 @@
 import zlib from 'zlib';
 
-interface Chunk {
-	key: string;
-	compressed: string;
-	metadata: {
-		batch: string;
-		decompressed_bytesize: number;
-		bytesize: number;
-		chunk: string;
-		subchunk: number;
-		subchunk_size: number;
-		md5: string;
-		filename: string;
-		type: string;
-		created_at: number;
-	}
-}
-
 function toHex(buffer: ArrayBuffer): string {
 	return [...new Uint8Array(buffer)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
@@ -38,22 +21,24 @@ async function save_chunk(r2_key: string, batch: Array<string>, index: number, e
 	const compressed = zlib.deflateSync(content).toString('base64');
 	const metadata = r2_key.split('/');
 	const new_key = r2_key + '/' + index + '.zz';
-	const new_metadata = {
+	const metadata_obj = {
 		batch: metadata[0],
-		decompressed_bytesize: content.length.toString(),
-		bytesize: compressed.length.toString(),
+		decompressed_bytesize: content.length,
+		bytesize: compressed.length,
 		chunk: metadata[3].split('.')[0],
-		subchunk: index.toString(),
-		subchunk_size: batch.length.toString(),
+		subchunk: index,
+		subchunk_size: batch.length,
 		md5: await md5(compressed),
 		filename: metadata[2],
 		type: metadata[1],
 		created_at: new Date().toISOString(),
-	}
+	};
 	await env.MIZU_CMC_V2.put(new_key, compressed, {
-		customMetadata: new_metadata,
+		customMetadata: Object.fromEntries(
+			Object.entries(metadata_obj).map(([k, v]) => [k, v.toString()])
+		),
 	});
-	return new_metadata;
+	return metadata_obj;
 }
 
 export default {

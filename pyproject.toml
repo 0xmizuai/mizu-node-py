@@ -26,6 +26,7 @@ boto3 = "^1.35.56"
 warcio = "^1.7.4"
 mongomock = "^4.2.0.post1"
 
+aiohttp = "^3.10.10"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
@@ -34,3 +35,4 @@ build-backend = "poetry.core.masonry.api"
 dev = "mizu_node.main:start_dev"
 start = "mizu_node.main:start"
 client = "scripts.client:main"
+import = "scripts.importer_v2:main"
