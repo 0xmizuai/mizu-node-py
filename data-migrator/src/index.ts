@@ -28,7 +28,7 @@ async function save_chunk(r2_key: string, batch: Array<string>, index: number, e
 	const metadata = r2_key.split('/');
 	const new_key = r2_key + '/' + index + ".zz";
 	await Promise.all([
-		env.MIZU_CMC.put(new_key, compressed),
+		env.MIZU_CMC_V2.put(new_key, compressed),
 		env.KV.put(
 			new_key,
 			JSON.stringify({
@@ -73,8 +73,8 @@ export default {
 		content.split('\n').forEach((line: string) => {
 			batch_cache.push(line);
 			batch_size += line.length;
+			// > 500kb
 			if (batch_size > 500 * 1000) {
-				// > 500kb
 				batches.push(batch_cache);
 				batch_cache = [];
 				batch_size = 0;
