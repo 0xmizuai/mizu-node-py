@@ -25,7 +25,7 @@ async function save_chunk(r2_key: string, batch: Array<string>, index: number, e
 		batch: metadata[0],
 		decompressed_bytesize: content.length,
 		bytesize: compressed.length,
-		chunk: metadata[3].split('.')[0],
+		chunk: parseInt(metadata[3].split('.')[0]),
 		subchunk: index,
 		subchunk_size: batch.length,
 		md5: await md5(compressed),
