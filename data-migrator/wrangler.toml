@@ -75,10 +75,10 @@ head_sampling_rate = 1
 
 # Bind a KV Namespace. Use KV as persistent storage for small key-value pairs.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#kv-namespaces
-[[kv_namespaces]]
-binding = "KV"
-id = "c85200702a974896b2cbab4aac41afa2"
-preview_id = "3cac290865a0475bb6d070dac0814d57"
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "c85200702a974896b2cbab4aac41afa2"
+# preview_id = "3cac290865a0475bb6d070dac0814d57"
 
 # Bind an mTLS certificate. Use to present a client certificate when communicating with another service.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#mtls-certificates
