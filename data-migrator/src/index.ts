@@ -41,6 +41,28 @@ async function save_chunk(r2_key: string, batch: Array<string>, index: number, e
 	return metadata_obj;
 }
 
+async function process_one_file(object: R2ObjectBody): Promise<Array<Array<string>>> {
+	const content: string = zlib.inflateSync(await object.arrayBuffer()).toString();
+	const batches: Array<Array<string>> = [];
+	let batch_cache: Array<string> = [];
+	let batch_size: number = 0;
+
+	content.split('\n').forEach((line: string) => {
+		batch_cache.push(line);
+		batch_size += line.length;
+		// > 500kb
+		if (batch_size > 500 * 1000) {
+			batches.push(batch_cache);
+			batch_cache = [];
+			batch_size = 0;
+		}
+	});
+	if (batch_cache.length > 0) {
+		batches.push(batch_cache);
+	}
+	return batches;
+}
+
 export default {
 	async fetch(request, env): Promise<Response> {
 		const url = new URL(request.url);
@@ -53,30 +75,12 @@ export default {
 
 		const object = await env.MIZU_CMC.get(r2_key);
 		if (object === null) {
-			return new Response(`Not found`, {
-				status: 404,
-			});
+			throw new Error(`Not found: ${r2_key}`);
 		}
-		const content: string = zlib.inflateSync(await object.arrayBuffer()).toString();
-		const batches: Array<Array<string>> = [];
-		let batch_cache: Array<string> = [];
-		let batch_size: number = 0;
-
-		content.split('\n').forEach((line: string) => {
-			batch_cache.push(line);
-			batch_size += line.length;
-			// > 500kb
-			if (batch_size > 500 * 1000) {
-				batches.push(batch_cache);
-				batch_cache = [];
-				batch_size = 0;
-			}
-		});
-		if (batch_cache.length > 0) {
-			batches.push(batch_cache);
-		}
-
-		const metadata = await Promise.all(batches.map((b, index) => save_chunk(r2_key, b, index, env)));
+		const batches = await process_one_file(object);
+		const metadata = await Promise.all(
+			batches.map((b, index) => save_chunk(r2_key, b, index, env))
+		);
 		return Response.json({ metadata });
 	},
 } satisfies ExportedHandler<Env>;
