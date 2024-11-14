@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-from datetime import datetime
 import os
 from pymongo import MongoClient
 
@@ -11,8 +10,7 @@ from typing import Optional
 CC_MONGO_URL = os.environ["CC_MONGO_URL"]
 CC_MONGO_DB_NAME = "commoncrawl"
 
-LIMIT_PER_BATCH = 20
-R2_WORKER_URL = os.environ["R2_WORKER_URL"]
+LIMIT_PER_BATCH = 100
 
 
 async def call_http(
@@ -40,38 +38,6 @@ async def call_http(
             await asyncio.sleep(delay)
 
 
-async def process_one_batch(records: list[dict]):
-    urls = [
-        f"{R2_WORKER_URL}?r2_key={r['batch']}/{r['type']}/{r['filename']}/{r['chunk']}.zz"
-        for r in records
-    ]
-    tasks = [asyncio.create_task(call_http(url)) for url in urls]
-    return await asyncio.gather(*tasks)
-
-
-async def process_all(mclient: MongoClient, offset: int):
-    metadata_coll = mclient[CC_MONGO_DB_NAME]["metadata"]
-    metadata_v2_coll = mclient[CC_MONGO_DB_NAME]["metadata_v2"]
-    total = metadata_coll.count_documents({})
-    while offset < total:
-        records = list(
-            metadata_coll.find({}).sort({"_id": 1}).skip(offset).limit(LIMIT_PER_BATCH)
-        )
-        result = await process_one_batch(records)
-        metadatas = [m for r in result for m in r["metadata"]]
-        flattened = [
-            {
-                **m,
-                "created_at": datetime.fromisoformat(m["created_at"]),
-            }
-            for m in metadatas
-        ]
-        metadata_v2_coll.insert_many(flattened)
-        offset += len(records)
-        print(f"Processed {offset} of {total}")
-        await asyncio.sleep(random.uniform(0, 3))
-
-
 async def enqueue_all(mclient: MongoClient, offset: int):
     metadata_coll = mclient[CC_MONGO_DB_NAME]["metadata"]
     total = metadata_coll.count_documents({})
@@ -79,15 +45,20 @@ async def enqueue_all(mclient: MongoClient, offset: int):
         records = list(
             metadata_coll.find({}).sort({"_id": 1}).skip(offset).limit(LIMIT_PER_BATCH)
         )
-        r2_keys = [
-            f"{r['batch']}/{r['type']}/{r['filename']}/{r['chunk']}.zz" for r in records
-        ]
-        print(f"{R2_WORKER_URL}?r2_keys={','.join(r2_keys)}")
-        await call_http(f"{R2_WORKER_URL}?r2_keys={','.join(r2_keys)}")
-        print(f"Enqueued {offset} of {total}")
+        if not records:
+            break
+
+        r2_keys = ",".join(
+            [
+                f"{r['batch']}/{r['type']}/{r['filename']}/{r['chunk']}.zz"
+                for r in records
+            ]
+        )
+        r2_worker_url = f"https://mizuai-queue-worker.shu-ecf.workers.dev"
+        await call_http(f"{r2_worker_url}?r2_keys={r2_keys}")
+
         offset += len(records)
-        await asyncio.sleep(random.uniform(0, 3))
-        break
+        print(f"enqueued {offset} of {total}")
 
 
 parser = argparse.ArgumentParser()
