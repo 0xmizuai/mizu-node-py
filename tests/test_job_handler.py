@@ -103,7 +103,7 @@ def _build_batch_classify_ctx():
         bytesize=5000000,
         decompressed_bytesize=20000000,
         checksum_md5="0x",
-        classifer_id=str(CLASSIFIER_ID),
+        classifier_id=str(CLASSIFIER_ID),
     )
 
 

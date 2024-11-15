@@ -37,7 +37,7 @@ class BatchClassifyContext(BaseModel):
     bytesize: int = Field(alias="bytesize")
     decompressed_bytesize: int = Field(alias="decompressedBytesize")
     checksum_md5: str = Field(alias="checksumMd5")
-    classifer_id: str = Field(alias="classiferId")
+    classifier_id: str = Field(alias="classifierId")
 
 
 class DataJobPayload(BaseModel):

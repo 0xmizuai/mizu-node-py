@@ -123,7 +123,7 @@ def _validate_classifiers(mdb: Database, jobs: list[DataJobPayload]):
     cids = list(
         set(
             [
-                job.batch_classify_ctx.classifer_id
+                job.batch_classify_ctx.classifier_id
                 for job in jobs
                 if job.job_type == JobType.batch_classify
             ]

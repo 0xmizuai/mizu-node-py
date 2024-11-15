@@ -190,7 +190,7 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
                 bytesize=doc.bytesize,
                 checksum_md5=doc.md5,
                 decompressed_bytesize=doc.decompressed_bytesize,
-                classifer_id=classifier_id,
+                classifier_id=classifier_id,
             ),
         )
 

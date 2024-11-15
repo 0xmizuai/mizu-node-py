@@ -84,12 +84,12 @@ process_parser = subparsers.add_parser(
 )
 process_parser.add_argument("--user", type=str, action="store")
 
-classifer_parser = subparsers.add_parser(
+classifier_parser = subparsers.add_parser(
     "classifier", add_help=False, description="import data to r2"
 )
-classifer_parser.add_argument("--register", action="store_true")
-classifer_parser.add_argument("--list", action="store_true")
-classifer_parser.add_argument("--user", type=str, action="store")
+classifier_parser.add_argument("--register", action="store_true")
+classifier_parser.add_argument("--list", action="store_true")
+classifier_parser.add_argument("--user", type=str, action="store")
 
 migrate_parser = subparsers.add_parser(
     "migrate", add_help=False, description="migrate metadata to mongodb"
