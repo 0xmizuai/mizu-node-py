@@ -187,9 +187,9 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
             batch_classify_ctx=BatchClassifyContext(
                 data_url=f"{R2_DATA_PREFIX}/{r2_key}",
                 batch_size=doc.chunk_size,
-                bytesize=doc.bytesize,
+                byte_size=doc.byte_size,
                 checksum_md5=doc.md5,
-                decompressed_bytesize=doc.decompressed_bytesize,
+                decompressed_byte_size=doc.decompressed_byte_size,
                 classifier_id=classifier_id,
             ),
         )

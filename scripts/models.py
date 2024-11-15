@@ -12,8 +12,8 @@ class WetMetadata(BaseModel):
     filename: str
     chunk: int
     chunk_size: int
-    bytesize: int
-    decompressed_bytesize: int
+    byte_size: int
+    decompressed_byte_size: int
     created_at: datetime = datetime.now()
     md5: str
 

@@ -34,8 +34,8 @@ class BatchClassifyContext(BaseModel):
 
     data_url: str = Field(alias="dataUrl")
     batch_size: int = Field(alias="batchSize")
-    bytesize: int = Field(alias="bytesize")
-    decompressed_bytesize: int = Field(alias="decompressedBytesize")
+    byte_size: int = Field(alias="byteSize")
+    decompressed_byte_size: int = Field(alias="decompressedByteSize")
     checksum_md5: str = Field(alias="checksumMd5")
     classifier_id: str = Field(alias="classifierId")
 

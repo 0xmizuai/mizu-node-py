@@ -68,7 +68,7 @@ class RecordBatch(object):
     def __init__(self, filename: str):
         self.filename = filename
         self.records = []
-        self.bytesize = 0
+        self.byte_size = 0
 
 
 class CommonCrawlWetImporter(threading.Thread):
@@ -109,7 +109,7 @@ class CommonCrawlWetImporter(threading.Thread):
             ContentLength=len(compressed),
             Metadata={
                 "chunk_size": str(len(cached.records)),
-                "decompressed_bytesize": str(cached.bytesize),
+                "decompressed_byte_size": str(cached.byte_size),
             },
         )
         metadata = WetMetadata(
@@ -118,8 +118,8 @@ class CommonCrawlWetImporter(threading.Thread):
             filename=cached.filename,
             chunk=progress.next_chunk,
             chunk_size=len(cached.records),
-            bytesize=len(compressed),
-            decompressed_bytesize=cached.bytesize,
+            byte_size=len(compressed),
+            decompressed_byte_size=cached.byte_size,
             md5=hashlib.md5(compressed).hexdigest(),
         )
         self.r2_metadata.update_one(
@@ -188,14 +188,14 @@ class CommonCrawlWetImporter(threading.Thread):
                 wet_record = WetRecord(record)
                 r = json.dumps(wet_record.__dict__)
                 cached.records.append(r)
-                cached.bytesize += len(r)
+                cached.byte_size += len(r)
             else:
                 print(
                     f"Thread {self.wid}: skip non-conversion type {record.rec_type} with id {warc_id}"
                 )
 
             # with raw data > 20MB, we got ~5MB after compression
-            if cached.bytesize > 20 * 1024 * 1024:
+            if cached.byte_size > 20 * 1024 * 1024:
                 self._save_chunk(cached, progress)
                 cached = RecordBatch(cached.filename)
 

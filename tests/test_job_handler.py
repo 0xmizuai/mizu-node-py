@@ -100,8 +100,8 @@ def _build_batch_classify_ctx():
     return BatchClassifyContext(
         data_url="https://example.com/data",
         batch_size=1000,
-        bytesize=5000000,
-        decompressed_bytesize=20000000,
+        byte_size=5000000,
+        decompressed_byte_size=20000000,
         checksum_md5="0x",
         classifier_id=str(CLASSIFIER_ID),
     )
