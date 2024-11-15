@@ -1,20 +1,39 @@
 import argparse
 import asyncio
+import json
 import os
 from pymongo import MongoClient
 
 import aiohttp
 import random
 from typing import Optional
+import boto3
 
 CC_MONGO_URL = os.environ["CC_MONGO_URL"]
 CC_MONGO_DB_NAME = "commoncrawl"
 
 LIMIT_PER_BATCH = 100
 
+R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
+R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
+R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
+CF_KV_NAMESPACE_ID = os.environ["CF_KV_NAMESPACE_ID"]
+CF_KV_API_TOKEN = os.environ["CF_KV_API_TOKEN"]
+
+
+def r2_kv_list_url(cursor: Optional[str] = None, limit: int = 1000):
+    if cursor:
+        return f"https://api.cloudflare.com/client/v4/accounts/{R2_ACCOUNT_ID}/storage/kv/namespaces/{CF_KV_NAMESPACE_ID}/keys?cursor={cursor}&limit={limit}"
+    else:
+        return f"https://api.cloudflare.com/client/v4/accounts/{R2_ACCOUNT_ID}/storage/kv/namespaces/{CF_KV_NAMESPACE_ID}/keys?limit={limit}"
+
+
+def r2_kv_get_url(key_name: str):
+    return f"https://api.cloudflare.com/client/v4/accounts/{R2_ACCOUNT_ID}/storage/kv/namespaces/{CF_KV_NAMESPACE_ID}/values/{key_name}"
+
 
 async def call_http(
-    url: str, max_retries: int = 3, base_delay: float = 1.0
+    url: str, token: str | None = None, max_retries: int = 3, base_delay: float = 1.0
 ) -> Optional[dict]:
     for attempt in range(max_retries):
         try:
@@ -22,6 +41,8 @@ async def call_http(
                 print(f"Retrying {url}")
             connector = aiohttp.TCPConnector(limit=50)
             async with aiohttp.ClientSession(connector=connector) as session:
+                if token:
+                    session.headers["Authorization"] = f"Bearer {token}"
                 async with session.get(url) as response:
                     response.raise_for_status()  # Raise exception for bad status codes
                     return await response.json()
@@ -61,6 +82,55 @@ async def enqueue_all(mclient: MongoClient, offset: int):
         print(f"enqueued {offset} of {total}")
 
 
+async def get_all_files():
+    s3 = boto3.resource(
+        "s3",
+        endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=R2_ACCESS_KEY,
+        aws_secret_access_key=R2_SECRET_KEY,
+    )
+    with open("names_diffs_v2.txt", "r") as f:
+        for line in f:
+            result = s3.meta.client.list_objects_v2(
+                Bucket="mizu-cmc-compressed-v2",
+                Prefix=f"CC-MAIN-2024-42/wet/{line.strip()}",
+            )
+            if result["KeyCount"] > 0:
+                print(line)
+
+
+async def query_all_keys_from_r2():
+    names = []
+    cursor = None
+    while True:
+        url = r2_kv_list_url(cursor)
+        print(f"fetching {url}")
+        result = await call_http(url, CF_KV_API_TOKEN)
+        if not result["success"]:
+            print(result["errors"])
+            print(result["messsages"])
+            print("failed to query kv")
+            return
+
+        with open("names.txt", "a") as f:
+            for name in result["result"]:
+                f.write(name["name"] + "\n")
+
+        if result["result_info"]["cursor"]:
+            cursor = result["result_info"]["cursor"]
+
+        if result["result_info"]["count"] < 1000:
+            break
+
+
+async def query_all_keys_from_db(mclient: MongoClient):
+    metadata_coll = mclient[CC_MONGO_DB_NAME]["metadata"]
+    with open("names_db.txt", "a") as f:
+        for r in metadata_coll.find({}).sort({"_id": 1}):
+            name = f"{r['batch']}/{r['type']}/{r['filename']}/{r['chunk']}.zz"
+            f.write(name + "\n")
+
+
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--offset", action="store", type=int, default=0)
@@ -70,4 +140,5 @@ args = parser.parse_args()
 
 def main():
     mclient = MongoClient(CC_MONGO_URL)
-    asyncio.run(enqueue_all(mclient, args.offset))
+    #     asyncio.run(enqueue_all(mclient, args.offset))
+    asyncio.run(get_all_files())
