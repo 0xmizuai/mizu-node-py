@@ -1,13 +1,11 @@
 import argparse
 import asyncio
-import json
 import os
 from pymongo import MongoClient
 
 import aiohttp
 import random
 from typing import Optional
-import boto3
 
 CC_MONGO_URL = os.environ["CC_MONGO_URL"]
 CC_MONGO_DB_NAME = "commoncrawl"
@@ -45,7 +43,10 @@ async def call_http(
                     session.headers["Authorization"] = f"Bearer {token}"
                 async with session.get(url) as response:
                     response.raise_for_status()  # Raise exception for bad status codes
-                    return await response.json()
+                    if response.content_type == "application/json":
+                        return await response.json()
+                    else:
+                        return await response.read()
         except Exception as e:
             if attempt == max_retries - 1:  # Last attempt
                 print(f"Failed to process {url} after {max_retries} attempts: {str(e)}")
@@ -83,20 +84,24 @@ async def enqueue_all(mclient: MongoClient, offset: int):
 
 
 async def get_all_files():
-    s3 = boto3.resource(
-        "s3",
-        endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
-        aws_access_key_id=R2_ACCESS_KEY,
-        aws_secret_access_key=R2_SECRET_KEY,
-    )
-    with open("names_diffs_v2.txt", "r") as f:
-        for line in f:
-            result = s3.meta.client.list_objects_v2(
-                Bucket="mizu-cmc-compressed-v2",
-                Prefix=f"CC-MAIN-2024-42/wet/{line.strip()}",
-            )
-            if result["KeyCount"] > 0:
-                print(line)
+    with open("./names_diffs_v1.txt", "r") as f:
+        lines = [line.strip() for line in f.readlines()]
+        for i in range(0, len(lines), 100):
+            r2_keys = ",".join(lines[i : i + 100])
+            url = f"https://mizuai-queue-worker.shu-ecf.workers.dev?r2_keys={r2_keys}"
+            print(f"fetching {url}")
+            await call_http(url)
+
+
+async def check_kv():
+    with open("./names_diffs_v1.txt", "r") as f:
+        lines = [line.strip() for line in f.readlines()]
+        for line in lines:
+            url = f"{r2_kv_get_url(line)}"
+            try:
+                await call_http(url, CF_KV_API_TOKEN, 1)
+            except Exception as e:
+                print(f"failed to get {line} with error {e}")
 
 
 async def query_all_keys_from_r2():
@@ -140,5 +145,4 @@ args = parser.parse_args()
 
 def main():
     mclient = MongoClient(CC_MONGO_URL)
-    #     asyncio.run(enqueue_all(mclient, args.offset))
-    asyncio.run(get_all_files())
+    asyncio.run(query_all_keys_from_r2())
