@@ -1,5 +1,7 @@
 import argparse
 import asyncio
+import hashlib
+import json
 import os
 from pymongo import MongoClient
 
@@ -136,6 +138,42 @@ async def query_all_keys_from_db(mclient: MongoClient):
             f.write(name + "\n")
 
 
+def _gen_id(batch: dict):
+    return hashlib.md5(
+        f"{batch['batch']}/{batch['type']}/{batch['filename']}/{batch['chunk']}.zz/{batch['subchunk']}.zz".encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+async def store_metadata(mclient: MongoClient, offset: int):
+    metadata_coll = mclient[CC_MONGO_DB_NAME]["metadata"]
+    metadata_v2_coll = mclient[CC_MONGO_DB_NAME]["metadata_v2"]
+    total = metadata_coll.count_documents({})
+    with open("failed_names.txt", "a") as f:
+        while True:
+            records = list(
+                metadata_coll.find({}).sort({"_id": 1}).skip(offset).limit(1000)
+            )
+            for record in records:
+                name = f"{record['batch']}/{record['type']}/{record['filename']}/{record['chunk']}.zz"
+                url = f"{r2_kv_get_url(name)}"
+                try:
+                    content = await call_http(url, CF_KV_API_TOKEN)
+                    batches = json.loads(content.decode("utf-8"))
+                    batches = [{"_id": _gen_id(batch), **batch} for batch in batches]
+                    metadata_v2_coll.insert_many(batches)
+                except Exception as e:
+                    print(f"failed to get {name} with error {e}")
+                    f.write(f"{name}\n")
+                    continue
+
+            offset += len(records)
+            print(f"stored {offset} of {total}")
+            if len(records) < 1000:
+                break
+
+
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--offset", action="store", type=int, default=0)
@@ -145,4 +183,4 @@ args = parser.parse_args()
 
 def main():
     mclient = MongoClient(CC_MONGO_URL)
-    asyncio.run(query_all_keys_from_r2())
+    asyncio.run(store_metadata(mclient, args.offset))
