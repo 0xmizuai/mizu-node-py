@@ -20,6 +20,8 @@ R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 CF_KV_NAMESPACE_ID = os.environ["CF_KV_NAMESPACE_ID"]
 CF_KV_API_TOKEN = os.environ["CF_KV_API_TOKEN"]
 
+MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "50"))
+
 
 def r2_kv_list_url(cursor: Optional[str] = None, limit: int = 1000):
     if cursor:
@@ -150,23 +152,28 @@ async def store_metadata(mclient: MongoClient, offset: int):
     metadata_coll = mclient[CC_MONGO_DB_NAME]["metadata"]
     metadata_v2_coll = mclient[CC_MONGO_DB_NAME]["metadata_v2"]
     total = metadata_coll.count_documents({})
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    async def process_record(record, f):
+        async with semaphore:
+            name = f"{record['batch']}/{record['type']}/{record['filename']}/{record['chunk']}.zz"
+            url = f"{r2_kv_get_url(name)}"
+            try:
+                content = await call_http(url, CF_KV_API_TOKEN)
+                batches = json.loads(content.decode("utf-8"))
+                batches = [{"_id": _gen_id(batch), **batch} for batch in batches]
+                metadata_v2_coll.insert_many(batches)
+            except Exception as e:
+                print(f"failed to get {name} with error {e}")
+                f.write(f"{name}\n")
+
     with open("failed_names.txt", "a") as f:
         while True:
             records = list(
                 metadata_coll.find({}).sort({"_id": 1}).skip(offset).limit(1000)
             )
-            for record in records:
-                name = f"{record['batch']}/{record['type']}/{record['filename']}/{record['chunk']}.zz"
-                url = f"{r2_kv_get_url(name)}"
-                try:
-                    content = await call_http(url, CF_KV_API_TOKEN)
-                    batches = json.loads(content.decode("utf-8"))
-                    batches = [{"_id": _gen_id(batch), **batch} for batch in batches]
-                    metadata_v2_coll.insert_many(batches)
-                except Exception as e:
-                    print(f"failed to get {name} with error {e}")
-                    f.write(f"{name}\n")
-                    continue
+
+            await asyncio.gather(*(process_record(record, f) for record in records))
 
             offset += len(records)
             print(f"stored {offset} of {total}")
