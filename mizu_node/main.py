@@ -123,7 +123,7 @@ def take_job(
     if not has_worker_cooled_down(app.rclient, user):
         message = f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}"
         return build_json_response(status.HTTP_429_TOO_MANY_REQUESTS, message)
-    job = handle_take_job(app.rclient, user, job_type)
+    job = handle_take_job(app.rclient, app.mdb[JOBS_COLLECTION], user, job_type)
     if job is None:
         return build_json_response(
             status.HTTP_200_OK, "no job available", {"job": None}

@@ -24,6 +24,7 @@ from mizu_node.types.job import (
     BatchClassifyContext,
     ClassifyContext,
     DataJobPayload,
+    JobStatus,
     JobType,
     PowContext,
     WorkerJobResult,
@@ -512,7 +513,7 @@ def test_job_status(mock_requests, setenvvar):
     assert len(final_statuses) == 5
 
     # Count finished jobs
-    finished_jobs = [s for s in final_statuses if s["finishedAt"] is not None]
+    finished_jobs = [s for s in final_statuses if s["status"] == JobStatus.finished]
     assert len(finished_jobs) == 2
 
     # Verify specific job statuses

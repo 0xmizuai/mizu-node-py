@@ -1,7 +1,7 @@
 from hashlib import sha512
 import os
 import time
-from typing import Iterator
+from typing import Any, Iterator
 
 from bson import ObjectId
 from pymongo.database import Database, Collection
@@ -20,6 +20,9 @@ from mizu_node.security import is_worker_blocked
 from mizu_node.types.job import (
     DataJob,
     DataJobPayload,
+    ErrorCode,
+    ErrorResult,
+    JobStatus,
     JobType,
     PowContext,
     PublishJobRequest,
@@ -38,6 +41,7 @@ def handle_publish_jobs(
     documents = [
         {
             **payload.model_dump(by_alias=True),
+            "status": JobStatus.pending,
             "publishedAt": int(time.time()),
             "publisher": publisher,
         }
@@ -56,7 +60,7 @@ def handle_publish_jobs(
         job_queue(job_type).add_items(
             rclient,
             [job.job_id for job in jobs],
-            [job.model_dump_json(by_alias=True) for job in jobs],
+            jobs,
         )
 
     return [str(id) for id in result.inserted_ids]
@@ -73,18 +77,41 @@ def handle_query_job(
     jobs = list(mdb.find({"_id": {"$in": job_ids[0:1000]}}))
     if not jobs:
         return None
-    return [
-        WorkerJobResult.model_validate({**job, "_id": str(job["_id"])}) for job in jobs
-    ]
+    return [DataJob.model_validate({**job, "_id": str(job["_id"])}) for job in jobs]
 
 
-def handle_take_job(rclient: Redis, worker: str, job_type: JobType) -> WorkerJob | None:
+def handle_take_job(
+    rclient: Redis, jobs: Collection, worker: str, job_type: JobType
+) -> WorkerJob | None:
     if is_worker_blocked(rclient, worker):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="worker is blocked"
         )
-    job = job_queue(job_type).lease(rclient, ASSIGNED_JOB_EXPIRE_TTL_SECONDS)
-    return WorkerJob.model_validate_json(job) if job else None
+
+    result = job_queue(job_type).lease(rclient, ASSIGNED_JOB_EXPIRE_TTL_SECONDS)
+    if result is None:
+        return None
+
+    (job, retry) = result
+    parsed = WorkerJob.model_validate_json(job)
+    if parsed.job_config.max_retry < retry:
+        try:
+            handle_finish_job(
+                rclient,
+                jobs,
+                "internal",
+                WorkerJobResult(
+                    job_id=parsed.job_id,
+                    job_type=parsed.job_type,
+                    error_result=ErrorResult(code=ErrorCode.max_retry_exceeded),
+                ),
+            )
+        except HTTPException as e:
+            print(f"failed to finish job {parsed.job_id} with error {e.detail}")
+            pass
+        return handle_take_job(rclient, worker, job_type)
+    else:
+        return WorkerJob.model_validate_json(job)
 
 
 def handle_finish_job(
@@ -177,6 +204,25 @@ def _validate_pow_result(ctx: PowContext, result: WorkerJobResult):
     return {"powResult": result.pow_result}
 
 
+def _validate_job_result_per_type(doc: Any, result: WorkerJobResult):
+    if doc["jobType"] == JobType.batch_classify:
+        return _validate_batch_classify_result(result)
+    elif doc["jobType"] == JobType.pow:
+        return _validate_pow_result(PowContext(**doc["powCtx"]), result)
+    elif doc["jobType"] == JobType.classify:
+        if result.classify_result is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="classify_result is required",
+            )
+        return {"classifyResult": result.classify_result}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="invalid job type",
+        )
+
+
 def _validate_job_result(jobs: Collection, result: WorkerJobResult):
     doc = jobs.find_one({"_id": ObjectId(result.job_id)})
     if doc is None:
@@ -195,19 +241,7 @@ def _validate_job_result(jobs: Collection, result: WorkerJobResult):
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="job type mismatch"
         )
 
-    if doc["jobType"] == JobType.batch_classify:
-        return _validate_batch_classify_result(result)
-    elif doc["jobType"] == JobType.pow:
-        return _validate_pow_result(PowContext(**doc["powCtx"]), result)
-    elif doc["jobType"] == JobType.classify:
-        if result.classify_result is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="classify_result is required",
-            )
-        return {"classifyResult": result.classify_result}
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="invalid job type",
-        )
+    if result.error_result is not None:
+        return {"errorResult": result.error_result, "status": JobStatus.error}
+
+    return {"status": JobStatus.finished, **_validate_job_result_per_type(doc, result)}
