@@ -41,11 +41,27 @@ class RedisMock:
             value = self.data[key].pop()
         return self._check_pipeline(value)
 
-    def lmove(self, key1, key2):
-        l = self.rpop(key1)
-        if l is not None:
-            self.lpush(key2, l)
-        return self._check_pipeline(l)
+    def lmove(self, source, destination, src="LEFT", dest="RIGHT"):
+        """
+        Move an element from one list to another.
+        src and dest can be 'LEFT' or 'RIGHT' to indicate which end to pop/push from/to
+        """
+        value = None
+        if src == "RIGHT":
+            value = self.rpop(source)
+        else:  # LEFT
+            if source in self.data and len(self.data[source]) > 0:
+                value = self.data[source].pop(0)
+
+        if value is not None:
+            if dest == "RIGHT":
+                if destination not in self.data:
+                    self.data[destination] = []
+                self.data[destination].append(value)
+            else:  # LEFT
+                self.lpush(destination, value)
+
+        return self._check_pipeline(value)
 
     def lrem(self, key, count, value):
         if count != 0:

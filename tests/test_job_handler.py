@@ -189,7 +189,7 @@ def test_take_job_ok(setenvvar):
     )
     assert response1.status_code == 200
     job1 = response1.json()["data"]["job"]
-    assert job1["_id"] == cids[0]
+    assert job1["_id"] == cids[2]
     assert job1["jobType"] == JobType.classify
 
     # Take pow job 1
@@ -201,7 +201,7 @@ def test_take_job_ok(setenvvar):
     )
     assert response2.status_code == 200
     job2 = response2.json()["data"]["job"]
-    assert job2["_id"] == pids[0]
+    assert job2["_id"] == pids[2]
     assert job2["jobType"] == JobType.pow
 
     # Take batch classify job
@@ -213,7 +213,7 @@ def test_take_job_ok(setenvvar):
     )
     assert response3.status_code == 200
     job3 = response3.json()["data"]["job"]
-    assert job3["_id"] == bids[0]
+    assert job3["_id"] == bids[2]
     assert job3["jobType"] == JobType.batch_classify
 
 
@@ -287,8 +287,8 @@ def test_finish_job_ok(mock_requests, setenvvar):
     assert response.json()["message"] == "job not found"
 
     # Publish jobs
-    bids = _publish_jobs(JobType.batch_classify, 3)
-    pids = _publish_jobs(JobType.pow, 3)
+    _publish_jobs(JobType.batch_classify, 3)
+    _publish_jobs(JobType.pow, 3)
 
     response1 = client.get(
         "/take_job",
@@ -305,6 +305,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
     )
     assert response2.status_code == 200
     assert response2.json()["data"]["job"] is not None
+    pid = response2.json()["data"]["job"]["_id"]
 
     response3 = client.get(
         "/take_job",
@@ -313,10 +314,11 @@ def test_finish_job_ok(mock_requests, setenvvar):
     )
     assert response3.status_code == 200
     assert response3.json()["data"]["job"] is not None
+    bid = response3.json()["data"]["job"]["_id"]
 
     # Case 1.1: finishing batch classify job with classify result
     r11 = WorkerJobResult(
-        job_id=bids[0],
+        job_id=bid,
         job_type=JobType.classify,
         classify_result=["t1"],
     )
@@ -330,7 +332,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
 
     # Case 1.2: wrong job result
     r12 = WorkerJobResult(
-        job_id=bids[0], job_type=JobType.batch_classify, classify_result=["t1"]
+        job_id=bid, job_type=JobType.batch_classify, classify_result=["t1"]
     )
     response = client.post(
         "/finish_job",
@@ -342,7 +344,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
 
     # Case 1.3: finishing batch classify job
     r13 = WorkerJobResult(
-        job_id=bids[0],
+        job_id=bid,
         job_type=JobType.batch_classify,
         batch_classify_result=[
             ClassifyResult(
@@ -364,7 +366,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
     assert response.json()["message"] == "ok"
 
     # Verify job 1 in database
-    j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(bids[0])})
+    j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(bid)})
     assert j1["jobType"] == JobType.batch_classify
     # the empty labels are filtered out
     assert len(j1["batchClassifyResult"]) == 1
@@ -373,7 +375,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
 
     # Case 1.3: finishing finished jobs
     r14 = WorkerJobResult(
-        job_id=bids[0],
+        job_id=bid,
         job_type=JobType.batch_classify,
         batch_classify_result=[
             ClassifyResult(
@@ -391,7 +393,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
     assert response.json()["message"] == "job already finished"
 
     # Case 2: job 2 finished by worker2
-    r2 = WorkerJobResult(job_id=pids[0], job_type=JobType.pow, pow_result="166189")
+    r2 = WorkerJobResult(job_id=pid, job_type=JobType.pow, pow_result="166189")
     response = client.post(
         "/finish_job",
         json=r2.model_dump(by_alias=True),
@@ -400,7 +402,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
     assert response.status_code == 200
 
     # Verify job 2 in database
-    j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(pids[0])})
+    j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(pid)})
     assert j2["jobType"] == JobType.pow
     assert j2["powResult"] == "166189"
     assert j2["worker"] == "worker2"
