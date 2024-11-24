@@ -1,3 +1,4 @@
+import os
 import queue
 import threading
 import time
@@ -17,13 +18,11 @@ from mizu_node.types.data_job import (
 )
 from mizu_node.types.service import PublishBatchClassifyJobRequest
 from publisher.common import (
-    CC_MONGO_DB_NAME,
-    CC_MONGO_URL,
-    DataJobPublisher,
     MIZU_NODE_MONGO_URL,
     PUBLISHED_JOBS_COLLECTION,
     MIZU_NODE_MONGO_DB_NAME,
     get_api_key,
+    publish,
 )
 from scripts.importer import (
     R2_ACCESS_KEY,
@@ -33,8 +32,11 @@ from scripts.importer import (
 )
 from scripts.models import ClientJobRecord, WetMetadata
 
+CC_MONGO_URL = os.environ["CC_MONGO_URL"]
+CC_MONGO_DB_NAME = "commoncrawl"
 
-class CommonCrawlDataJobPublisher(DataJobPublisher, threading.Thread):
+
+class CommonCrawlDataJobPublisher(threading.Thread):
 
     def __init__(
         self,
@@ -45,9 +47,8 @@ class CommonCrawlDataJobPublisher(DataJobPublisher, threading.Thread):
         max_processed_jobs: int,
         batch_size: int = 100,
         cool_down: int = 3,
-        service_url: str | None = None,
     ):
-        super().__init__(api_key, service_url)
+        self.api_key = api_key
         self.cc_batch = cc_batch
         self.q = q
         self.batch_size = batch_size
@@ -75,7 +76,8 @@ class CommonCrawlDataJobPublisher(DataJobPublisher, threading.Thread):
             self._build_batch_classify_ctx(metadata, self.classifier_id)
             for metadata in metadatas
         ]
-        job_ids = list(self.publish(PublishBatchClassifyJobRequest(data=contexts)))
+        request = PublishBatchClassifyJobRequest(data=contexts)
+        job_ids = publish("/publish_batch_classify_jobs", self.api_key, request)
         if job_ids:
             job_records = [
                 ClientJobRecord(
@@ -130,9 +132,6 @@ class CommonCrawlDataJobPublisher(DataJobPublisher, threading.Thread):
                 return
             else:
                 yield metadata
-
-    def endpoint(self):
-        return "/publish_batch_classify_jobs"
 
     def run(self):
         print("publisher running")

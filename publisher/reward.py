@@ -1,14 +1,14 @@
-import os
 import random
 import time
 from typing import Optional
 
 from pydantic import BaseModel, Field
 from redis import Redis
-import redis
 from mizu_node.constants import REDIS_URL
+from mizu_node.security import MIZU_ADMIN_USER_API_KEY
 from mizu_node.types.data_job import RewardContext, Token
-from publisher.common import DataJobPublisher
+from mizu_node.types.service import PublishRewardJobRequest
+from publisher.common import publish
 
 
 class RewardJobConfig(BaseModel):
@@ -49,61 +49,93 @@ REWARD_CONFIGS = [
 ]
 
 
-class RewardJobPublisher(DataJobPublisher):
+class RewardJobPublisher(object):
     def __init__(
         self,
-        api_key: str,
-        rclient: Redis,
         cron_gap: int = 60,  # run every 60 seconds
     ):
-        super().__init__(api_key)
-        self.rclient = rclient
+        self.api_key = MIZU_ADMIN_USER_API_KEY
+        self.rclient = Redis.from_url(REDIS_URL, decode_responses=True)
         self.cron_gap = cron_gap
         self.num_of_runs_per_day = 86400 // self.cron_gap
         self.num_of_runs_per_week = 604800 // self.cron_gap
 
-    def budget_per_day_key(self, key: str):
+    def spent_per_day_key(self, key: str):
         day_n = int(time.time()) // 86400
-        return f"{key}:budget_per_day:{day_n}"
+        return f"{key}:spent_per_day:{day_n}"
 
-    def budget_per_week_key(self, key: str):
+    def spent_per_day(self, key: str):
+        spent = self.rclient.get(self.spent_per_day_key(key))
+        return int(spent or 0)
+
+    def spent_per_week_key(self, key: str):
         week_n = int(time.time()) // 604800
-        return f"{key}:budget_per_week:{week_n}"
+        return f"{key}:spent_per_week:{week_n}"
+
+    def spent_per_week(self, key: str):
+        spent = self.rclient.get(key)
+        return int(spent or 0)
+
+    def record_spent_per_day(self, config: RewardJobConfig):
+        self.rclient.incr(self.spent_per_day_key(config.key), config.batch_size)
+
+    def record_spent_per_week(self, config: RewardJobConfig):
+        self.rclient.incr(self.spent_per_week_key(config.key), config.batch_size)
 
     def lottery(self, config: RewardJobConfig):
         if config.budget_per_day:
-            key = self.budget_per_day_key(config.key)
-            spent = self.rclient.get(key)
-            if int(spent or 0) >= config.budget_per_day:
+            spent = self.spent_per_day(config.key)
+            if spent >= config.budget_per_day:
                 return False
 
             max_release_per_day = config.budget_per_day / config.batch_size
             possibility = max_release_per_day / self.num_of_runs_per_day
-            return random.uniform(0, 1) < possibility
+            if random.uniform(0, 1) < possibility:
+                self.record_spent_per_day(config)
+                return True
 
         elif config.budget_per_week:
-            key = self.budget_per_week_key(config.key)
-            spent = self.rclient.get(key)
-            if int(spent or 0) >= config.budget_per_week:
+            spent = self.spent_per_week_key(config.key)
+            if spent >= config.budget_per_week:
                 return False
 
             max_release_per_week = config.budget_per_week / config.batch_size
             possibility = max_release_per_week / self.num_of_runs_per_week
-            return random.uniform(0, 1) < possibility
+            if random.uniform(0, 1) < possibility:
+                self.record_spent_per_week(config)
+                return True
 
         return False
 
     def endpoint(self):
         return "/publish_reward_jobs"
 
+    def print_stats(self):
+        for config in REWARD_CONFIGS:
+            if config.budget_per_day:
+                print(
+                    f"{config.key} spent: {self.spent_per_day(config.key)}, budget: {config.budget_per_day}"
+                )
+            elif config.budget_per_week:
+                print(
+                    f"{config.key} spent: {self.spent_per_week(config.key)}, budget: {config.budget_per_week}"
+                )
+
     def run(self):
         while True:
-            contexts = [config.ctx for config in REWARD_CONFIGS if self.lottery(config)]
-            self.publish(contexts)
+            configs = [config for config in REWARD_CONFIGS if self.lottery(config)]
+            print(
+                f"publishing {len(configs)} reward jobs: {[config.key for config in configs]}"
+            )
+            request = PublishRewardJobRequest(data=[config.ctx for config in configs])
+            publish("/publish_reward_jobs", self.api_key, request)
+
+            # print stats every 10 runs (10 minutes)
+            if random.uniform(0, 1) < 0.1:
+                self.print_stats()
+
             time.sleep(self.cron_gap)
 
 
 def start():
-    rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-    api_key = os.environ.get("MIZU_ADMIN_USER_API_KEY")
-    RewardJobPublisher(api_key, rclient).run()
+    RewardJobPublisher().run()

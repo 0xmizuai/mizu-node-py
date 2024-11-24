@@ -20,6 +20,7 @@ import jwt
 from mizu_node.types.data_job import JobType
 
 ALGORITHM = "EdDSA"
+MIZU_ADMIN_USER_API_KEY = os.environ.get("MIZU_ADMIN_USER_API_KEY")
 
 # ToDo: we should define a schema for the decoded payload
 
@@ -46,7 +47,7 @@ def verify_jwt(token: str, public_key: str) -> str:
 
 
 def verify_api_key(mdb: Collection, token: str) -> str:
-    if token == os.environ.get("MIZU_ADMIN_USER_API_KEY"):
+    if token == MIZU_ADMIN_USER_API_KEY:
         return MIZU_ADMIN_USER
 
     doc = mdb.find_one({"api_key": token})
