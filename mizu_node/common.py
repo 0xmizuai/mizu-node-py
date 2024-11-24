@@ -3,6 +3,7 @@ import traceback
 
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 
 def error_handler(func):
@@ -23,8 +24,16 @@ def error_handler(func):
 
 
 def build_json_response(
-    status_code: status, message: str, data: dict = {}
+    status_code: status, message: str, data: BaseModel = None
 ) -> JSONResponse:
     return JSONResponse(
-        status_code=status_code, content={"message": message, "data": data}
+        status_code=status_code,
+        content={
+            "message": message,
+            "data": data.model_dump(by_alias=True) if data else {},
+        },
     )
+
+
+def build_ok_response(data: BaseModel = None) -> JSONResponse:
+    return build_json_response(status.HTTP_200_OK, "ok", data)

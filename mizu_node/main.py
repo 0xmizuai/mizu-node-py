@@ -1,21 +1,21 @@
 import asyncio
 from contextlib import asynccontextmanager
 import os
+from typing import List
 from bson import ObjectId
 import uvicorn
-from fastapi import FastAPI, Security, status, Depends
+from fastapi import FastAPI, HTTPException, Query, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pymongo import MongoClient
 import redis
 
-from mizu_node.common import build_json_response, error_handler
+from mizu_node.common import build_ok_response, error_handler
 from mizu_node.constants import (
     API_KEY_COLLECTION,
     CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
     MIZU_NODE_MONGO_DB_NAME,
     REDIS_URL,
-    COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
 )
 from mizu_node.job_handler import (
     handle_query_job,
@@ -23,16 +23,32 @@ from mizu_node.job_handler import (
     handle_publish_jobs,
     handle_finish_job,
     handle_queue_len,
+    validate_admin_job,
+    validate_classifiers,
 )
-from mizu_node.security import has_worker_cooled_down, verify_jwt, verify_api_key
+from mizu_node.security import (
+    validate_reward_job_request,
+    validate_worker,
+    verify_jwt,
+    verify_api_key,
+)
 from mizu_node.types.classifier import ClassifierConfig
-from mizu_node.types.job import (
-    JobType,
-    PublishJobRequest,
-    QueryJobRequest,
-    WorkerJobResult,
+from mizu_node.types.data_job import JobType
+from mizu_node.types.service import (
+    FinishJobRequest,
+    FinishJobResponse,
+    PublishBatchClassifyJobRequest,
+    PublishJobResponse,
+    PublishPowJobRequest,
+    PublishRewardJobRequest,
+    QueryClassifierResponse,
+    QueryJobResponse,
+    QueryQueueLenResponse,
+    RegisterClassifierRequest,
+    RegisterClassifierResponse,
+    TakeJobResponse,
 )
-from mizu_node.types.job_queue import queue_clean
+from mizu_node.types.job_queue import job_queue, queue_clean
 
 # Security scheme
 bearer_scheme = HTTPBearer()
@@ -74,15 +90,14 @@ def default():
 @app.post("/register_classifier")
 @error_handler
 def register_classifier(
-    classifier: ClassifierConfig, publisher: str = Depends(get_publisher)
+    request: RegisterClassifierRequest, publisher: str = Depends(get_publisher)
 ):
-    classifier.publisher = publisher
+    request.config.publisher = publisher
     result = app.mdb[CLASSIFIER_COLLECTION].insert_one(
-        classifier.model_dump(by_alias=True)
+        request.config.model_dump(by_alias=True)
     )
-    return build_json_response(
-        status.HTTP_200_OK, "ok", {"id": str(result.inserted_id)}
-    )
+    response = RegisterClassifierResponse(id=str(result.inserted_id))
+    return build_ok_response(response)
 
 
 @app.get("/classifier_info")
@@ -90,28 +105,56 @@ def register_classifier(
 def get_classifier(id: str):
     doc = app.mdb[CLASSIFIER_COLLECTION].find_one({"_id": ObjectId(id)})
     if doc is None:
-        return build_json_response(status.HTTP_404_NOT_FOUND, "classifier not found")
-    return build_json_response(
-        status.HTTP_200_OK,
-        "ok",
-        {"classifier": ClassifierConfig(**doc).model_dump(by_alias=True)},
-    )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="classifier not found"
+        )
+    response = QueryClassifierResponse(classifier=ClassifierConfig(**doc))
+    return build_ok_response(response)
 
 
-@app.post("/publish_jobs")
+@app.post("/publish_pow_jobs")
 @error_handler
-def publish_jobs(req: PublishJobRequest, publisher: str = Depends(get_publisher)):
-    ids = handle_publish_jobs(app.rclient, app.mdb, publisher, req)
-    return build_json_response(status.HTTP_200_OK, "ok", {"jobIds": ids})
-
-
-@app.post("/job_status")
-@error_handler
-def query_job_status(req: QueryJobRequest, _publisher: str = Depends(get_publisher)):
-    jobs = handle_query_job(app.mdb[JOBS_COLLECTION], req)
-    return build_json_response(
-        status.HTTP_200_OK, "ok", {"jobs": [j.model_dump(by_alias=True) for j in jobs]}
+def publish_pow_jobs(
+    request: PublishPowJobRequest,
+    publisher: str = Depends(get_publisher),
+):
+    validate_admin_job(publisher)
+    ids = handle_publish_jobs(
+        app.rclient, app.mdb, publisher, JobType.pow, request.data
     )
+    return build_ok_response(PublishJobResponse(job_ids=ids))
+
+
+@app.post("/publish_reward_jobs")
+@error_handler
+def publish_pow_jobs(
+    request: PublishRewardJobRequest,
+    publisher: str = Depends(get_publisher),
+):
+    validate_admin_job(publisher)
+    ids = handle_publish_jobs(
+        app.rclient, app.mdb, publisher, JobType.reward, request.data
+    )
+    return build_ok_response(PublishJobResponse(job_ids=ids))
+
+
+@app.post("/publish_batch_classify_jobs")
+@error_handler
+def publish_jobs(
+    request: PublishBatchClassifyJobRequest, publisher: str = Depends(get_publisher)
+):
+    validate_classifiers(app.mdb, request.data)
+    ids = handle_publish_jobs(
+        app.rclient, app.mdb, publisher, JobType.batch_classify, request.data
+    )
+    return build_ok_response(PublishJobResponse(job_ids=ids))
+
+
+@app.get("/job_status")
+@error_handler
+def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publisher)):
+    jobs = handle_query_job(app.mdb[JOBS_COLLECTION], ids)
+    return build_ok_response(QueryJobResponse(jobs=jobs))
 
 
 @app.get("/take_job")
@@ -120,25 +163,18 @@ def take_job(
     job_type: JobType,
     user: str = Depends(get_user),
 ):
-    if not has_worker_cooled_down(app.rclient, user):
-        message = f"please retry after ${COOLDOWN_WORKER_EXPIRE_TTL_SECONDS}"
-        return build_json_response(status.HTTP_429_TOO_MANY_REQUESTS, message)
+    validate_worker(app.rclient, user, job_type)
     job = handle_take_job(app.rclient, app.mdb[JOBS_COLLECTION], user, job_type)
-    if job is None:
-        return build_json_response(
-            status.HTTP_200_OK, "no job available", {"job": None}
-        )
-    else:
-        return build_json_response(
-            status.HTTP_200_OK, "ok", {"job": job.model_dump(by_alias=True)}
-        )
+    return build_ok_response(TakeJobResponse(job=job))
 
 
 @app.post("/finish_job")
 @error_handler
-def finish_job(job: WorkerJobResult, user: str = Depends(get_user)):
-    handle_finish_job(app.rclient, app.mdb[JOBS_COLLECTION], user, job)
-    return build_json_response(status.HTTP_200_OK, "ok")
+def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
+    points = handle_finish_job(
+        app.rclient, app.mdb[JOBS_COLLECTION], user, request.job_result
+    )
+    return build_ok_response(FinishJobResponse(rewarded_points=points))
 
 
 @app.get("/stats/queue_len")
@@ -148,7 +184,7 @@ def queue_len(job_type: JobType = JobType.pow):
     Return the number of queued classify jobs.
     """
     q_len = handle_queue_len(app.rclient, job_type)
-    return build_json_response(status.HTTP_200_OK, "ok", {"length": q_len})
+    return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 
 def start_dev():

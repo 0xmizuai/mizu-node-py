@@ -1,9 +1,69 @@
-from mizu_node.security import has_worker_cooled_down
+from fastapi import HTTPException
+import pytest
+
+from mizu_node.security import record_reward_event, validate_worker
+from mizu_node.types.data_job import JobType
 from tests.redis_mock import RedisMock
+from tests.worker_utils import (
+    block_worker,
+    clear_cooldown,
+    set_cooldown,
+    set_reward_stats,
+)
 
 
 def test_has_worker_cooled_down():
     r_client = RedisMock()
-    user = "some_user"
-    assert has_worker_cooled_down(r_client, user) is True
-    assert has_worker_cooled_down(r_client, user) is False
+
+    # given user1 is blocked
+    user1 = "some_user"
+    block_worker(r_client, user1)
+
+    # should throw
+    with pytest.raises(HTTPException) as e:
+        validate_worker(r_client, user1, JobType.pow)
+    assert e.value.status_code == 403
+    assert e.value.detail == "worker is blocked"
+
+    # given user2 has cooldown
+    user2 = "some_user2"
+    set_cooldown(r_client, user2, JobType.pow)
+
+    # should throw
+    with pytest.raises(HTTPException) as e:
+        validate_worker(r_client, user2, JobType.pow)
+    assert e.value.status_code == 429
+    assert e.value.detail.startswith("please retry after")
+
+    # give user cooldown is cleared
+    clear_cooldown(r_client, user2, JobType.pow)
+
+    # should not throw
+    validate_worker(r_client, user2, JobType.pow)
+
+    # given user3 is not active
+    user3 = "some_user3"
+
+    # should throw
+    with pytest.raises(HTTPException) as e:
+        validate_worker(r_client, user3, JobType.reward)
+    assert e.value.status_code == 403
+    assert e.value.detail == "not active user"
+
+    # give user4 is active
+    user4 = "some_user4"
+    set_reward_stats(r_client, user4)
+
+    # should not throw
+    validate_worker(r_client, user4, JobType.reward)
+
+    # given user5 is active and has been rewarded
+    user5 = "some_user5"
+    set_reward_stats(r_client, user5)
+    record_reward_event(r_client, user5)
+
+    # should throw
+    with pytest.raises(HTTPException) as e:
+        validate_worker(r_client, user4, JobType.reward)
+    assert e.value.status_code == 429
+    assert e.value.detail.startswith("please retry after")

@@ -13,24 +13,33 @@ from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
 )
-from mizu_node.security import block_worker
+from mizu_node.security import (
+    mined_points_per_day_key,
+    mined_points_per_hour_key,
+    worker_cooldown_key,
+)
 from mizu_node.types.classifier import (
     ClassifierConfig,
     ClassifyResult,
     DataLabel,
     WetContext,
 )
-from mizu_node.types.job import (
+from mizu_node.types.data_job import (
     BatchClassifyContext,
-    ClassifyContext,
     DataJobPayload,
     JobStatus,
     JobType,
     PowContext,
+    RewardContext,
     WorkerJobResult,
 )
 
 from mizu_node.types.job_queue import job_queues
+from mizu_node.types.service import (
+    FinishJobRequest,
+    FinishJobResponse,
+    RegisterClassifierRequest,
+)
 from tests.redis_mock import RedisMock
 import mongomock
 
@@ -39,6 +48,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from mizu_node.main import app
+from tests.worker_utils import block_worker, clear_cooldown, set_reward_stats
 
 client = TestClient(app)
 
@@ -46,6 +56,7 @@ TEST_API_KEY1 = "test_api_key1"
 TEST_API_KEY2 = "test_api_key2"
 MOCK_MONGO_URL = "mongodb://localhost:27017"
 CLASSIFIER_ID = ObjectId("666666666666666666666666")
+MIZU_ADMIN_USER_API_KEY = "admin_key"
 
 # Convert to PEM format
 private_key_obj = Ed25519PrivateKey.generate()
@@ -62,6 +73,19 @@ public_key = private_key_obj.public_key().public_bytes(
 public_key_str = public_key.decode("utf-8")
 
 
+class MockedHttpResponse:
+    def __init__(self, status_code, json_data):
+        self.status_code = status_code
+        self.json_data = json_data
+
+    def json(self):
+        return self.json_data
+
+    def raise_for_status(self):
+        if self.status_code != 200:
+            raise Exception()
+
+
 def jwt_token(user: str):
     exp = time.time() + 3600  # enough to not expire during this test
     return jwt.encode({"sub": user, "exp": exp}, private_key, algorithm="EdDSA")
@@ -76,18 +100,11 @@ def setenvvar(monkeypatch):
             "JWT_VERIFY_KEY": public_key_str,
             "API_SECRET_KEY": "some-secret",
             "BACKEND_SERVICE_URL": "http://localhost:3000",
+            "MIZU_ADMIN_USER_API_KEY": MIZU_ADMIN_USER_API_KEY,
         }
         for k, v in envvars.items():
             monkeypatch.setenv(k, v)
         yield
-
-
-def _build_classify_ctx(key: str):
-    return ClassifyContext(
-        r2_key=key,
-        byte_size=1,
-        checksum="0x",
-    )
 
 
 def _build_pow_ctx():
@@ -102,24 +119,25 @@ def _build_batch_classify_ctx():
         data_url="https://example.com/data",
         batch_size=1000,
         bytesize=5000000,
-        decompressed_bytesize=20000000,
+        decompressed_byte_size=20000000,
         checksum_md5="0x",
-        classifer_id=str(CLASSIFIER_ID),
+        classifier_id=str(CLASSIFIER_ID),
     )
 
 
+def _build_reward_ctx():
+    return RewardContext(amount=50)
+
+
 def _new_data_job_payload(job_type: str, r2_key: str) -> DataJobPayload:
-    if job_type == JobType.classify:
-        return DataJobPayload(
-            job_type=JobType.classify, classify_ctx=_build_classify_ctx(r2_key)
-        )
+    if job_type == JobType.reward:
+        return _build_reward_ctx()
     elif job_type == JobType.pow:
-        return DataJobPayload(job_type=JobType.pow, pow_ctx=_build_pow_ctx())
+        return _build_pow_ctx()
     elif job_type == JobType.batch_classify:
-        return DataJobPayload(
-            job_type=JobType.batch_classify,
-            batch_classify_ctx=_build_batch_classify_ctx(),
-        )
+        return _build_batch_classify_ctx()
+    else:
+        raise ValueError(f"Invalid job type: {job_type}")
 
 
 def _publish_jobs(job_type: JobType, num_jobs=3):
@@ -127,10 +145,23 @@ def _publish_jobs(job_type: JobType, num_jobs=3):
         _new_data_job_payload(job_type, str(i + 1)).model_dump()
         for i in range(num_jobs)
     ]
+
+    if job_type == JobType.pow:
+        endpoint = "/publish_pow_jobs"
+        token = MIZU_ADMIN_USER_API_KEY
+    elif job_type == JobType.batch_classify:
+        endpoint = "/publish_batch_classify_jobs"
+        token = TEST_API_KEY1
+    elif job_type == JobType.reward:
+        endpoint = "/publish_reward_jobs"
+        token = MIZU_ADMIN_USER_API_KEY
+    else:
+        raise ValueError(f"Invalid job type: {job_type}")
+
     response = client.post(
-        "/publish_jobs",
+        endpoint,
         json={"data": payloads},
-        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     return response.json()["data"]["jobIds"]
@@ -160,7 +191,7 @@ def test_publish_jobs(setenvvar):
     mock_all()
 
     # Test publishing classify jobs
-    job_ids1 = _publish_jobs(JobType.classify, 3)
+    job_ids1 = _publish_jobs(JobType.reward, 3)
     assert len(job_ids1) == 3
 
     # Test publishing pow jobs
@@ -178,20 +209,21 @@ def test_take_job_ok(setenvvar):
 
     # Publish jobs first
     pids = _publish_jobs(JobType.pow, 3)
-    cids = _publish_jobs(JobType.classify, 3)
+    rids = _publish_jobs(JobType.reward, 3)
     bids = _publish_jobs(JobType.batch_classify, 3)
 
-    # Take classify job 1
+    # Take reward job 1
     worker1_jwt = jwt_token("worker1")
+    set_reward_stats(app.rclient, "worker1")
     response1 = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"job_type": int(JobType.reward)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response1.status_code == 200
     job1 = response1.json()["data"]["job"]
-    assert job1["_id"] == cids[2]
-    assert job1["jobType"] == JobType.classify
+    assert job1["_id"] == rids[2]
+    assert job1["jobType"] == JobType.reward
 
     # Take pow job 1
     worker2_jwt = jwt_token("worker2")
@@ -258,15 +290,58 @@ def test_take_job_error(setenvvar):
         params={"job_type": int(JobType.batch_classify)},
         headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert response.status_code == status.HTTP_403_FORBIDDEN
     assert response.json()["message"] == "worker is blocked"
+
+    # user not active for reward job
+    _publish_jobs(JobType.reward, 3)
+    worker4_jwt = jwt_token("worker4")
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.reward)},
+        headers={"Authorization": f"Bearer {worker4_jwt}"},
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.json()["message"] == "not active user"
+
+    # cooling down
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.reward)},
+        headers={"Authorization": f"Bearer {worker4_jwt}"},
+    )
+    assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    assert response.json()["message"].startswith("please retry after")
+
+    # take reward job
+    clear_cooldown(app.rclient, "worker4", JobType.reward)
+    set_reward_stats(app.rclient, "worker4")
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.reward)},
+        headers={"Authorization": f"Bearer {worker4_jwt}"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["data"]["job"] is not None
+
+    # should not be able to take another reward job
+    clear_cooldown(app.rclient, "worker4", JobType.reward)
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.reward)},
+        headers={"Authorization": f"Bearer {worker4_jwt}"},
+    )
+    assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    assert response.json()["message"].startswith("please retry after")
 
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
-def test_finish_job_ok(mock_requests, setenvvar):
+def test_finish_job(mock_requests, setenvvar):
     mock_all()
-    mock_requests.return_value = None
+    mock_requests.return_value = MockedHttpResponse(
+        200, {"data": {"rewarded_points": 50}}
+    )
 
     # Take jobs
     worker1_jwt = jwt_token("worker1")
@@ -276,12 +351,12 @@ def test_finish_job_ok(mock_requests, setenvvar):
     # Try to finish job not in recorded - should fail
     result = WorkerJobResult(
         job_id="123456781234567812345678",  # invalid job id
-        job_type=JobType.batch_classify,
-        classify_result=["t1"],
+        job_type=JobType.pow,
+        pow_result="1234",
     )
     response = client.post(
         "/finish_job",
-        json=result.model_dump(),
+        json=FinishJobRequest(job_result=result).model_dump(),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -325,23 +400,25 @@ def test_finish_job_ok(mock_requests, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=r11.model_dump(),
+        json=FinishJobRequest(job_result=r11).model_dump(),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 422
     assert response.json()["message"] == "job type mismatch"
 
     # Case 1.2: wrong job result
-    r12 = WorkerJobResult(
-        job_id=bid, job_type=JobType.batch_classify, classify_result=["t1"]
-    )
     response = client.post(
         "/finish_job",
-        json=r12.model_dump(),
+        json={
+            "job_result": {
+                "job_id": bid,
+                "job_type": JobType.batch_classify,
+                "classify_result": ["t1"],
+            }
+        },
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 422
-    assert response.json()["message"] == "batch_classify_result is required"
 
     # Case 1.3: finishing batch classify job
     r13 = WorkerJobResult(
@@ -360,11 +437,13 @@ def test_finish_job_ok(mock_requests, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=r13.model_dump(by_alias=True),
+        json=FinishJobRequest(job_result=r13).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
     assert response.json()["message"] == "ok"
+    resp = FinishJobResponse.model_validate(response.json()["data"])
+    assert resp.rewarded_points == 50
 
     # Verify job 1 in database
     j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(bid)})
@@ -387,7 +466,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=r14.model_dump(by_alias=True),
+        json=FinishJobRequest(job_result=r14).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 422
@@ -397,10 +476,12 @@ def test_finish_job_ok(mock_requests, setenvvar):
     r2 = WorkerJobResult(job_id=pid, job_type=JobType.pow, pow_result="166189")
     response = client.post(
         "/finish_job",
-        json=r2.model_dump(by_alias=True),
+        json=FinishJobRequest(job_result=r2).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response.status_code == 200
+    resp = FinishJobResponse.model_validate(response.json()["data"])
+    assert resp.rewarded_points == 50
 
     # Verify job 2 in database
     j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(pid)})
@@ -427,7 +508,7 @@ def test_finish_job_ok(mock_requests, setenvvar):
 
     response = client.post(
         "/finish_job",
-        json=r3.model_dump(by_alias=True),
+        json=FinishJobRequest(job_result=r3).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response.status_code == 410
@@ -438,7 +519,9 @@ def test_finish_job_ok(mock_requests, setenvvar):
 @mock_patch("requests.post")
 def test_job_status(mock_requests, setenvvar):
     mock_all()
-    mock_requests.return_value = None
+    mock_requests.return_value = MockedHttpResponse(
+        200, {"data": {"rewarded_points": 50}}
+    )
 
     # Publish jobs
     bids = _publish_jobs(JobType.batch_classify, 3)
@@ -446,9 +529,9 @@ def test_job_status(mock_requests, setenvvar):
     all_job_ids = bids + pids
 
     # Check initial status
-    response = client.post(
-        "/job_status",
-        json={"jobIds": all_job_ids},
+    params = "&".join([f"ids={i}" for i in all_job_ids])
+    response = client.get(
+        f"/job_status?{params}",
         headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
     )
     assert response.status_code == 200
@@ -477,7 +560,7 @@ def test_job_status(mock_requests, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=result1.model_dump(by_alias=True),
+        json=FinishJobRequest(job_result=result1).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
@@ -497,15 +580,14 @@ def test_job_status(mock_requests, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=result2.model_dump(by_alias=True),
+        json=FinishJobRequest(job_result=result2).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
 
     # Check final status
-    response = client.post(
-        "/job_status",
-        json={"jobIds": all_job_ids},
+    response = client.get(
+        f"/job_status?{params}",
         headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
     )
     assert response.status_code == 200
@@ -526,6 +608,8 @@ def test_job_status(mock_requests, setenvvar):
 
 @mongomock.patch((MOCK_MONGO_URL))
 def test_register_classifier(setenvvar):
+    mock_all()
+
     classifier_config = ClassifierConfig(
         name="test_classifier",
         embedding_model="model1",
@@ -535,11 +619,12 @@ def test_register_classifier(setenvvar):
             DataLabel(label="2", description="2"),
         ],
     )
+    request = RegisterClassifierRequest(config=classifier_config)
 
     # Try with wrong API key first
     response = client.post(
         "/register_classifier",
-        json=classifier_config.model_dump(),
+        json=request.model_dump(),
         headers={"Authorization": "Bearer wrong_key"},
     )
     assert response.status_code == 401
@@ -553,7 +638,7 @@ def test_register_classifier(setenvvar):
     # Register with correct API key
     response = client.post(
         "/register_classifier",
-        json=classifier_config.model_dump(),
+        json=request.model_dump(),
         headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
     )
     assert response.status_code == 200
@@ -574,7 +659,7 @@ def test_register_classifier(setenvvar):
     bad_config["publisher"] = "wrong_publisher"
     response = client.post(
         "/register_classifier",
-        json=bad_config,
+        json=RegisterClassifierRequest(config=bad_config).model_dump(),
         headers={"Authorization": f"Bearer {TEST_API_KEY2}"},
     )
     assert response.status_code == 200
@@ -593,7 +678,9 @@ def test_register_classifier(setenvvar):
 @mock_patch("requests.post")
 def test_pow_validation(mock_requests, setenvvar):
     mock_all()
-    mock_requests.return_value = None
+    mock_requests.return_value = MockedHttpResponse(
+        200, {"data": {"rewarded_points": 50}}
+    )
 
     # Publish a PoW job
     _publish_jobs(JobType.pow, 1)
@@ -608,20 +695,7 @@ def test_pow_validation(mock_requests, setenvvar):
     assert response.status_code == 200
     job_id = response.json()["data"]["job"]["_id"]
 
-    # Case 1: missing pow result
-    result = WorkerJobResult(
-        job_id=job_id,
-        job_type=JobType.pow,
-    )
-    response = client.post(
-        "/finish_job",
-        json=result.model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker_jwt}"},
-    )
-    assert response.status_code == 422
-    assert response.json()["message"] == "pow_result is required"
-
-    # Case 2: invalid pow result
+    # Case 1: invalid pow result
     result = WorkerJobResult(
         job_id=job_id,
         job_type=JobType.pow,
@@ -629,7 +703,7 @@ def test_pow_validation(mock_requests, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=result.model_dump(by_alias=True),
+        json=FinishJobRequest(job_result=result).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker_jwt}"},
     )
     assert response.status_code == 422
@@ -646,7 +720,7 @@ def test_pow_validation(mock_requests, setenvvar):
     )
     response = client.post(
         "/finish_job",
-        json=result.model_dump(by_alias=True),
+        json=FinishJobRequest(job_result=result).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker_jwt}"},
     )
     assert response.status_code == 200

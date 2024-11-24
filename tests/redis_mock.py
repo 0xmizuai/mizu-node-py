@@ -28,6 +28,15 @@ class RedisMock:
         value = self.data.get(key)
         return self._check_pipeline(value)
 
+    def mget(self, keys):
+        values = [self.data.get(k) for k in keys]
+        return self._check_pipeline(values)
+
+    def mset(self, dict):
+        for k, v in dict.items():
+            self.set(k, v)
+        return self._check_pipeline()
+
     def lpush(self, key, *values):
         if key not in self.data:
             self.data[key] = []

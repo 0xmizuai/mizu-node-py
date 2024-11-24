@@ -7,7 +7,7 @@ from redis import Redis
 import uuid
 from redis import Redis
 
-from mizu_node.types.job import DataJob, JobConfig, JobType
+from mizu_node.types.data_job import JobType
 from mizu_node.types.key_prefix import KeyPrefix
 
 
@@ -29,9 +29,7 @@ class JobQueue(object):
     def add_items(self, db: Redis, item_ids: list[str], data: list[str]) -> None:
         pipeline = db.pipeline()
         for item_id, data in zip(item_ids, data):
-            pipeline.set(
-                self._item_data_key.of(item_id), data.model_dump_json(by_alias=True)
-            )
+            pipeline.set(self._item_data_key.of(item_id), data)
             pipeline.lpush(
                 self._main_queue_key, QueueItem(item_id=item_id).model_dump_json()
             )
@@ -48,7 +46,7 @@ class JobQueue(object):
     def get_item_data(self, db: Redis, item_id: str) -> str | None:
         return db.get(self._item_data_key.of(item_id))
 
-    def lease(self, db: Redis, ttl_secs: int) -> Tuple[str, int] | None:
+    def lease(self, db: Redis, ttl_secs: int) -> Tuple[QueueItem, str] | None:
         maybe_item_id: str | None = db.lmove(
             self._main_queue_key,
             self._processing_key,
@@ -65,7 +63,7 @@ class JobQueue(object):
             .setex(self._lease_key.of(item.item_id), ttl_secs, self._session)
             .execute()
         )
-        return (data, item.retry)
+        return (item, data)
 
     def lease_exists(self, db: Redis, item_id: str | bytes) -> bool:
         return db.exists(self._lease_key.of(item_id)) != 0
