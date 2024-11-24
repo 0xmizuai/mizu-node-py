@@ -106,9 +106,6 @@ class RewardJobPublisher(object):
 
         return False
 
-    def endpoint(self):
-        return "/publish_reward_jobs"
-
     def print_stats(self):
         for config in REWARD_CONFIGS:
             if config.budget_per_day:
