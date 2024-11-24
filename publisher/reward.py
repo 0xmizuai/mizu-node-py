@@ -125,7 +125,11 @@ class RewardJobPublisher(object):
                     f"publishing {len(configs)} reward jobs: {[config.key for config in configs]}"
                 )
                 request = PublishRewardJobRequest(
-                    data=[config.ctx for config in configs]
+                    data=[
+                        config.ctx
+                        for config in configs
+                        for _ in range(config.batch_size)
+                    ]
                 )
                 publish("/publish_reward_jobs", self.api_key, request)
             else:
