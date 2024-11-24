@@ -2,20 +2,13 @@ import argparse
 import os
 
 from mizu_node.security import verify_jwt
+from publisher.classifier import list_classifiers, register_classifier
 from scripts.auth import get_api_keys, issue_api_key, sign_jwt
 from scripts.importer import (
     CommonCrawlWetMetadataUploader,
     import_to_r2,
     migrate_metadata,
 )
-from scripts.publisher import (
-    list_classifiers,
-    publish_batch_classify_jobs,
-    publish_pow_jobs,
-    register_classifier,
-)
-
-SERVICE_URL = "http://localhost:8000"
 
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="command", required=True)
@@ -84,12 +77,12 @@ process_parser = subparsers.add_parser(
 )
 process_parser.add_argument("--user", type=str, action="store")
 
-classifer_parser = subparsers.add_parser(
+classifier_parser = subparsers.add_parser(
     "classifier", add_help=False, description="import data to r2"
 )
-classifer_parser.add_argument("--register", action="store_true")
-classifer_parser.add_argument("--list", action="store_true")
-classifer_parser.add_argument("--user", type=str, action="store")
+classifier_parser.add_argument("--register", action="store_true")
+classifier_parser.add_argument("--list", action="store_true")
+classifier_parser.add_argument("--user", type=str, action="store")
 
 migrate_parser = subparsers.add_parser(
     "migrate", add_help=False, description="migrate metadata to mongodb"
@@ -122,11 +115,6 @@ def main():
             raise ValueError("command not implemented yet")
         else:
             raise ValueError("either backup or restore must be presented")
-    elif args.command == "publish":
-        if args.batch:
-            publish_batch_classify_jobs(args.user, args.batch, args.classifier)
-        else:
-            publish_pow_jobs(args.user)
     elif args.command == "migrate":
         migrate_metadata()
     elif args.command == "classifier":

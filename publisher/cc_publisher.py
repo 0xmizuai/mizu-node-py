@@ -1,9 +1,4 @@
-from functools import wraps
-import logging
-import math
-import os
 import queue
-import secrets
 import threading
 import time
 from typing import Iterator
@@ -14,17 +9,21 @@ from pymongo import MongoClient
 import requests
 
 from mizu_node.constants import (
-    API_KEY_COLLECTION,
-    CLASSIFIER_COLLECTION,
     R2_DATA_PREFIX,
 )
-from mizu_node.types.classifier import ClassifierConfig, DataLabel
-from mizu_node.types.job import (
+from mizu_node.types.data_job import (
     BatchClassifyContext,
-    DataJobPayload,
     JobType,
-    PowContext,
-    PublishJobRequest,
+)
+from mizu_node.types.service import PublishBatchClassifyJobRequest
+from publisher.common import (
+    CC_MONGO_DB_NAME,
+    CC_MONGO_URL,
+    DataJobPublisher,
+    MIZU_NODE_MONGO_URL,
+    PUBLISHED_JOBS_COLLECTION,
+    MIZU_NODE_MONGO_DB_NAME,
+    get_api_key,
 )
 from scripts.importer import (
     R2_ACCESS_KEY,
@@ -33,126 +32,6 @@ from scripts.importer import (
     R2_SECRET_KEY,
 )
 from scripts.models import ClientJobRecord, WetMetadata
-
-CC_MONGO_URL = os.environ["CC_MONGO_URL"]
-CC_MONGO_DB_NAME = "commoncrawl"
-
-MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
-MIZU_NODE_MONGO_DB_NAME = "mizu_node"
-
-PUBLISHED_JOBS_COLLECTION = "published_jobs"
-
-
-def retry_with_backoff(max_retries=3, initial_delay=1, max_delay=30):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            delay = initial_delay
-            for retry in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except (requests.RequestException, ValueError) as e:
-                    if retry == max_retries - 1:  # Last retry
-                        raise
-                    wait = min(delay * (2**retry), max_delay)
-                    logging.warning(
-                        f"Attempt {retry + 1} failed: {str(e)}. Retrying in {wait} seconds..."
-                    )
-                    time.sleep(wait)
-            return func(*args, **kwargs)  # Final attempt
-
-        return wrapper
-
-    return decorator
-
-
-class DataJobPublisher(threading.Thread):
-    def __init__(self, api_key: str, service_url: str | None = None):
-        super().__init__()
-        self.api_key = api_key
-        self.service_url = service_url or os.environ.get(
-            "NODE_SERVICE_URL", "http://127.0.0.1:8000"
-        )
-
-    @retry_with_backoff(max_retries=3, initial_delay=2, max_delay=30)
-    def publish(self, jobs: list[DataJobPayload]) -> Iterator[str]:
-        try:
-            response = requests.post(
-                self.service_url + "/publish_jobs",
-                json=PublishJobRequest(data=jobs).model_dump(by_alias=True),
-                headers={"Authorization": "Bearer " + self.api_key},
-                timeout=30,  # Added timeout
-            )
-            response.raise_for_status()  # Raises HTTPError for bad status codes
-
-            data = response.json()
-            if "data" not in data or "jobIds" not in data["data"]:
-                raise ValueError("Invalid response format")
-
-            for job_id in data["data"]["jobIds"]:
-                yield job_id
-
-        except requests.exceptions.HTTPError as e:
-            logging.error(f"HTTP error occurred: {str(e)}, Response: {response.text}")
-            raise ValueError(f"Failed to publish jobs: {str(e)}")
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Network error occurred: {str(e)}")
-            raise
-        except Exception as e:
-            logging.error(f"Unexpected error: {str(e)}")
-            raise ValueError(f"Failed to publish jobs: {str(e)}")
-
-    def run(self):
-        raise NotImplementedError
-
-
-class PowDataJobPublisher(DataJobPublisher):
-    def __init__(
-        self,
-        api_key: str,
-        num_of_threads: int,
-        batch_size: int = 100,
-        cool_down: int = 10,  # 10 seconds
-        threshold: int = 100000,  # auto-publish when queue length is below 100000
-        service_url: str | None = None,
-    ):
-        super().__init__(api_key, service_url)
-        self.batch_size = batch_size
-        self.threshold = threshold
-        self.num_of_threads = num_of_threads
-        self.cool_down = cool_down
-
-    def _build_pow_job_payload(self):
-        return DataJobPayload(
-            job_type=JobType.pow,
-            pow_ctx=PowContext(difficulty=5, seed=secrets.token_hex(32)),
-        )
-
-    def check_queue_stats(self):
-        result = requests.post(
-            self.service_url + "/stats/queue_len?job_type=0",
-        )
-        length = result.json()["data"]["length"]
-        if length > self.threshold:
-            return
-        return math.ceil((self.threshold - length) / self.num_of_threads)
-
-    def publish_in_batches(self, jobs: list[DataJobPayload]) -> Iterator[str]:
-        total = 0
-        while total < len(jobs):
-            if total < self.batch_size:
-                self.publish(jobs[total:-1])
-                return
-            else:
-                self.publish(jobs[total : total + self.batch_size])
-                total += self.batch_size
-
-    def run(self):
-        while True:
-            num_of_jobs = self.check_queue_stats()
-            jobs = [self._build_pow_job_payload() for _ in range(num_of_jobs)]
-            self.publish_in_batches(jobs)
-            time.sleep(self.cool_down)
 
 
 class CommonCrawlDataJobPublisher(DataJobPublisher):
@@ -180,26 +59,23 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
             PUBLISHED_JOBS_COLLECTION
         ]
 
-    def _build_batch_classify_job(self, doc: WetMetadata, classifier_id: str):
+    def _build_batch_classify_ctx(self, doc: WetMetadata, classifier_id: str):
         r2_key = f"{doc.batch}/{doc.type}/{doc.filename}/{doc.chunk}.zz"
-        return DataJobPayload(
-            job_type=JobType.batch_classify,
-            batch_classify_ctx=BatchClassifyContext(
-                data_url=f"{R2_DATA_PREFIX}/{r2_key}",
-                batch_size=doc.chunk_size,
-                bytesize=doc.bytesize,
-                checksum_md5=doc.md5,
-                decompressed_bytesize=doc.decompressed_bytesize,
-                classifer_id=classifier_id,
-            ),
+        return BatchClassifyContext(
+            data_url=f"{R2_DATA_PREFIX}/{r2_key}",
+            batch_size=doc.chunk_size,
+            bytesize=doc.bytesize,
+            checksum_md5=doc.md5,
+            decompressed_bytesize=doc.decompressed_bytesize,
+            classifier_id=classifier_id,
         )
 
     def publish_and_record(self, metadatas: list[WetMetadata]):
-        jobs = [
-            self._build_batch_classify_job(metadata, self.classifier_id)
+        contexts = [
+            self._build_batch_classify_ctx(metadata, self.classifier_id)
             for metadata in metadatas
         ]
-        job_ids = list(self.publish(jobs))
+        job_ids = list(self.publish(PublishBatchClassifyJobRequest(data=contexts)))
         if job_ids:
             job_records = [
                 ClientJobRecord(
@@ -388,25 +264,6 @@ class CommonCrawlDataJobManager(threading.Thread):
             time.sleep(60)
 
 
-def get_api_key(user: str):
-    mclient = MongoClient(MIZU_NODE_MONGO_URL)
-    api_keys = mclient[MIZU_NODE_MONGO_DB_NAME][API_KEY_COLLECTION]
-    doc = api_keys.find_one({"user": user})
-    if doc is None:
-        raise ValueError(f"User {user} not found")
-    return doc["api_key"]
-
-
-def publish_pow_jobs(user: str, num_of_threads: int = 32):
-    api_key = get_api_key(user)
-    threads = []
-    for _ in range(num_of_threads):
-        threads.append(PowDataJobPublisher(api_key))
-        threads[-1].start()
-    for t in threads:
-        t.join()
-
-
 def publish_batch_classify_jobs(
     user: str,
     cc_batch: str,
@@ -439,55 +296,3 @@ def publish_batch_classify_jobs(
     for publisher in publishers:
         publisher.join()
     manager.join()
-
-
-def register_classifier(user: str):
-    api_key = get_api_key(user)
-    config = ClassifierConfig(
-        name="default",
-        embedding_model="Xenova/all-MiniLM-L6-v2",
-        labels=[
-            DataLabel(
-                label="web3_legal",
-                description="laws, compliance, and policies for digital assets and blockchain.",
-            ),
-            DataLabel(
-                label="javascript",
-                description="a programming language commonly used to create interactive effects within web browsers.",
-            ),
-            DataLabel(
-                label="resume",
-                description="structured summary of a person's work experience, education, and skills.",
-            ),
-            DataLabel(
-                label="anti-ai",
-                description="criticism or arguments against AI technology and its societal impacts.",
-            ),
-            DataLabel(
-                label="adult video",
-                description="explicit digital content created for adult entertainment purposes.",
-            ),
-        ],
-    )
-    response = requests.post(
-        f"{os.environ['NODE_SERVICE_URL']}/register_classifier",
-        json=config.model_dump(by_alias=True),
-        headers={"Authorization": "Bearer " + api_key},
-    )
-    response.raise_for_status()
-    return response.json()["data"]["id"]
-
-
-def list_classifiers(user: str):
-    mclient = MongoClient(MIZU_NODE_MONGO_URL)
-    classifiers = mclient[MIZU_NODE_MONGO_DB_NAME][CLASSIFIER_COLLECTION]
-    docs = list(classifiers.find({"publisher": user}))
-    for doc in docs:
-        config = ClassifierConfig(**doc)
-        print(f"\nClassifier ID: {doc['_id']}")
-        print(f"Name: {config.name}")
-        print(f"Embedding Model: {config.embedding_model}")
-        print("\nLabels:")
-        for label in config.labels:
-            print(f"  • {label.label}: {label.description}")
-        print("-" * 80)
