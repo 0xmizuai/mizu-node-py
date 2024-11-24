@@ -94,7 +94,7 @@ class RewardJobPublisher(object):
                 return True
 
         elif config.budget_per_week:
-            spent = self.spent_per_week_key(config.key)
+            spent = self.spent_per_week(config.key)
             if spent >= config.budget_per_week:
                 return False
 
