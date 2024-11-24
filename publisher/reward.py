@@ -113,11 +113,11 @@ class RewardJobPublisher(object):
         for config in REWARD_CONFIGS:
             if config.budget_per_day:
                 logging.info(
-                    f"{config.key} spent: {self.spent_per_day(config.key)}, budget: {config.budget_per_day}"
+                    f">>>>>> {config.key} spent_per_day: {self.spent_per_day(config.key)}, budget_per_day: {config.budget_per_day}"
                 )
             elif config.budget_per_week:
                 logging.info(
-                    f"{config.key} spent: {self.spent_per_week(config.key)}, budget: {config.budget_per_week}"
+                    f">>>>>> {config.key} spent_per_week: {self.spent_per_week(config.key)}, budget_per_week: {config.budget_per_week}"
                 )
 
     def run(self):
