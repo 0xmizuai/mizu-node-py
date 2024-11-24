@@ -2,8 +2,7 @@ from mongomock import MongoClient
 import requests
 from mizu_node.constants import CLASSIFIER_COLLECTION, MIZU_NODE_MONGO_DB_NAME
 from mizu_node.types.classifier import ClassifierConfig, DataLabel
-from publisher.common import MIZU_NODE_MONGO_URL
-from publisher.cc_publisher import get_api_key
+from publisher.common import MIZU_NODE_MONGO_URL, get_api_key
 
 
 def register_classifier(user: str):

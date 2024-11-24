@@ -1,7 +1,6 @@
 import logging
 import os
 import time
-from typing import Iterator
 from mongomock import MongoClient
 from pydantic import BaseModel
 import requests
