@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import secrets
@@ -6,6 +7,8 @@ import requests
 from mizu_node.types.data_job import PowContext
 from mizu_node.types.service import PublishPowJobRequest
 from publisher.common import NODE_SERVICE_URL, publish
+
+logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 class PowDataJobPublisher(object):
@@ -33,14 +36,14 @@ class PowDataJobPublisher(object):
     def run(self):
         while True:
             num_of_jobs = self.check_queue_stats()
-            print(f"will publish {num_of_jobs} pow jobs")
+            logging.info(f"will publish {num_of_jobs} pow jobs")
             num_of_batches = math.ceil(num_of_jobs / self.batch_size)
             for batch in range(num_of_batches):
                 contexts = [
                     PowContext(difficulty=4, seed=secrets.token_hex(32))
                     for _ in range(self.batch_size)
                 ]
-                print(
+                logging.info(
                     f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
                 )
                 publish(
@@ -48,7 +51,7 @@ class PowDataJobPublisher(object):
                     self.api_key,
                     PublishPowJobRequest(data=contexts),
                 )
-            print(f"all pow jobs published")
+            logging.info(f"all pow jobs published")
             time.sleep(self.cooldown)
 
 

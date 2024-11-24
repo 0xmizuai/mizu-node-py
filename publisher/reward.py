@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import time
@@ -8,6 +9,8 @@ from redis import Redis
 from mizu_node.types.data_job import RewardContext, Token
 from mizu_node.types.service import PublishRewardJobRequest
 from publisher.common import publish
+
+logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 class RewardJobConfig(BaseModel):
@@ -109,11 +112,11 @@ class RewardJobPublisher(object):
     def print_stats(self):
         for config in REWARD_CONFIGS:
             if config.budget_per_day:
-                print(
+                logging.info(
                     f"{config.key} spent: {self.spent_per_day(config.key)}, budget: {config.budget_per_day}"
                 )
             elif config.budget_per_week:
-                print(
+                logging.info(
                     f"{config.key} spent: {self.spent_per_week(config.key)}, budget: {config.budget_per_week}"
                 )
 
@@ -121,7 +124,7 @@ class RewardJobPublisher(object):
         while True:
             configs = [config for config in REWARD_CONFIGS if self.lottery(config)]
             if len(configs) > 0:
-                print(
+                logging.info(
                     f"publishing {len(configs)} reward jobs: {[config.key for config in configs]}"
                 )
                 request = PublishRewardJobRequest(
@@ -133,7 +136,7 @@ class RewardJobPublisher(object):
                 )
                 publish("/publish_reward_jobs", self.api_key, request)
             else:
-                print("no reward job to publish")
+                logging.info("no reward job to publish")
 
             # print stats every 10 runs (10 minutes)
             if random.uniform(0, 1) < 0.1:
