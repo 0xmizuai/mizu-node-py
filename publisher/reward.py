@@ -120,11 +120,14 @@ class RewardJobPublisher(object):
     def run(self):
         while True:
             configs = [config for config in REWARD_CONFIGS if self.lottery(config)]
-            print(
-                f"publishing {len(configs)} reward jobs: {[config.key for config in configs]}"
-            )
-            request = PublishRewardJobRequest(data=[config.ctx for config in configs])
-            publish("/publish_reward_jobs", self.api_key, request)
+            if len(configs) > 0:
+                print(
+                    f"publishing {len(configs)} reward jobs: {[config.key for config in configs]}"
+                )
+                request = PublishRewardJobRequest(
+                    data=[config.ctx for config in configs]
+                )
+                publish("/publish_reward_jobs", self.api_key, request)
 
             # print stats every 10 runs (10 minutes)
             if random.uniform(0, 1) < 0.1:

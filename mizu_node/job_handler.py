@@ -52,6 +52,11 @@ def handle_publish_jobs(
         | list[ClassifyContext]
     ),
 ) -> Iterator[str]:
+    if len(contexts) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="data cannot be empty"
+        )
+
     jobs = [
         DataJobInputNoId(
             job_type=job_type,
