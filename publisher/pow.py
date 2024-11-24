@@ -1,8 +1,8 @@
 import math
+import os
 import secrets
 import time
 import requests
-from mizu_node.security import MIZU_ADMIN_USER_API_KEY
 from mizu_node.types.data_job import PowContext
 from mizu_node.types.service import PublishPowJobRequest
 from publisher.common import NODE_SERVICE_URL, publish
@@ -16,7 +16,7 @@ class PowDataJobPublisher(object):
         cooldown: int = 300,  # check every 5 mins
         threshold: int = 500_000,  # auto-publish when queue length is below 1_000_000
     ):
-        self.api_key = MIZU_ADMIN_USER_API_KEY
+        self.api_key = os.environ["MIZU_ADMIN_USER_API_KEY"]
         self.batch_size = batch_size
         self.threshold = threshold
         self.cooldown = cooldown

@@ -1,3 +1,4 @@
+import os
 import random
 import time
 from typing import Optional
@@ -5,7 +6,6 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from redis import Redis
 from mizu_node.constants import REDIS_URL
-from mizu_node.security import MIZU_ADMIN_USER_API_KEY
 from mizu_node.types.data_job import RewardContext, Token
 from mizu_node.types.service import PublishRewardJobRequest
 from publisher.common import publish
@@ -54,7 +54,7 @@ class RewardJobPublisher(object):
         self,
         cron_gap: int = 60,  # run every 60 seconds
     ):
-        self.api_key = MIZU_ADMIN_USER_API_KEY
+        self.api_key = os.environ["MIZU_ADMIN_USER_API_KEY"]
         self.rclient = Redis.from_url(REDIS_URL, decode_responses=True)
         self.cron_gap = cron_gap
         self.num_of_runs_per_day = 86400 // self.cron_gap
