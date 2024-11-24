@@ -128,6 +128,8 @@ class RewardJobPublisher(object):
                     data=[config.ctx for config in configs]
                 )
                 publish("/publish_reward_jobs", self.api_key, request)
+            else:
+                print("no reward job to publish")
 
             # print stats every 10 runs (10 minutes)
             if random.uniform(0, 1) < 0.1:

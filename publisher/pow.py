@@ -33,18 +33,22 @@ class PowDataJobPublisher(object):
     def run(self):
         while True:
             num_of_jobs = self.check_queue_stats()
+            print(f"will publish {num_of_jobs} pow jobs")
             num_of_batches = math.ceil(num_of_jobs / self.batch_size)
-            for _ in range(num_of_batches):
+            for batch in range(num_of_batches):
                 contexts = [
                     PowContext(difficulty=4, seed=secrets.token_hex(32))
                     for _ in range(self.batch_size)
                 ]
-                print(f"Publishing {len(contexts)} pow jobs")
+                print(
+                    f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
+                )
                 publish(
                     "/publish_pow_jobs",
                     self.api_key,
                     PublishPowJobRequest(data=contexts),
                 )
+            print(f"all pow jobs published")
             time.sleep(self.cooldown)
 
 
