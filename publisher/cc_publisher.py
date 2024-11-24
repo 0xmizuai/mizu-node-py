@@ -34,7 +34,7 @@ from scripts.importer import (
 from scripts.models import ClientJobRecord, WetMetadata
 
 
-class CommonCrawlDataJobPublisher(DataJobPublisher):
+class CommonCrawlDataJobPublisher(DataJobPublisher, threading.Thread):
 
     def __init__(
         self,
@@ -130,6 +130,9 @@ class CommonCrawlDataJobPublisher(DataJobPublisher):
                 return
             else:
                 yield metadata
+
+    def endpoint(self):
+        return "/publish_batch_classify_jobs"
 
     def run(self):
         print("publisher running")

@@ -1,7 +1,7 @@
 from hashlib import sha512
 import os
 import time
-from typing import Iterator, Set
+from typing import Iterator
 
 from bson import ObjectId
 from pymongo.database import Database, Collection

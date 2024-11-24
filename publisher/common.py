@@ -51,7 +51,7 @@ def retry_with_backoff(max_retries=3, initial_delay=1, max_delay=30):
     return decorator
 
 
-class DataJobPublisher(threading.Thread):
+class DataJobPublisher(object):
     def __init__(self, api_key: str):
         super().__init__()
         self.api_key = api_key
@@ -61,7 +61,7 @@ class DataJobPublisher(threading.Thread):
     def publish(self, request: BaseModel) -> Iterator[str]:
         try:
             response = requests.post(
-                f"{self.service_url}{endpoint()}",
+                f"{self.service_url}{self.endpoint()}",
                 json=request.model_dump(by_alias=True),
                 headers={"Authorization": "Bearer " + self.api_key},
                 timeout=30,  # Added timeout

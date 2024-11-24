@@ -27,7 +27,6 @@ from mizu_node.job_handler import (
     validate_classifiers,
 )
 from mizu_node.security import (
-    validate_reward_job_request,
     validate_worker,
     verify_jwt,
     verify_api_key,
