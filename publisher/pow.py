@@ -57,6 +57,6 @@ class PowDataJobPublisher(DataJobPublisher):
             time.sleep(self.cool_down)
 
 
-def publish_pow_jobs(num_of_threads: int = 1):
+def start(num_of_threads: int = 1):
     api_key = os.environ.get("MIZU_ADMIN_USER_API_KEY")
     PowDataJobPublisher(api_key, num_of_threads).run()

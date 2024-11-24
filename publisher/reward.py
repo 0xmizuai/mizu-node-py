@@ -103,7 +103,7 @@ class RewardJobPublisher(DataJobPublisher):
             time.sleep(self.cron_gap)
 
 
-def publish_reward_jobs():
+def start():
     rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
     api_key = os.environ.get("MIZU_ADMIN_USER_API_KEY")
     RewardJobPublisher(api_key, rclient).run()
