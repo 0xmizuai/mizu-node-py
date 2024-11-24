@@ -1,26 +1,12 @@
 import logging
 import os
 import time
-from mongomock import MongoClient
 from pydantic import BaseModel
 import requests
-from mizu_node.constants import API_KEY_COLLECTION
 
-MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
 MIZU_NODE_MONGO_DB_NAME = "mizu_node"
-
 PUBLISHED_JOBS_COLLECTION = "published_jobs"
-
 NODE_SERVICE_URL = os.environ["NODE_SERVICE_URL"]
-
-
-def get_api_key(user: str):
-    mclient = MongoClient(MIZU_NODE_MONGO_URL)
-    api_keys = mclient[MIZU_NODE_MONGO_DB_NAME][API_KEY_COLLECTION]
-    doc = api_keys.find_one({"user": user})
-    if doc is None:
-        raise ValueError(f"User {user} not found")
-    return doc["api_key"]
 
 
 def retry_with_backoff(max_retries=3, initial_delay=1, max_delay=30):

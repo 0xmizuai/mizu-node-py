@@ -10,6 +10,7 @@ from pymongo import MongoClient
 import requests
 
 from mizu_node.constants import (
+    API_KEY_COLLECTION,
     R2_DATA_PREFIX,
 )
 from mizu_node.types.data_job import (
@@ -18,10 +19,8 @@ from mizu_node.types.data_job import (
 )
 from mizu_node.types.service import PublishBatchClassifyJobRequest
 from publisher.common import (
-    MIZU_NODE_MONGO_URL,
     PUBLISHED_JOBS_COLLECTION,
     MIZU_NODE_MONGO_DB_NAME,
-    get_api_key,
     publish,
 )
 from scripts.importer import (
@@ -34,6 +33,17 @@ from scripts.models import ClientJobRecord, WetMetadata
 
 CC_MONGO_URL = os.environ["CC_MONGO_URL"]
 CC_MONGO_DB_NAME = "commoncrawl"
+
+MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
+
+
+def get_api_key(user: str):
+    mclient = MongoClient(MIZU_NODE_MONGO_URL)
+    api_keys = mclient[MIZU_NODE_MONGO_DB_NAME][API_KEY_COLLECTION]
+    doc = api_keys.find_one({"user": user})
+    if doc is None:
+        raise ValueError(f"User {user} not found")
+    return doc["api_key"]
 
 
 class CommonCrawlDataJobPublisher(threading.Thread):
