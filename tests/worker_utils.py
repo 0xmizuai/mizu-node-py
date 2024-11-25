@@ -1,9 +1,11 @@
 import json
 import time
+from mizu_node.constants import MAX_UNCLAIMED_REWARD
 from mizu_node.security import (
     blocked_worker_key,
     mined_points_per_day_key,
     mined_points_per_hour_key,
+    unclaimed_reward_key,
     worker_cooldown_key,
 )
 from mizu_node.types.data_job import JobType
@@ -31,6 +33,10 @@ def set_reward_stats_strict(rclient: RedisMock, worker: str):
 def set_reward_stats(rclient: RedisMock, worker: str):
     day = int(time.time()) // 86400
     rclient.set(mined_points_per_day_key(worker, day - 1), 200)
+
+
+def set_unclaimed_reward(rclient: RedisMock, worker: str):
+    rclient.set(unclaimed_reward_key(worker), MAX_UNCLAIMED_REWARD)
 
 
 def set_cooldown(rclient: RedisMock, worker: str, job_type: JobType):

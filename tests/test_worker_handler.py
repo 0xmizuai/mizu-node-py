@@ -9,10 +9,11 @@ from tests.worker_utils import (
     clear_cooldown,
     set_cooldown,
     set_reward_stats,
+    set_unclaimed_reward,
 )
 
 
-def test_has_worker_cooled_down():
+def test_validate_worker():
     r_client = RedisMock()
 
     # given user1 is blocked
@@ -67,3 +68,14 @@ def test_has_worker_cooled_down():
         validate_worker(r_client, user4, JobType.reward)
     assert e.value.status_code == 429
     assert e.value.detail.startswith("please retry after")
+
+    # give user 6 is active and
+    user6 = "some_user6"
+    set_reward_stats(r_client, user6)
+    set_unclaimed_reward(r_client, user6)
+
+    # should throw
+    with pytest.raises(HTTPException) as e:
+        validate_worker(r_client, user6, JobType.reward)
+    assert e.value.status_code == 403
+    assert e.value.detail == "unclaimed reward limit reached"
