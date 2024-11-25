@@ -19,7 +19,7 @@ CLASSIFIER_COLLECTION = "classifiers"
 R2_DATA_PREFIX = "https://rawdata.mizu.technology"
 
 MIZU_NODE_MONGO_DB_NAME = os.environ.get("MIZU_NODE_MONGO_DB_NAME", "mizu_node")
-DEFAULT_POW_DIFFICULTY = 5
+DEFAULT_POW_DIFFICULTY = int(os.environ.get("DEFAULT_POW_DIFFICULTY", 4))
 
 MIZU_ADMIN_USER = "mizu.admin"
 ACTIVE_USER_PAST_24H_THRESHOLD = int(
