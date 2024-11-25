@@ -77,7 +77,7 @@ class QueryQueueLenResponse(BaseModel):
 class FinishJobRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_result: WorkerJobResult
+    job_result: WorkerJobResult = Field(alias="jobResult")
 
 
 class FinishJobResponse(BaseModel):
