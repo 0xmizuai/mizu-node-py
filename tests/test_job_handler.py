@@ -69,7 +69,7 @@ public_key_str = public_key.decode("utf-8")
 
 
 class MockedHttpResponse:
-    def __init__(self, status_code, json_data):
+    def __init__(self, status_code, json_data={}):
         self.status_code = status_code
         self.json_data = json_data
 
@@ -334,9 +334,7 @@ def test_take_job_error(setenvvar):
 @mock_patch("requests.post")
 def test_finish_job(mock_requests, setenvvar):
     mock_all()
-    mock_requests.return_value = MockedHttpResponse(
-        200, {"data": {"rewarded_points": 50}}
-    )
+    mock_requests.return_value = MockedHttpResponse(200)
 
     # Take jobs
     worker1_jwt = jwt_token("worker1")
@@ -438,7 +436,7 @@ def test_finish_job(mock_requests, setenvvar):
     assert response.status_code == 200
     assert response.json()["message"] == "ok"
     resp = FinishJobResponse.model_validate(response.json()["data"])
-    assert resp.rewarded_points == 50
+    assert resp.rewarded_points == 0.1
 
     # Verify job 1 in database
     j1 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(bid)})
@@ -476,7 +474,7 @@ def test_finish_job(mock_requests, setenvvar):
     )
     assert response.status_code == 200
     resp = FinishJobResponse.model_validate(response.json()["data"])
-    assert resp.rewarded_points == 50
+    assert resp.rewarded_points == 0.1
 
     # Verify job 2 in database
     j2 = app.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(pid)})
@@ -514,9 +512,7 @@ def test_finish_job(mock_requests, setenvvar):
 @mock_patch("requests.post")
 def test_job_status(mock_requests, setenvvar):
     mock_all()
-    mock_requests.return_value = MockedHttpResponse(
-        200, {"data": {"rewarded_points": 50}}
-    )
+    mock_requests.return_value = MockedHttpResponse(200)
 
     # Publish jobs
     bids = _publish_jobs(JobType.batch_classify, 3)
@@ -673,9 +669,7 @@ def test_register_classifier(setenvvar):
 @mock_patch("requests.post")
 def test_pow_validation(mock_requests, setenvvar):
     mock_all()
-    mock_requests.return_value = MockedHttpResponse(
-        200, {"data": {"rewarded_points": 50}}
-    )
+    mock_requests.return_value = MockedHttpResponse(200)
 
     # Publish a PoW job
     _publish_jobs(JobType.pow, 1)

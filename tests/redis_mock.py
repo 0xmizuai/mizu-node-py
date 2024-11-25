@@ -102,6 +102,12 @@ class RedisMock:
         self.data[key] += value
         return self._check_pipeline()
 
+    def incrbyfloat(self, key, value):
+        if key not in self.data:
+            self.data[key] = 0
+        self.data[key] += value
+        return self._check_pipeline()
+
     def decrby(self, key, value):
         if key not in self.data:
             self.data[key] = 0

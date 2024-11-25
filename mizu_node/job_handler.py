@@ -18,7 +18,12 @@ from mizu_node.constants import (
     MAX_RETRY_ALLOWED,
     MIZU_ADMIN_USER,
 )
-from mizu_node.security import record_mined_points, record_reward_event
+from mizu_node.security import (
+    record_mined_points,
+    record_reward_claim,
+    record_reward_event,
+    total_mined_points_in_past_24h,
+)
 from mizu_node.types.data_job import (
     BatchClassifyContext,
     ClassifyContext,
@@ -36,8 +41,6 @@ from mizu_node.types.data_job import (
 )
 from mizu_node.types.job_queue import job_queue
 from mizu_node.types.service import SettleRewardRequest
-
-SETTLE_REWARD_URL = os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards"
 
 
 def handle_publish_jobs(
@@ -137,7 +140,7 @@ def handle_take_job(
 
 def handle_finish_job(
     rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
-):
+) -> float:
     doc = jobs.find_one({"_id": ObjectId(job_result.job_id)})
     if doc is None:
         raise HTTPException(
@@ -163,21 +166,19 @@ def handle_finish_job(
 
     rewarded_points = 0
     if job_status == JobStatus.finished:
+        settle_reward = _calculate_reward(rclient, user, parsed, job_result)
         response = requests.post(
-            SETTLE_REWARD_URL,
-            json=SettleRewardRequest(
-                job_id=job_result.job_id,
-                job_type=job_result.job_type,
-                worker=user,
-                ctx=parsed.reward_ctx,
-                output=job_result.reward_result,
-            ).model_dump(by_alias=True),
+            os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
+            json=settle_reward.model_dump(by_alias=True),
             headers={"Authorization": f"Bearer {os.environ['API_SECRET_KEY']}"},
         )
         response.raise_for_status()
-        rewarded_points = response.json().get("data", {}).get("rewarded_points", 0)
-        if rewarded_points > 0 and job_result.job_type != JobType.reward:
-            record_mined_points(rclient, user, rewarded_points)
+        if settle_reward.token is None:
+            rewarded_points = settle_reward.amount
+        if job_result.job_type != JobType.reward:
+            record_mined_points(rclient, user, settle_reward.amount)
+        else:
+            record_reward_claim(rclient, user)
     return rewarded_points
 
 
@@ -244,3 +245,26 @@ def _validate_job_result(job: DataJobInputNoId, result: WorkerJobResult) -> JobS
             result for result in result.batch_classify_result if len(result.labels) > 0
         ]
     return JobStatus.finished
+
+
+def _calculate_reward(
+    rclient: Redis, worker: str, job: DataJobInputNoId, result: WorkerJobResult
+) -> SettleRewardRequest:
+    if job.job_type == JobType.reward:
+        return SettleRewardRequest(
+            job_id=result.job_id,
+            job_type=job.job_type,
+            worker=worker,
+            token=job.reward_ctx.token,
+            amount=job.reward_ctx.amount,
+            recipient=result.reward_result.recipient,
+        )
+
+    past_24h_points = total_mined_points_in_past_24h(rclient, worker)
+    factor = 1 if past_24h_points < 500 else (1000 - past_24h_points) / 1000
+    return SettleRewardRequest(
+        job_id=result.job_id,
+        job_type=job.job_type,
+        worker=worker,
+        amount=0.1 * factor,
+    )

@@ -6,11 +6,11 @@ from pymongo.database import Collection
 from redis import Redis
 
 from mizu_node.constants import (
-    ACTIVE_USER_PAST_24H_THRESHOLD,
     ACTIVE_USER_PAST_7D_THRESHOLD,
     BLOCKED_WORKER_PREFIX,
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
     COOLDOWN_WORKER_PREFIX,
+    MAX_UNCLAIMED_REWARD,
     MIN_REWARD_GAP,
     MIZU_ADMIN_USER,
 )
@@ -80,58 +80,58 @@ def mined_points_per_day_key(worker: str, epoch: int):
     return f"points:{worker}:day:{epoch}"
 
 
-def record_mined_points(rclient: Redis, worker: str, points: int):
-    now = int(time.time())
-    epoch = now // 3600
-    day = now // 86400
-    rclient.pipeline().incrby(mined_points_per_hour_key(worker, epoch), points).incrby(
-        mined_points_per_day_key(worker, day), points
-    ).execute()
+def record_mined_points(rclient: Redis, worker: str, points: float):
+    if points > 0.0:
+        now = int(time.time())
+        epoch = now // 3600
+        day = now // 86400
+        pipeline = rclient.pipeline()
+        pipeline.incrbyfloat(mined_points_per_hour_key(worker, epoch), points)
+        pipeline.incrbyfloat(mined_points_per_day_key(worker, day), points)
+        pipeline.execute()
 
 
-def is_active_in_past_24h(rclient: Redis, worker: str) -> int:
+def total_mined_points_in_past_24h(rclient: Redis, worker: str) -> float:
     epoch = int(time.time()) // 3600
     keys = [mined_points_per_hour_key(worker, epoch - i) for i in range(0, 24)]
     values = rclient.mget(keys)
-    return sum([int(v or 0) for v in values]) > ACTIVE_USER_PAST_24H_THRESHOLD
-
-
-def is_active_in_past_7days(rclient: Redis, worker: str) -> int:
-    day = int(time.time()) // 86400
-    # exclude today because:
-    #  1. it could be the start of the day where no one has mined any points
-    #  2. it's already validated by past 24h check
-    keys = [mined_points_per_day_key(worker, day - i) for i in range(1, 8)]
-    values = rclient.mget(keys)
-    return any([int(v or 0) > ACTIVE_USER_PAST_7D_THRESHOLD for v in values])
+    return sum([float(v or 0) for v in values])
 
 
 def last_rewarded_key(worker: str) -> str:
-    return f"{JobType.reward}:last_rewarded:{worker}"
+    return f"last_rewarded:{JobType.reward}:{worker}"
+
+
+def unclaimed_reward_key(worker: str) -> str:
+    return f"unclaimed_reward:{JobType.reward}:{worker}"
 
 
 def record_reward_event(rclient: Redis, worker: str):
-    rclient.set(last_rewarded_key(worker), int(time.time()))
+    pipeline = rclient.pipeline()
+    pipeline.set(last_rewarded_key(worker), int(time.time()))
+    pipeline.incrby(unclaimed_reward_key(worker), 1)
+    pipeline.execute()
 
 
-def validate_reward_job_request(rclient: Redis, worker: str) -> bool:
-    last_rewarded = rclient.get(last_rewarded_key(worker))
-    if int(last_rewarded or 0) + MIN_REWARD_GAP > int(time.time()):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="please retry after {MIN_REWARD_GAP} seconds",
-        )
-
-    if not is_active_in_past_7days(rclient, worker):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="not active user",
-        )
+def record_reward_claim(rclient: Redis, worker: str):
+    rclient.decrby(unclaimed_reward_key(worker), 1)
 
 
 def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
+    cooldown_key = worker_cooldown_key(worker, job_type)
+    keys = [
+        blocked_worker_key(worker),
+        cooldown_key,
+    ]
+    if job_type == JobType.reward:
+        keys.extend([last_rewarded_key(worker), unclaimed_reward_key(worker)])
+        day = int(time.time()) // 86400
+        keys.extend([mined_points_per_day_key(worker, day - i) for i in range(0, 7)])
+
+    values = r_client.mget(keys)
+
     # check if worker is blocked
-    if r_client.exists(blocked_worker_key(worker)):
+    if values[0] is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="worker is blocked",
@@ -139,13 +139,31 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
 
     # check if worker is in cool down
     ttl = get_cooldown_ttl(job_type)
-    cooldown_key = worker_cooldown_key(worker, job_type)
-    if r_client.exists(cooldown_key):
+    if values[1] is not None:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="please retry after ${ttl} seconds",
+            detail=f"please retry after {ttl} seconds",
         )
     r_client.setex(cooldown_key, ttl, int(time.time()))
 
     if job_type == JobType.reward:
-        validate_reward_job_request(r_client, worker)
+        # check last rewarded time
+        if int(values[2] or 0) + MIN_REWARD_GAP > int(time.time()):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="please retry after {MIN_REWARD_GAP} seconds",
+            )
+
+        # check total unclaimed rewards
+        if int(values[3] or 0) >= MAX_UNCLAIMED_REWARD:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="unclaimed reward limit reached",
+            )
+
+        # check if user is active in past 7 days
+        if all([float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[4:]]):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="not active user",
+            )
