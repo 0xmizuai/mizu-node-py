@@ -188,8 +188,24 @@ def queue_len(job_type: JobType = JobType.pow):
     return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 
+class MyServer(uvicorn.Server):
+    async def run(self, sockets=None):
+        self.config.setup_event_loop()
+        return await self.serve(sockets=sockets)
+
+
+async def run():
+    apps = []
+    config1 = uvicorn.Config("mizu_node.dummy_service:app", host="0.0.0.0", port=8001)
+    config2 = uvicorn.Config("mizu_node.main:app", host="0.0.0.0", port=8000)
+    apps.append(MyServer(config=config1).run())
+    apps.append(MyServer(config=config2).run())
+    return await asyncio.gather(*apps)
+
+
 def start_dev():
-    uvicorn.run("mizu_node.main:app", host="0.0.0.0", port=8000, reload=True)
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run())
 
 
 # the number of workers is defined by $WEB_CONCURRENCY env as default
