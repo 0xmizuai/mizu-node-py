@@ -217,7 +217,7 @@ def test_take_job_ok(setenvvar):
     )
     assert response1.status_code == 200
     job1 = response1.json()["data"]["job"]
-    assert job1["_id"] == rids[2]
+    assert job1["_id"] == rids[0]
     assert job1["jobType"] == JobType.reward
 
     # Take pow job 1
@@ -229,7 +229,7 @@ def test_take_job_ok(setenvvar):
     )
     assert response2.status_code == 200
     job2 = response2.json()["data"]["job"]
-    assert job2["_id"] == pids[2]
+    assert job2["_id"] == pids[0]
     assert job2["jobType"] == JobType.pow
 
     # Take batch classify job
@@ -241,7 +241,7 @@ def test_take_job_ok(setenvvar):
     )
     assert response3.status_code == 200
     job3 = response3.json()["data"]["job"]
-    assert job3["_id"] == bids[2]
+    assert job3["_id"] == bids[0]
     assert job3["jobType"] == JobType.batch_classify
 
 

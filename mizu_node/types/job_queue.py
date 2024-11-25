@@ -53,20 +53,20 @@ class JobQueue(object):
         maybe_item_id: str | None = db.lmove(
             self._main_queue_key,
             self._processing_key,
-            src="RGIHT",
+            src="RIGHT",
             dest="LEFT",
         )
         if maybe_item_id is None:
             return None
 
         item = QueueItem.model_validate_json(maybe_item_id)
-        (data,) = (
+        values = (
             db.pipeline()
             .get(self._item_data_key.of(item.item_id))
             .setex(self._lease_key.of(item.item_id), ttl_secs, self._session)
             .execute()
         )
-        return (item, data)
+        return (item, values[0])
 
     def lease_exists(self, db: Redis, item_id: str | bytes) -> bool:
         return db.exists(self._lease_key.of(item_id)) != 0
