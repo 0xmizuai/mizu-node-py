@@ -197,7 +197,9 @@ class MyServer(uvicorn.Server):
 async def run():
     apps = []
     config1 = uvicorn.Config("mizu_node.dummy_service:app", host="0.0.0.0", port=8001)
-    config2 = uvicorn.Config("mizu_node.main:app", host="0.0.0.0", port=8000)
+    config2 = uvicorn.Config(
+        "mizu_node.main:app", host="0.0.0.0", port=8000, reload=True
+    )
     apps.append(MyServer(config=config1).run())
     apps.append(MyServer(config=config2).run())
     return await asyncio.gather(*apps)

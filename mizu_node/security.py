@@ -151,7 +151,7 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
         if int(values[2] or 0) + MIN_REWARD_GAP > int(time.time()):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="please retry after {MIN_REWARD_GAP} seconds",
+                detail=f"please retry after {MIN_REWARD_GAP} seconds",
             )
 
         # check total unclaimed rewards
