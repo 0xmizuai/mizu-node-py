@@ -1,4 +1,5 @@
 from hashlib import sha512
+import logging
 import os
 import time
 from typing import Iterator
@@ -41,6 +42,8 @@ from mizu_node.types.data_job import (
 )
 from mizu_node.types.job_queue import job_queue
 from mizu_node.types.service import SettleRewardRequest
+
+logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 def handle_publish_jobs(
@@ -129,7 +132,9 @@ def handle_take_job(
                 ),
             )
         except HTTPException as e:
-            print(f"failed to retire job {item.item_id} with error {e.detail}")
+            logging.warning(
+                f"failed to retire job {item.item_id} with error {e.detail}"
+            )
             pass
         return handle_take_job(rclient, worker, job_type)
     else:

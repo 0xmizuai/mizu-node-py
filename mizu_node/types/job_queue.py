@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Tuple
 import uuid
@@ -9,6 +10,8 @@ from redis import Redis
 
 from mizu_node.types.data_job import JobType
 from mizu_node.types.key_prefix import KeyPrefix
+
+logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 class QueueItem(BaseModel):
@@ -90,7 +93,7 @@ class JobQueue(object):
 
             # job completed
             if not has_data_key:
-                print(
+                logging.info(
                     item.item_id,
                     " has been completed, will be deleted from processing queue",
                 )
@@ -99,7 +102,7 @@ class JobQueue(object):
 
             # lease expired
             if not has_lease_key:
-                print(item.item_id, " lease has expired, will reset")
+                logging.info(item.item_id, " lease has expired, will reset")
                 # move the job back to right of the queue
                 item.retry += 1
                 db.pipeline().lrem(self._processing_key, 0, item_str).rpush(

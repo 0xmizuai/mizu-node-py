@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+import logging
 import os
 from typing import List
 from bson import ObjectId
@@ -47,7 +48,8 @@ from mizu_node.types.service import (
     RegisterClassifierResponse,
     TakeJobResponse,
 )
-from mizu_node.types.job_queue import job_queue, queue_clean
+from mizu_node.types.job_queue import queue_clean
+
 
 # Security scheme
 bearer_scheme = HTTPBearer()
