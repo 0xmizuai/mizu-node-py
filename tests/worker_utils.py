@@ -17,7 +17,7 @@ def block_worker(rclient: RedisMock, worker: str):
     )
 
 
-def set_reward_stats(rclient: RedisMock, worker: str):
+def set_reward_stats_strict(rclient: RedisMock, worker: str):
     epoch = int(time.time()) // 3600
     # set past 24 hours stats
     keys = [mined_points_per_hour_key(worker, epoch - i) for i in range(0, 24)]
@@ -26,6 +26,11 @@ def set_reward_stats(rclient: RedisMock, worker: str):
     day = int(time.time()) // 86400
     keys = [mined_points_per_day_key(worker, day - i) for i in range(1, 8)]
     rclient.mset({k: "200" for k in keys})
+
+
+def set_reward_stats(rclient: RedisMock, worker: str):
+    day = int(time.time()) // 86400
+    rclient.set(mined_points_per_day_key(worker, day - 1), 200)
 
 
 def set_cooldown(rclient: RedisMock, worker: str, job_type: JobType):

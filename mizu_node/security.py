@@ -19,9 +19,6 @@ import jwt
 from mizu_node.types.data_job import JobType
 
 ALGORITHM = "EdDSA"
-MIZU_ADMIN_USER_API_KEY = os.environ.get("MIZU_ADMIN_USER_API_KEY")
-
-# ToDo: we should define a schema for the decoded payload
 
 
 def verify_jwt(token: str, public_key: str) -> str:
@@ -46,7 +43,7 @@ def verify_jwt(token: str, public_key: str) -> str:
 
 
 def verify_api_key(mdb: Collection, token: str) -> str:
-    if token == MIZU_ADMIN_USER_API_KEY:
+    if token == os.environ["MIZU_ADMIN_USER_API_KEY"]:
         return MIZU_ADMIN_USER
 
     doc = mdb.find_one({"api_key": token})
@@ -106,7 +103,7 @@ def is_active_in_past_7days(rclient: Redis, worker: str) -> int:
     #  2. it's already validated by past 24h check
     keys = [mined_points_per_day_key(worker, day - i) for i in range(1, 8)]
     values = rclient.mget(keys)
-    return all([int(v or 0) > ACTIVE_USER_PAST_7D_THRESHOLD for v in values])
+    return any([int(v or 0) > ACTIVE_USER_PAST_7D_THRESHOLD for v in values])
 
 
 def last_rewarded_key(worker: str) -> str:
@@ -125,9 +122,7 @@ def validate_reward_job_request(rclient: Redis, worker: str) -> bool:
             detail="please retry after {MIN_REWARD_GAP} seconds",
         )
 
-    if not is_active_in_past_24h(rclient, worker) or not is_active_in_past_7days(
-        rclient, worker
-    ):
+    if not is_active_in_past_7days(rclient, worker):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="not active user",

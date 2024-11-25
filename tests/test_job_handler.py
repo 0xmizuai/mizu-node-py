@@ -13,11 +13,6 @@ from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
 )
-from mizu_node.security import (
-    mined_points_per_day_key,
-    mined_points_per_hour_key,
-    worker_cooldown_key,
-)
 from mizu_node.types.classifier import (
     ClassifierConfig,
     ClassifyResult,
