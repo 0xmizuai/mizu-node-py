@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from typing import Tuple
 from pydantic import BaseModel, Field
@@ -84,6 +85,8 @@ class JobQueue(object):
             0,
             -1,
         )
+        completed = 0
+        expired = 0
         for item_str in processing:
             item = QueueItem.model_validate_json(item_str)
             has_lease_key = self.get_lease(db, item.item_id) is not None
@@ -91,21 +94,24 @@ class JobQueue(object):
 
             # job completed
             if not has_data_key:
-                logging.info(
-                    item.item_id,
-                    " has been completed, will be deleted from processing queue",
+                logging.debug(
+                    f"{item.item_id} has been completed, will be deleted from processing queue",
                 )
                 db.lrem(self._processing_key, 0, item.item_id)
+                completed += 1
                 continue
 
             # lease expired
             if not has_lease_key:
-                logging.info(item.item_id, " lease has expired, will reset")
+                logging.debug(f"{item.item_id} lease has expired, will reset")
                 # move the job back to right of the queue
                 item.retry += 1
                 db.pipeline().lrem(self._processing_key, 0, item_str).rpush(
                     self._main_queue_key, item.model_dump_json()
                 ).execute()
+                expired += 1
+
+        logging.info(f"light clean done: completed={completed}, expired={expired}")
 
 
 job_queues = {
@@ -127,4 +133,4 @@ def queue_clean(rclient: Redis):
     while True:
         for queue in job_queues.values():
             queue.light_clean(rclient)
-        time.sleep(600)
+        time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 600)))
