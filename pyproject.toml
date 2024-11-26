@@ -13,6 +13,7 @@ redis = "^5.1.1"
 pymongo = "4.10.0"
 pyjwt = {extras = ["crypto"], version = "^2.9.0"}
 requests = "^2.32.3"
+fastapi-cors = "^0.0.6"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
@@ -25,9 +26,9 @@ pytest-mock = "^3.14.0"
 boto3 = "^1.35.56"
 warcio = "^1.7.4"
 mongomock = "^4.2.0.post1"
-
 aiohttp = "^3.10.10"
 freezegun = "^1.5.1"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

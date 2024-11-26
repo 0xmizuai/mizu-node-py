@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+import logging
 import os
 from typing import List
 from bson import ObjectId
@@ -53,10 +54,12 @@ from mizu_node.types.service import (
 )
 from mizu_node.types.job_queue import queue_clean
 
+logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 # Security scheme
 bearer_scheme = HTTPBearer()
 rclient = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+logging.info(f"Connected to redis at {REDIS_URL}")
 
 
 @asynccontextmanager
@@ -67,9 +70,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+origins = get_allowed_origins()
+logging.info(f"allowed origins are {origins}")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_allowed_origins(),
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
