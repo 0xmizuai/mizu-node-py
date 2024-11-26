@@ -199,8 +199,4 @@ def get_cooldown_ttl(job_type: JobType) -> bool:
 
 
 def get_allowed_origins() -> list[str]:
-    allowed_origins = os.environ.get("ALLOWED_ORIGINS", "").split(",")
-    if allowed_origins:
-        return allowed_origins
-    else:
-        return ["*"]
+    return os.environ.get("ALLOWED_ORIGINS", "*").split(",")
