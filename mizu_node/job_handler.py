@@ -167,9 +167,15 @@ def handle_finish_job(
             headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
         )
         if response.status_code != 200:
+            logging.warning(
+                "failed to call settle_rewards: code=%d, msg=%s, input=%s",
+                response.status_code,
+                response.text,
+                settle_reward.model_dump(),
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="failed to settle reward",
+                detail=f"failed to settle reward",
             )
         if settle_reward.token is None:
             reward_points = settle_reward.amount
