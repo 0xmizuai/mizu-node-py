@@ -132,5 +132,11 @@ def job_queue(job_type: JobType):
 def queue_clean(rclient: Redis):
     while True:
         for queue in job_queues.values():
-            queue.light_clean(rclient)
+            try:
+                queue.light_clean(rclient)
+            except Exception as e:
+                logging.error(
+                    f"failed to clean queue {queue._main_queue_key} with error {e}"
+                )
+                continue
         time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 600)))
