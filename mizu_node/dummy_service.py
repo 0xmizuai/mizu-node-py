@@ -9,6 +9,6 @@ def default():
     return {"status": "ok"}
 
 
-@app.post("/settle_reward")
+@app.post("/api/settle_reward")
 def settle_reward():
     return {"status": "ok"}

@@ -136,7 +136,7 @@ def handle_take_job(
                 f"failed to retire job {item.item_id} with error {e.detail}"
             )
             pass
-        return handle_take_job(rclient, worker, job_type)
+        return handle_take_job(rclient, jobs, worker, job_type)
     else:
         if job_type == JobType.reward:
             record_reward_event(rclient, worker, parsed.job_id)
