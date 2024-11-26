@@ -124,7 +124,7 @@ def handle_take_job(
             handle_finish_job(
                 rclient,
                 jobs,
-                "mizu_node",
+                worker,
                 WorkerJobResult(
                     job_id=item.item_id,
                     job_type=job_type,
