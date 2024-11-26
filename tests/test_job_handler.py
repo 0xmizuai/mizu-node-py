@@ -49,7 +49,6 @@ from tests.worker_utils import (
     block_worker,
     clear_cooldown,
     set_reward_stats,
-    set_unclaimed_reward,
 )
 from freezegun import freeze_time
 
@@ -106,6 +105,7 @@ def setenvvar(monkeypatch):
             "MIZU_ADMIN_USER_API_KEY": MIZU_ADMIN_USER_API_KEY,
             "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
             "MIN_REWARD_GAP": "1800",
+            "ENABLE_ACTIVE_USER_CHECK": "true",
         }
         for k, v in envvars.items():
             monkeypatch.setenv(k, v)

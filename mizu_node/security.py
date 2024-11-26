@@ -171,7 +171,12 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             )
 
         # check if user is active in past 7 days
-        if all([float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[3:]]):
+        enable_active_user_check = os.environ.get(
+            "ENABLE_ACTIVE_USER_CHECK", "false"
+        ).lower()
+        if enable_active_user_check == "true" and all(
+            [float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[3:]]
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="not active user",
