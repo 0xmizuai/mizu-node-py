@@ -356,40 +356,41 @@ def test_finish_job(mock_requests, setenvvar):
     worker2_jwt = jwt_token("worker2")
     worker3_jwt = jwt_token("worker3")
 
-    # Try to finish job not in recorded - should fail
-    result = WorkerJobResult(
-        job_id="123456781234567812345678",  # invalid job id
-        job_type=JobType.pow,
-        pow_result="1234",
-    )
-    response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=result).model_dump(),
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
-    )
-    assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert response.json()["message"] == "job not found"
-
     # Publish jobs
     _publish_jobs_simple(JobType.batch_classify, 3)
     _publish_jobs_simple(JobType.pow, 3)
 
     response1 = client.get(
         "/take_job",
-        params={"job_type": int(JobType.classify)},
+        params={"job_type": int(JobType.pow)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response1.status_code == 200
-    assert response1.json()["data"]["job"] is None
+    assert response1.json()["data"]["job"] is not None
+    pid = response1.json()["data"]["job"]["_id"]
 
-    response2 = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.pow)},
+    # delete pow job 1 from database
+    app.mdb[JOBS_COLLECTION].delete_many({"_id": ObjectId(pid)})
+    # Try to finish job not in recorded - should fail
+    result = WorkerJobResult(
+        job_id=pid,  # job id not exists
+        job_type=JobType.pow,
+        pow_result="1234",
+    )
+    response2 = client.post(
+        "/finish_job",
+        json=FinishJobRequest(job_result=result).model_dump(),
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response2.status_code == status.HTTP_404_NOT_FOUND
+    assert response2.json()["message"] == "job not found"
+
+    response2 = client.post(
+        "/finish_job",
+        json=FinishJobRequest(job_result=result).model_dump(),
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
-    assert response2.status_code == 200
-    assert response2.json()["data"]["job"] is not None
-    pid = response2.json()["data"]["job"]["_id"]
+    assert response2.status_code == status.HTTP_403_FORBIDDEN
 
     response3 = client.get(
         "/take_job",
@@ -401,18 +402,18 @@ def test_finish_job(mock_requests, setenvvar):
     bid = response3.json()["data"]["job"]["_id"]
 
     # Case 1.1: finishing batch classify job with classify result
-    r11 = WorkerJobResult(
-        job_id=bid,
-        job_type=JobType.classify,
-        classify_result=["t1"],
-    )
     response = client.post(
         "/finish_job",
-        json=FinishJobRequest(job_result=r11).model_dump(),
+        json={
+            "jobResult": {
+                "jobId": bid,
+                "jobType": JobType.batch_classify,
+                "classifyResult": ["t1"],
+            }
+        },
         headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
     assert response.status_code == 422
-    assert response.json()["message"] == "job type mismatch"
 
     # Case 1.2: wrong job result
     response = client.post(
@@ -477,10 +478,18 @@ def test_finish_job(mock_requests, setenvvar):
         json=FinishJobRequest(job_result=r14).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
-    assert response.status_code == 422
-    assert response.json()["message"] == "job already finished"
+    assert response.status_code == 403
 
     # Case 2: job 2 finished by worker2
+    response = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.pow)},
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["job"] is not None
+    pid = response.json()["data"]["job"]["_id"]
+
     r2 = WorkerJobResult(job_id=pid, job_type=JobType.pow, pow_result="166189")
     response = client.post(
         "/finish_job",

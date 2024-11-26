@@ -109,7 +109,7 @@ def record_reward_event(rclient: Redis, worker: str, job_id: str):
     rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
 
 
-def record_reward_claim(rclient: Redis, worker: str, job_id):
+def record_reward_claim(rclient: Redis, worker: str, job_id: str):
     rewards = get_valid_rewards(rclient, worker)
     rewards.data = [r for r in rewards.data if r.job_id != job_id]
     rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())

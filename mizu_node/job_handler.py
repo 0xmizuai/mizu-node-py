@@ -146,20 +146,39 @@ def handle_take_job(
 def handle_finish_job(
     rclient: Redis, jobs: Collection, worker: str, job_result: WorkerJobResult
 ) -> float:
-    doc = jobs.find_one({"_id": ObjectId(job_result.job_id)})
-    if doc is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
-        )
-
-    parsed = DataJobInputNoId.model_validate(doc)
-    job_status = _validate_job_result(parsed, job_result)
     if job_queue(job_result.job_type).get_lease(rclient, job_result.job_id) != worker:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="lease not exists"
         )
 
-    job_queue(job_result.job_type).complete(rclient, job_result.job_id)
+    doc = jobs.find_one({"_id": ObjectId(job_result.job_id)})
+    if doc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
+        )
+    parsed = DataJobInputNoId.model_validate(doc)
+    job_status = _validate_job_result(parsed, job_result)
+    reward_points = 0
+    if job_status == JobStatus.finished:
+        settle_reward = _calculate_reward(rclient, worker, parsed, job_result)
+        response = requests.post(
+            os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
+            json=settle_reward.model_dump(),
+            headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
+        )
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="failed to settle reward",
+            )
+        if settle_reward.token is None:
+            reward_points = settle_reward.amount
+
+    if job_result.job_type != JobType.reward and reward_points > 0:
+        record_mined_points(rclient, worker, settle_reward.amount)
+    if job_result.job_type == JobType.reward:
+        record_reward_claim(rclient, worker, job_result.job_id)
+
     jobs.update_one(
         {"_id": ObjectId(job_result.job_id)},
         {
@@ -171,23 +190,8 @@ def handle_finish_job(
             ).model_dump(by_alias=True),
         },
     )
-
-    rewarded_points = 0
-    if job_status == JobStatus.finished:
-        settle_reward = _calculate_reward(rclient, worker, parsed, job_result)
-        response = requests.post(
-            os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
-            json=settle_reward.model_dump(),
-            headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
-        )
-        response.raise_for_status()
-        if settle_reward.token is None:
-            rewarded_points = settle_reward.amount
-        if job_result.job_type != JobType.reward:
-            record_mined_points(rclient, worker, settle_reward.amount)
-        else:
-            record_reward_claim(rclient, worker)
-    return rewarded_points
+    job_queue(job_result.job_type).complete(rclient, job_result.job_id)
+    return reward_points
 
 
 def handle_queue_len(rclient: Redis, job_type: JobType) -> int:
