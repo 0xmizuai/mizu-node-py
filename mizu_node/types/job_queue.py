@@ -84,6 +84,7 @@ class JobQueue(object):
             0,
             -1,
         )
+        total = len(processing)
         completed = 0
         expired = 0
         for item_str in processing:
@@ -109,7 +110,7 @@ class JobQueue(object):
                     self._main_queue_key, item.model_dump_json()
                 ).execute()
                 expired += 1
-        return completed, expired
+        return total, completed, expired
 
 
 ALL_JOB_TYPES = [JobType.classify, JobType.pow, JobType.batch_classify, JobType.reward]
@@ -129,9 +130,9 @@ def queue_clean(rclient: Redis):
         for job_type in ALL_JOB_TYPES:
             try:
                 logging.info(f"light clean start for queue {str(job_type)}")
-                completed, expired = job_queues[job_type].light_clean(rclient)
+                total, completed, expired = job_queues[job_type].light_clean(rclient)
                 logging.info(
-                    f"light clean done for queue {str(job_type)}: completed={completed}, expired={expired}"
+                    f"light clean done for queue {str(job_type)}: total={total}, completed={completed}, expired={expired}"
                 )
             except Exception as e:
                 logging.error(f"failed to clean queue {job_type} with error {e}")
