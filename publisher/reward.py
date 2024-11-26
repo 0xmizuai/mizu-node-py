@@ -28,10 +28,23 @@ ARB_USDT = Token(
     protocol="ERC20",
 )
 
+ARB_USDT_TEST = Token(
+    chain="arbitrum_sepolia",
+    address="0x0C5eAB07a5E082ED5Dc14BAC7e9C706568C2905f",
+    protocol="ERC20",
+)
+
+
+def env():
+    return os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev")
+
 
 def usdt_ctx(amount: int):
     # decimal = 6
-    return RewardContext(token=ARB_USDT, amount=amount * 1_000_000)
+    if env() == "production":
+        return RewardContext(token=ARB_USDT, amount=amount * 1_000_000)
+    else:
+        return RewardContext(token=ARB_USDT_TEST, amount=amount * 1_000_000)
 
 
 def point_ctx(amount: int):
