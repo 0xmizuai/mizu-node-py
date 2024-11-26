@@ -78,6 +78,7 @@ class JobQueue(object):
         return job_del_result is not None and job_del_result != 0
 
     def light_clean(self, db: Redis):
+        logging.info("light clean start")
         processing: list[bytes | str] = db.lrange(
             self._processing_key,
             0,
@@ -85,7 +86,7 @@ class JobQueue(object):
         )
         for item_str in processing:
             item = QueueItem.model_validate_json(item_str)
-            has_lease_key = self.lease_exists(db, item.item_id)
+            has_lease_key = self.get_lease(db, item.item_id) is not None
             has_data_key = db.exists(self._item_data_key.of(item.item_id)) != 0
 
             # job completed
