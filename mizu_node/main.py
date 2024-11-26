@@ -6,6 +6,7 @@ from bson import ObjectId
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 import redis
 
@@ -65,6 +66,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.rclient = rclient
 app.mclient = MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
 app.mdb = app.mclient[MIZU_NODE_MONGO_DB_NAME]
