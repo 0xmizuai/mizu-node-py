@@ -177,7 +177,7 @@ def handle_finish_job(
         settle_reward = _calculate_reward(rclient, worker, parsed, job_result)
         response = requests.post(
             os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
-            json=settle_reward.model_dump(by_alias=True),
+            json=settle_reward.model_dump(),
             headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
         )
         response.raise_for_status()
