@@ -139,4 +139,4 @@ def queue_clean(rclient: Redis):
                     f"failed to clean queue {queue._main_queue_key} with error {e}"
                 )
                 continue
-        time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 600)))
+        time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
