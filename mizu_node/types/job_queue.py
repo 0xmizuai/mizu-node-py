@@ -1,11 +1,7 @@
 import logging
 import time
 from typing import Tuple
-import uuid
 from pydantic import BaseModel, Field
-from redis import Redis
-
-import uuid
 from redis import Redis
 
 from mizu_node.types.data_job import JobType
@@ -23,7 +19,6 @@ class JobQueue(object):
     """A work queue backed by a redis database"""
 
     def __init__(self, name: KeyPrefix):
-        self._session = uuid.uuid4().hex
         self._main_queue_key = name.of(":queue")
         self._processing_key = name.of(":processing")
         self._lease_key = KeyPrefix.concat(name, ":lease:")
@@ -49,7 +44,9 @@ class JobQueue(object):
     def get_item_data(self, db: Redis, item_id: str) -> str | None:
         return db.get(self._item_data_key.of(item_id))
 
-    def lease(self, db: Redis, ttl_secs: int) -> Tuple[QueueItem, str] | None:
+    def lease(
+        self, db: Redis, ttl_secs: int, worker: str
+    ) -> Tuple[QueueItem, str] | None:
         maybe_item_id: str | None = db.lmove(
             self._main_queue_key,
             self._processing_key,
@@ -63,13 +60,13 @@ class JobQueue(object):
         values = (
             db.pipeline()
             .get(self._item_data_key.of(item.item_id))
-            .setex(self._lease_key.of(item.item_id), ttl_secs, self._session)
+            .setex(self._lease_key.of(item.item_id), ttl_secs, worker)
             .execute()
         )
         return (item, values[0])
 
-    def lease_exists(self, db: Redis, item_id: str | bytes) -> bool:
-        return db.exists(self._lease_key.of(item_id)) != 0
+    def get_lease(self, db: Redis, item_id: str | bytes) -> str | None:
+        return db.get(self._lease_key.of(item_id))
 
     def complete(self, db: Redis, item_id: str) -> bool:
         job_del_result, _ = (

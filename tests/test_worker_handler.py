@@ -1,3 +1,5 @@
+import os
+from unittest import mock
 from fastapi import HTTPException
 import pytest
 
@@ -13,7 +15,19 @@ from tests.worker_utils import (
 )
 
 
-def test_validate_worker():
+@pytest.fixture()
+def setenvvar(monkeypatch):
+    with mock.patch.dict(os.environ, clear=True):
+        envvars = {
+            "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
+            "MIN_REWARD_GAP": "60",
+        }
+        for k, v in envvars.items():
+            monkeypatch.setenv(k, v)
+        yield
+
+
+def test_validate_worker(setenvvar):
     r_client = RedisMock()
 
     # given user1 is blocked
@@ -61,7 +75,7 @@ def test_validate_worker():
     # given user5 is active and has been rewarded
     user5 = "some_user5"
     set_reward_stats(r_client, user5)
-    record_reward_event(r_client, user5)
+    record_reward_event(r_client, user5, "123")
 
     # should throw
     with pytest.raises(HTTPException) as e:

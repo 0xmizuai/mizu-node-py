@@ -1,6 +1,5 @@
 import asyncio
 from contextlib import asynccontextmanager
-import logging
 import os
 from typing import List
 from bson import ObjectId
@@ -28,12 +27,13 @@ from mizu_node.job_handler import (
     validate_classifiers,
 )
 from mizu_node.security import (
+    get_valid_rewards,
     validate_worker,
     verify_jwt,
     verify_api_key,
 )
 from mizu_node.types.classifier import ClassifierConfig
-from mizu_node.types.data_job import JobType
+from mizu_node.types.data_job import JobType, WorkerJob
 from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobResponse,
@@ -44,6 +44,7 @@ from mizu_node.types.service import (
     QueryClassifierResponse,
     QueryJobResponse,
     QueryQueueLenResponse,
+    QueryRewardJobsResponse,
     RegisterClassifierRequest,
     RegisterClassifierResponse,
     TakeJobResponse,
@@ -156,6 +157,28 @@ def publish_jobs(
 def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publisher)):
     jobs = handle_query_job(app.mdb[JOBS_COLLECTION], ids)
     return build_ok_response(QueryJobResponse(jobs=jobs))
+
+
+@app.get("/reward_jobs")
+@error_handler
+def query_reward_jobs(
+    job_type: JobType,
+    user: str = Depends(get_user),
+):
+    validate_worker(app.rclient, user, job_type)
+    rewards = get_valid_rewards(app.rclient, user)
+    docs = list(
+        app.mdb[JOBS_COLLECTION].find(
+            {"_id": {"$in": [ObjectId(r["job_id"]) for r in rewards]}}
+        )
+    )
+    jobs = [
+        WorkerJob(
+            job_id=str(doc["_id"]), job_type=doc["jobType"], reward_ctx=doc["rewardCtx"]
+        )
+        for doc in docs
+    ]
+    return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
 
 
 @app.get("/take_job")

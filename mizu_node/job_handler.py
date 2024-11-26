@@ -12,7 +12,6 @@ import requests
 
 
 from mizu_node.constants import (
-    ASSIGNED_JOB_EXPIRE_TTL_SECONDS,
     CLASSIFIER_COLLECTION,
     DEFAULT_POW_DIFFICULTY,
     JOBS_COLLECTION,
@@ -20,6 +19,7 @@ from mizu_node.constants import (
     MIZU_ADMIN_USER,
 )
 from mizu_node.security import (
+    get_lease_ttl,
     record_mined_points,
     record_reward_claim,
     record_reward_event,
@@ -113,7 +113,7 @@ def handle_query_job(
 def handle_take_job(
     rclient: Redis, jobs: Collection, worker: str, job_type: JobType
 ) -> WorkerJob | None:
-    result = job_queue(job_type).lease(rclient, ASSIGNED_JOB_EXPIRE_TTL_SECONDS)
+    result = job_queue(job_type).lease(rclient, get_lease_ttl(job_type), worker)
     if result is None:
         return None
 
@@ -139,12 +139,12 @@ def handle_take_job(
         return handle_take_job(rclient, worker, job_type)
     else:
         if job_type == JobType.reward:
-            record_reward_event(rclient, worker)
+            record_reward_event(rclient, worker, parsed.job_id)
         return parsed
 
 
 def handle_finish_job(
-    rclient: Redis, jobs: Collection, user: str, job_result: WorkerJobResult
+    rclient: Redis, jobs: Collection, worker: str, job_result: WorkerJobResult
 ) -> float:
     doc = jobs.find_one({"_id": ObjectId(job_result.job_id)})
     if doc is None:
@@ -154,14 +154,17 @@ def handle_finish_job(
 
     parsed = DataJobInputNoId.model_validate(doc)
     job_status = _validate_job_result(parsed, job_result)
-    if not job_queue(job_result.job_type).lease_exists(rclient, job_result.job_id):
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="job expired")
+    if job_queue(job_result.job_type).get_lease(rclient, job_result.job_id) != worker:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="lease not exists"
+        )
+
     job_queue(job_result.job_type).complete(rclient, job_result.job_id)
     jobs.update_one(
         {"_id": ObjectId(job_result.job_id)},
         {
             "$set": DataJobResultNoId(
-                worker=user,
+                worker=worker,
                 finished_at=int(time.time()),
                 status=job_status,
                 **job_result.model_dump(by_alias=True, exclude=set(["job_id"])),
@@ -171,7 +174,7 @@ def handle_finish_job(
 
     rewarded_points = 0
     if job_status == JobStatus.finished:
-        settle_reward = _calculate_reward(rclient, user, parsed, job_result)
+        settle_reward = _calculate_reward(rclient, worker, parsed, job_result)
         response = requests.post(
             os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
             json=settle_reward.model_dump(by_alias=True),
@@ -181,9 +184,9 @@ def handle_finish_job(
         if settle_reward.token is None:
             rewarded_points = settle_reward.amount
         if job_result.job_type != JobType.reward:
-            record_mined_points(rclient, user, settle_reward.amount)
+            record_mined_points(rclient, worker, settle_reward.amount)
         else:
-            record_reward_claim(rclient, user)
+            record_reward_claim(rclient, worker)
     return rewarded_points
 
 

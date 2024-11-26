@@ -185,3 +185,16 @@ class DataJobQueryResult(JobResultBase):
 
 
 ##################################### MONGODB Data Type End ############################################
+
+
+class RewardJobRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str
+    issued_at: int
+
+
+class RewardJobRecords(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    data: list[RewardJobRecord] = Field(default=[])

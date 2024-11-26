@@ -28,6 +28,34 @@ class RedisMock:
         value = self.data.get(key)
         return self._check_pipeline(value)
 
+    def hget(self, key, field):
+        value = self.data.get(key, {}).get(field)
+        return self._check_pipeline(value)
+
+    def hset(self, key, field, value):
+        if key not in self.data:
+            self.data[key] = {}
+        self.data[key][field] = value
+        return self._check_pipeline()
+
+    def hmget(self, key, fields):
+        values = [self.data.get(key, {}).get(f) for f in fields]
+        return self._check_pipeline(values)
+
+    def hmset(self, key, mapping):
+        if key not in self.data:
+            self.data[key] = {}
+        self.data[key].update(mapping)
+        return self._check_pipeline()
+
+    def hincrbyfloat(self, key, field, value):
+        if key not in self.data:
+            self.data[key] = {}
+        if field not in self.data[key]:
+            self.data[key][field] = 0.0
+        self.data[key][field] += value
+        return self._check_pipeline()
+
     def mget(self, keys):
         values = [self.data.get(k) for k in keys]
         return self._check_pipeline(values)

@@ -96,6 +96,8 @@ def setenvvar(monkeypatch):
             "API_SECRET_KEY": "some-secret",
             "BACKEND_SERVICE_URL": "http://localhost:3000",
             "MIZU_ADMIN_USER_API_KEY": MIZU_ADMIN_USER_API_KEY,
+            "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
+            "MIN_REWARD_GAP": "60",
         }
         for k, v in envvars.items():
             monkeypatch.setenv(k, v)
@@ -394,7 +396,7 @@ def test_finish_job(mock_requests, setenvvar):
     response = client.post(
         "/finish_job",
         json=FinishJobRequest(job_result=r11).model_dump(),
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
     assert response.status_code == 422
     assert response.json()["message"] == "job type mismatch"
@@ -409,7 +411,7 @@ def test_finish_job(mock_requests, setenvvar):
                 "classify_result": ["t1"],
             }
         },
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
     assert response.status_code == 422
 
@@ -431,7 +433,7 @@ def test_finish_job(mock_requests, setenvvar):
     response = client.post(
         "/finish_job",
         json=FinishJobRequest(job_result=r13).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
     assert response.status_code == 200
     assert response.json()["message"] == "ok"
@@ -443,10 +445,10 @@ def test_finish_job(mock_requests, setenvvar):
     assert j1["jobType"] == JobType.batch_classify
     # the empty labels are filtered out
     assert len(j1["batchClassifyResult"]) == 1
-    assert j1["worker"] == "worker1"
+    assert j1["worker"] == "worker3"
     assert j1["finishedAt"] is not None
 
-    # Case 1.3: finishing finished jobs
+    # Case 1.4: finishing finished jobs
     r14 = WorkerJobResult(
         job_id=bid,
         job_type=JobType.batch_classify,
@@ -460,7 +462,7 @@ def test_finish_job(mock_requests, setenvvar):
     response = client.post(
         "/finish_job",
         json=FinishJobRequest(job_result=r14).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
     assert response.status_code == 422
     assert response.json()["message"] == "job already finished"
@@ -502,10 +504,10 @@ def test_finish_job(mock_requests, setenvvar):
     response = client.post(
         "/finish_job",
         json=FinishJobRequest(job_result=r3).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
+        headers={"Authorization": f"Bearer {worker4_jwt}"},
     )
-    assert response.status_code == 410
-    assert response.json()["message"] == "job expired"
+    assert response.status_code == 403
+    assert response.json()["message"] == "lease not exists"
 
 
 @mongomock.patch((MOCK_MONGO_URL))
@@ -572,7 +574,7 @@ def test_job_status(mock_requests, setenvvar):
     response = client.post(
         "/finish_job",
         json=FinishJobRequest(job_result=result2).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response.status_code == 200
 

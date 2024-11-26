@@ -7,18 +7,19 @@ from redis import Redis
 
 from mizu_node.constants import (
     ACTIVE_USER_PAST_7D_THRESHOLD,
-    BLOCKED_WORKER_PREFIX,
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
-    COOLDOWN_WORKER_PREFIX,
     MAX_UNCLAIMED_REWARD,
     MIN_REWARD_GAP,
     MIZU_ADMIN_USER,
 )
 import jwt
 
-from mizu_node.types.data_job import JobType
+from mizu_node.types.data_job import JobType, RewardJobRecord, RewardJobRecords
 
 ALGORITHM = "EdDSA"
+BLOCKED_FIELD = "blocked_worker"
+REWARD_FIELD = "reward"
+REWARD_TTL = 43200  # 12 hours
 
 
 def verify_jwt(token: str, public_key: str) -> str:
@@ -58,26 +59,20 @@ def verify_api_key(mdb: Collection, token: str) -> str:
     return doc["user"]
 
 
-def blocked_worker_key(worker: str) -> str:
-    return f"{BLOCKED_WORKER_PREFIX}:{worker}"
+def event_name(worker: str):
+    return f"event:{worker}"
 
 
-def worker_cooldown_key(worker: str, job_type: JobType) -> str:
-    return f"{COOLDOWN_WORKER_PREFIX}:{job_type}:{worker}"
+def last_requested_field(job_type: JobType) -> str:
+    return f"last_requested_at:{str(job_type)}"
 
 
-def get_cooldown_ttl(job_type: JobType) -> bool:
-    if job_type == JobType.reward:
-        return 60
-    return COOLDOWN_WORKER_EXPIRE_TTL_SECONDS
+def mined_per_hour_field(epoch: int):
+    return f"mined_per_hour:{epoch}"
 
 
-def mined_points_per_hour_key(worker: str, epoch: int):
-    return f"points:{worker}:hour:{epoch}"
-
-
-def mined_points_per_day_key(worker: str, epoch: int):
-    return f"points:{worker}:day:{epoch}"
+def mined_per_day_field(day: int):
+    return f"mined_per_day:{day}"
 
 
 def record_mined_points(rclient: Redis, worker: str, points: float):
@@ -86,49 +81,50 @@ def record_mined_points(rclient: Redis, worker: str, points: float):
         epoch = now // 3600
         day = now // 86400
         pipeline = rclient.pipeline()
-        pipeline.incrbyfloat(mined_points_per_hour_key(worker, epoch), points)
-        pipeline.incrbyfloat(mined_points_per_day_key(worker, day), points)
+        pipeline.hincrbyfloat(event_name(worker), mined_per_hour_field(epoch), points)
+        pipeline.hincrbyfloat(event_name(worker), mined_per_day_field(day), points)
         pipeline.execute()
 
 
 def total_mined_points_in_past_24h(rclient: Redis, worker: str) -> float:
     epoch = int(time.time()) // 3600
-    keys = [mined_points_per_hour_key(worker, epoch - i) for i in range(0, 24)]
-    values = rclient.mget(keys)
+    fields = [mined_per_hour_field(epoch - i) for i in range(0, 24)]
+    values = rclient.hmget(event_name(worker), fields)
     return sum([float(v or 0) for v in values])
 
 
-def last_rewarded_key(worker: str) -> str:
-    return f"last_rewarded:{JobType.reward}:{worker}"
+def get_valid_rewards(rclient: Redis, worker: str) -> RewardJobRecords:
+    name = event_name(worker)
+    value = rclient.hget(name, REWARD_FIELD)
+    rewards = (
+        RewardJobRecords.model_validate_json(value) if value else RewardJobRecords()
+    )
+    rewards.data = [
+        r for r in rewards.data if r.issued_at + REWARD_TTL > int(time.time())
+    ]
+    return rewards
 
 
-def unclaimed_reward_key(worker: str) -> str:
-    return f"unclaimed_reward:{JobType.reward}:{worker}"
+def record_reward_event(rclient: Redis, worker: str, job_id: str):
+    rewards = get_valid_rewards(rclient, worker)
+    rewards.data.append(RewardJobRecord(job_id=job_id, issued_at=int(time.time())))
+    rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
 
 
-def record_reward_event(rclient: Redis, worker: str):
-    pipeline = rclient.pipeline()
-    pipeline.set(last_rewarded_key(worker), int(time.time()))
-    pipeline.incrby(unclaimed_reward_key(worker), 1)
-    pipeline.execute()
-
-
-def record_reward_claim(rclient: Redis, worker: str):
-    rclient.decrby(unclaimed_reward_key(worker), 1)
+def record_reward_claim(rclient: Redis, worker: str, job_id):
+    rewards = get_valid_rewards(rclient, worker)
+    rewards.data = [r for r in rewards.data if r.job_id != job_id]
+    rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
 
 
 def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
-    cooldown_key = worker_cooldown_key(worker, job_type)
-    keys = [
-        blocked_worker_key(worker),
-        cooldown_key,
-    ]
+    last_requested_at_field = last_requested_field(job_type)
+    fields = [BLOCKED_FIELD, last_requested_at_field]
+    day = int(time.time()) // 86400
     if job_type == JobType.reward:
-        keys.extend([last_rewarded_key(worker), unclaimed_reward_key(worker)])
-        day = int(time.time()) // 86400
-        keys.extend([mined_points_per_day_key(worker, day - i) for i in range(0, 7)])
-
-    values = r_client.mget(keys)
+        fields.append(REWARD_FIELD)
+        fields.extend([mined_per_day_field(day - i) for i in range(0, 7)])
+    values = r_client.hmget(event_name(worker), fields)
 
     # check if worker is blocked
     if values[0] is not None:
@@ -138,32 +134,64 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
         )
 
     # check if worker is in cool down
-    ttl = get_cooldown_ttl(job_type)
-    if values[1] is not None:
+    cooldown_ttl = get_cooldown_ttl(job_type)
+    if int(values[1] or 0) + cooldown_ttl > int(time.time()):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"please retry after {ttl} seconds",
+            detail=f"please retry after {cooldown_ttl} seconds",
         )
-    r_client.setex(cooldown_key, ttl, int(time.time()))
+    r_client.hset(event_name(worker), last_requested_at_field, int(time.time()))
 
     if job_type == JobType.reward:
-        # check last rewarded time
-        if int(values[2] or 0) + MIN_REWARD_GAP > int(time.time()):
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"please retry after {MIN_REWARD_GAP} seconds",
+        parsed_rewards = (
+            RewardJobRecords.model_validate_json(values[2])
+            if values[2]
+            else RewardJobRecords()
+        )
+        valid_rewards = [
+            r
+            for r in parsed_rewards.data
+            if r.issued_at + REWARD_TTL > int(time.time())
+        ]
+        if len(valid_rewards) != len(parsed_rewards.data):
+            parsed_rewards.data = valid_rewards
+            r_client.hset(
+                event_name(worker), REWARD_FIELD, parsed_rewards.model_dump_json()
             )
 
         # check total unclaimed rewards
-        if int(values[3] or 0) >= MAX_UNCLAIMED_REWARD:
+        if len(valid_rewards) >= MAX_UNCLAIMED_REWARD:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="unclaimed reward limit reached",
             )
 
+        # check last rewarded time
+        last_reward_ts = valid_rewards[-1].issued_at if valid_rewards else 0
+        if last_reward_ts + MIN_REWARD_GAP > int(time.time()):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"please retry after {MIN_REWARD_GAP} seconds",
+            )
+
         # check if user is active in past 7 days
-        if all([float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[4:]]):
+        if all([float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[3:]]):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="not active user",
             )
+
+
+def get_lease_ttl(job_type: JobType) -> int:
+    if job_type == JobType.reward:
+        return REWARD_TTL
+    elif job_type == JobType.batch_classify:
+        return 3600
+    else:
+        return 600
+
+
+def get_cooldown_ttl(job_type: JobType) -> bool:
+    if job_type == JobType.reward:
+        return 60
+    return COOLDOWN_WORKER_EXPIRE_TTL_SECONDS
