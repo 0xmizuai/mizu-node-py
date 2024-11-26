@@ -1,5 +1,5 @@
+import datetime
 import os
-import time
 from unittest import mock
 from bson import ObjectId
 from fastapi.testclient import TestClient
@@ -8,6 +8,7 @@ import pytest
 from fastapi import status
 from unittest.mock import patch as mock_patch
 
+from mizu_node.common import epoch
 from mizu_node.constants import (
     API_KEY_COLLECTION,
     CLASSIFIER_COLLECTION,
@@ -21,11 +22,12 @@ from mizu_node.types.classifier import (
 )
 from mizu_node.types.data_job import (
     BatchClassifyContext,
-    DataJobPayload,
     JobStatus,
     JobType,
     PowContext,
     RewardContext,
+    Token,
+    WorkerJob,
     WorkerJobResult,
 )
 
@@ -43,7 +45,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from mizu_node.main import app
-from tests.worker_utils import block_worker, clear_cooldown, set_reward_stats
+from tests.worker_utils import (
+    block_worker,
+    clear_cooldown,
+    set_reward_stats,
+    set_unclaimed_reward,
+)
+from freezegun import freeze_time
 
 client = TestClient(app)
 
@@ -82,7 +90,7 @@ class MockedHttpResponse:
 
 
 def jwt_token(user: str):
-    exp = time.time() + 3600  # enough to not expire during this test
+    exp = epoch() + 3600  # enough to not expire during this test
     return jwt.encode({"sub": user, "exp": exp}, private_key, algorithm="EdDSA")
 
 
@@ -97,7 +105,7 @@ def setenvvar(monkeypatch):
             "BACKEND_SERVICE_URL": "http://localhost:3000",
             "MIZU_ADMIN_USER_API_KEY": MIZU_ADMIN_USER_API_KEY,
             "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
-            "MIN_REWARD_GAP": "60",
+            "MIN_REWARD_GAP": "1800",
         }
         for k, v in envvars.items():
             monkeypatch.setenv(k, v)
@@ -122,11 +130,13 @@ def _build_batch_classify_ctx():
     )
 
 
-def _build_reward_ctx():
-    return RewardContext(amount=50)
+def _build_reward_ctx(token: Token | None = None):
+    return RewardContext(token=token, amount=50)
 
 
-def _new_data_job_payload(job_type: str, r2_key: str) -> DataJobPayload:
+def _new_data_job_payload(
+    job_type: str,
+) -> RewardContext | PowContext | BatchClassifyContext:
     if job_type == JobType.reward:
         return _build_reward_ctx()
     elif job_type == JobType.pow:
@@ -137,12 +147,10 @@ def _new_data_job_payload(job_type: str, r2_key: str) -> DataJobPayload:
         raise ValueError(f"Invalid job type: {job_type}")
 
 
-def _publish_jobs(job_type: JobType, num_jobs=3):
-    payloads = [
-        _new_data_job_payload(job_type, str(i + 1)).model_dump()
-        for i in range(num_jobs)
-    ]
-
+def _publish_jobs(
+    job_type: JobType,
+    payloads: list[RewardContext] | list[PowContext] | list[BatchClassifyContext],
+):
     if job_type == JobType.pow:
         endpoint = "/publish_pow_jobs"
         token = MIZU_ADMIN_USER_API_KEY
@@ -157,11 +165,16 @@ def _publish_jobs(job_type: JobType, num_jobs=3):
 
     response = client.post(
         endpoint,
-        json={"data": payloads},
+        json={"data": [p.model_dump() for p in payloads]},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     return response.json()["data"]["jobIds"]
+
+
+def _publish_jobs_simple(job_type: JobType, num_jobs=3):
+    payloads = [_new_data_job_payload(job_type) for i in range(num_jobs)]
+    return _publish_jobs(job_type, payloads)
 
 
 def mock_all():
@@ -183,20 +196,20 @@ def mock_all():
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-def test_publish_jobs(setenvvar):
+def test_publish_jobs_simple(setenvvar):
     # Add this line to set up the test environment
     mock_all()
 
     # Test publishing classify jobs
-    job_ids1 = _publish_jobs(JobType.reward, 3)
+    job_ids1 = _publish_jobs_simple(JobType.reward, 3)
     assert len(job_ids1) == 3
 
     # Test publishing pow jobs
-    job_ids2 = _publish_jobs(JobType.pow, 3)
+    job_ids2 = _publish_jobs_simple(JobType.pow, 3)
     assert len(job_ids2) == 3
 
     # Test publishing batch classify jobs
-    job_ids3 = _publish_jobs(JobType.batch_classify, 3)
+    job_ids3 = _publish_jobs_simple(JobType.batch_classify, 3)
     assert len(job_ids3) == 3
 
 
@@ -205,9 +218,9 @@ def test_take_job_ok(setenvvar):
     mock_all()
 
     # Publish jobs first
-    pids = _publish_jobs(JobType.pow, 3)
-    rids = _publish_jobs(JobType.reward, 3)
-    bids = _publish_jobs(JobType.batch_classify, 3)
+    pids = _publish_jobs_simple(JobType.pow, 3)
+    rids = _publish_jobs_simple(JobType.reward, 3)
+    bids = _publish_jobs_simple(JobType.batch_classify, 3)
 
     # Take reward job 1
     worker1_jwt = jwt_token("worker1")
@@ -269,7 +282,7 @@ def test_take_job_error(setenvvar):
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
     # Wrong job type (pow jobs published, trying to take batch classify job)
-    _publish_jobs(JobType.pow, 3)
+    _publish_jobs_simple(JobType.pow, 3)
     worker2_jwt = jwt_token("worker2")
     response = client.get(
         "/take_job",
@@ -291,7 +304,7 @@ def test_take_job_error(setenvvar):
     assert response.json()["message"] == "worker is blocked"
 
     # user not active for reward job
-    _publish_jobs(JobType.reward, 3)
+    _publish_jobs_simple(JobType.reward, 3)
     worker4_jwt = jwt_token("worker4")
     response = client.get(
         "/take_job",
@@ -358,8 +371,8 @@ def test_finish_job(mock_requests, setenvvar):
     assert response.json()["message"] == "job not found"
 
     # Publish jobs
-    _publish_jobs(JobType.batch_classify, 3)
-    _publish_jobs(JobType.pow, 3)
+    _publish_jobs_simple(JobType.batch_classify, 3)
+    _publish_jobs_simple(JobType.pow, 3)
 
     response1 = client.get(
         "/take_job",
@@ -517,8 +530,8 @@ def test_job_status(mock_requests, setenvvar):
     mock_requests.return_value = MockedHttpResponse(200)
 
     # Publish jobs
-    bids = _publish_jobs(JobType.batch_classify, 3)
-    pids = _publish_jobs(JobType.pow, 2)
+    bids = _publish_jobs_simple(JobType.batch_classify, 3)
+    pids = _publish_jobs_simple(JobType.pow, 2)
     all_job_ids = bids + pids
 
     # Check initial status
@@ -674,7 +687,7 @@ def test_pow_validation(mock_requests, setenvvar):
     mock_requests.return_value = MockedHttpResponse(200)
 
     # Publish a PoW job
-    _publish_jobs(JobType.pow, 1)
+    _publish_jobs_simple(JobType.pow, 1)
     worker_jwt = jwt_token("worker1")
 
     # Take the job
@@ -715,3 +728,53 @@ def test_pow_validation(mock_requests, setenvvar):
         headers={"Authorization": f"Bearer {worker_jwt}"},
     )
     assert response.status_code == 200
+
+
+@mongomock.patch((MOCK_MONGO_URL))
+def test_query_reward_jobs(setenvvar):
+    mock_all()
+
+    # Publish reward jobs
+    job_ids = _publish_jobs(
+        JobType.reward,
+        [
+            _build_reward_ctx(),
+            _build_reward_ctx(Token(chain="arb", address="0x1234", protocol="ERC20")),
+        ],
+    )
+
+    set_reward_stats(app.rclient, "worker1")
+
+    # take reward jobs
+    initial_time = datetime.datetime.now()
+    worker1_jwt = jwt_token("worker1")
+    response1 = client.get(
+        "/take_job",
+        params={"job_type": int(JobType.reward)},
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response1.status_code == 200
+
+    second_time = initial_time + datetime.timedelta(0, 2400)  # 45 minutes later
+    with freeze_time(second_time):
+        response2 = client.get(
+            "/take_job",
+            params={"job_type": int(JobType.reward)},
+            headers={"Authorization": f"Bearer {worker1_jwt}"},
+        )
+        print(response2.text)
+        assert response2.status_code == 200
+
+    # query reward jobs
+    response = client.get(
+        "/reward_jobs",
+        headers={"Authorization": f"Bearer {worker1_jwt}"},
+    )
+    assert response.status_code == 200
+    jobs = response.json()["data"]["jobs"]
+    jobs = [WorkerJob.model_validate(j) for j in jobs]
+    assert len(jobs) == 2
+    for job in jobs:
+        assert job.job_id in job_ids
+        assert job.job_type == JobType.reward
+        assert job.reward_ctx is not None

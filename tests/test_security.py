@@ -1,9 +1,10 @@
 import jwt
 import pytest
-import time
 from fastapi import HTTPException
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from mizu_node.common import epoch
 
 
 def test_verify_jwt():
@@ -22,19 +23,19 @@ def test_verify_jwt():
     )
 
     # Test green path
-    exp = time.time() + 100  # enough to not expire during this test
+    exp = epoch() + 100  # enough to not expire during this test
     token = jwt.encode({"sub": 3, "exp": exp}, private_key, algorithm="EdDSA")
     user_id = verify_jwt(token, public_key)
     assert user_id == "3"
 
     # Now test it's expired
-    exp = time.time() - 100  # already expired
+    exp = epoch() - 100  # already expired
     token = jwt.encode({"sub": 3, "exp": exp}, private_key, algorithm="EdDSA")
     with pytest.raises(HTTPException):
         verify_jwt(token, public_key)
 
     # Now test missing correct user id field
-    exp = time.time() + 100  # enough to not expire during this test
+    exp = epoch() + 100  # enough to not expire during this test
     token = jwt.encode(
         {"some_bad_field": 3, "exp": exp}, private_key, algorithm="EdDSA"
     )

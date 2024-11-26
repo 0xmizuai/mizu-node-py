@@ -161,15 +161,11 @@ def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publishe
 
 @app.get("/reward_jobs")
 @error_handler
-def query_reward_jobs(
-    job_type: JobType,
-    user: str = Depends(get_user),
-):
-    validate_worker(app.rclient, user, job_type)
+def query_reward_jobs(user: str = Depends(get_user)):
     rewards = get_valid_rewards(app.rclient, user)
     docs = list(
         app.mdb[JOBS_COLLECTION].find(
-            {"_id": {"$in": [ObjectId(r["job_id"]) for r in rewards]}}
+            {"_id": {"$in": [ObjectId(r.job_id) for r in rewards.data]}}
         )
     )
     jobs = [

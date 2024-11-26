@@ -9,6 +9,7 @@ import boto3
 from pymongo import MongoClient
 import requests
 
+from mizu_node.common import epoch
 from mizu_node.constants import (
     API_KEY_COLLECTION,
     R2_DATA_PREFIX,
@@ -97,7 +98,7 @@ class CommonCrawlDataJobPublisher(threading.Thread):
                     metadata_type=metadata.type,
                     job_id=job_id,
                     job_type=JobType.batch_classify,
-                    created_at=int(time.time()),
+                    created_at=epoch(),
                 )
                 for job_id, metadata in zip(job_ids, metadatas)
             ]
@@ -192,7 +193,7 @@ class CommonCrawlDataJobManager(threading.Thread):
                     "batch": self.cc_batch,
                     "metadata_type": self.metadata_type,
                     "classifier_id": self.classifier_id,
-                    "created_at": {"$gt": int(time.time()) - 1800},  # wait for 30mins
+                    "created_at": {"$gt": epoch() - 1800},  # wait for 30mins
                     "finished_at": {"$exists": False},
                 }
             )

@@ -6,6 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 from redis import Redis
+from mizu_node.common import epoch
 from mizu_node.types.data_job import RewardContext, Token
 from mizu_node.types.service import PublishRewardJobRequest
 from publisher.common import publish
@@ -63,7 +64,7 @@ class RewardJobPublisher(object):
         self.num_of_runs_per_week = 604800 // self.cron_gap
 
     def spent_per_day_key(self, key: str):
-        day_n = int(time.time()) // 86400
+        day_n = epoch() // 86400
         return f"{key}:spent_per_day:{day_n}"
 
     def spent_per_day(self, key: str):
@@ -71,7 +72,7 @@ class RewardJobPublisher(object):
         return int(spent or 0)
 
     def spent_per_week_key(self, key: str):
-        week_n = int(time.time()) // 604800
+        week_n = epoch() // 604800
         return f"{key}:spent_per_week:{week_n}"
 
     def spent_per_week(self, key: str):

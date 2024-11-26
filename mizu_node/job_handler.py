@@ -1,7 +1,6 @@
 from hashlib import sha512
 import logging
 import os
-import time
 from typing import Iterator
 
 from bson import ObjectId
@@ -11,6 +10,7 @@ from fastapi import HTTPException, status
 import requests
 
 
+from mizu_node.common import epoch
 from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
     DEFAULT_POW_DIFFICULTY,
@@ -72,7 +72,7 @@ def handle_publish_jobs(
             batch_classify_ctx=ctx if job_type == JobType.batch_classify else None,
             publisher=publisher,
             status=JobStatus.pending,
-            published_at=int(time.time()),
+            published_at=epoch(),
         ).model_dump(by_alias=True, exclude_none=True)
         for ctx in contexts
     ]
@@ -165,7 +165,7 @@ def handle_finish_job(
         {
             "$set": DataJobResultNoId(
                 worker=worker,
-                finished_at=int(time.time()),
+                finished_at=epoch(),
                 status=job_status,
                 **job_result.model_dump(by_alias=True, exclude=set(["job_id"])),
             ).model_dump(by_alias=True),
@@ -178,7 +178,7 @@ def handle_finish_job(
         response = requests.post(
             os.environ["BACKEND_SERVICE_URL"] + "/settle_rewards",
             json=settle_reward.model_dump(by_alias=True),
-            headers={"Authorization": f"Bearer {os.environ['API_SECRET_KEY']}"},
+            headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
         )
         response.raise_for_status()
         if settle_reward.token is None:

@@ -1,9 +1,9 @@
 import binascii
 import os
-import time
 
 import jwt
 from pymongo import MongoClient
+from mizu_node.common import epoch
 from mizu_node.constants import (
     MIZU_NODE_MONGO_DB_NAME,
     API_KEY_COLLECTION,
@@ -39,8 +39,8 @@ def sign_jwt(user: str, private_key: str):
         "typ": "JWT",
     }
     payload = {
-        "exp": time.time() + 3600 * 7,
-        "iat": time.time(),
+        "exp": epoch() + 3600 * 7,
+        "iat": epoch(),
         "sub": user,
     }
     return jwt.encode(payload, private_key, algorithm=ALGORITHM, headers=headers)

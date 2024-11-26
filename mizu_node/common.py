@@ -1,4 +1,6 @@
+import datetime
 from functools import wraps
+import time
 import traceback
 
 from fastapi import HTTPException, status
@@ -37,3 +39,9 @@ def build_json_response(
 
 def build_ok_response(data: BaseModel = None) -> JSONResponse:
     return build_json_response(status.HTTP_200_OK, "ok", data)
+
+
+def epoch():
+    # use datetime here so we can use freezetime in tests
+    d = datetime.datetime.now()
+    return int(time.mktime(d.timetuple()))

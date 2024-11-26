@@ -27,6 +27,7 @@ warcio = "^1.7.4"
 mongomock = "^4.2.0.post1"
 
 aiohttp = "^3.10.10"
+freezegun = "^1.5.1"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
