@@ -28,6 +28,7 @@ from mizu_node.job_handler import (
     validate_classifiers,
 )
 from mizu_node.security import (
+    get_allowed_origins,
     get_valid_rewards,
     validate_worker,
     verify_jwt,
@@ -68,7 +69,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

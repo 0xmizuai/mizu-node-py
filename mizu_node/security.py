@@ -196,3 +196,11 @@ def get_cooldown_ttl(job_type: JobType) -> bool:
     if job_type == JobType.reward:
         return 60
     return COOLDOWN_WORKER_EXPIRE_TTL_SECONDS
+
+
+def get_allowed_origins() -> list[str]:
+    allowed_origins = os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if allowed_origins:
+        return allowed_origins
+    else:
+        return ["*"]
