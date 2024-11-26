@@ -168,7 +168,8 @@ def handle_finish_job(
         )
         if response.status_code != 200:
             logging.warning(
-                "failed to call settle_rewards: code=%d, msg=%s, input=%s",
+                "failed to call settle_reward: url=%d, code=%d, msg=%s, input=%s",
+                response.url,
                 response.status_code,
                 response.text,
                 settle_reward.model_dump(),
