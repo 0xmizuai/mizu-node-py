@@ -163,13 +163,12 @@ def handle_finish_job(
         settle_reward = _calculate_reward(rclient, worker, parsed, job_result)
         response = requests.post(
             os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
-            json=settle_reward.model_dump(),
+            json=settle_reward.model_dump(exclude_none=True),
             headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
         )
         if response.status_code != 200:
             logging.warning(
-                "failed to call settle_reward: url=%d, code=%d, msg=%s, input=%s",
-                response.url,
+                "failed to call settle_reward: code=%d, msg=%s, input=%s",
                 response.status_code,
                 response.text,
                 settle_reward.model_dump(),
