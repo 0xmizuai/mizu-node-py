@@ -162,7 +162,7 @@ def handle_finish_job(
     if job_status == JobStatus.finished:
         settle_reward = _calculate_reward(rclient, worker, parsed, job_result)
         response = requests.post(
-            os.environ["BACKEND_SERVICE_URL"] + "/settle_reward",
+            os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
             json=settle_reward.model_dump(),
             headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
         )
