@@ -79,7 +79,6 @@ class JobQueue(object):
         return job_del_result is not None and job_del_result != 0
 
     def light_clean(self, db: Redis):
-        logging.info("light clean start")
         processing: list[bytes | str] = db.lrange(
             self._processing_key,
             0,
@@ -97,7 +96,7 @@ class JobQueue(object):
                 logging.debug(
                     f"{item.item_id} has been completed, will be deleted from processing queue",
                 )
-                db.lrem(self._processing_key, 0, item.item_id)
+                db.lrem(self._processing_key, 0, item_str)
                 completed += 1
                 continue
 
@@ -110,18 +109,14 @@ class JobQueue(object):
                     self._main_queue_key, item.model_dump_json()
                 ).execute()
                 expired += 1
+        return completed, expired
 
-        logging.info(f"light clean done: completed={completed}, expired={expired}")
 
+ALL_JOB_TYPES = [JobType.classify, JobType.pow, JobType.batch_classify, JobType.reward]
 
 job_queues = {
     job_type: JobQueue(KeyPrefix(f"mizu_node_py:job_queue_{job_type.name}"))
-    for job_type in [
-        JobType.classify,
-        JobType.pow,
-        JobType.batch_classify,
-        JobType.reward,
-    ]
+    for job_type in ALL_JOB_TYPES
 }
 
 
@@ -131,12 +126,14 @@ def job_queue(job_type: JobType):
 
 def queue_clean(rclient: Redis):
     while True:
-        for queue in job_queues.values():
+        for job_type in ALL_JOB_TYPES:
             try:
-                queue.light_clean(rclient)
-            except Exception as e:
-                logging.error(
-                    f"failed to clean queue {queue._main_queue_key} with error {e}"
+                logging.info(f"light clean start for queue {str(job_type)}")
+                completed, expired = job_queues[job_type].light_clean(rclient)
+                logging.info(
+                    f"light clean done for queue {str(job_type)}: completed={completed}, expired={expired}"
                 )
+            except Exception as e:
+                logging.error(f"failed to clean queue {job_type} with error {e}")
                 continue
         time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
