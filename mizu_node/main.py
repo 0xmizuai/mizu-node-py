@@ -31,6 +31,8 @@ from mizu_node.job_handler import (
 from mizu_node.security import (
     get_allowed_origins,
     get_valid_rewards,
+    total_mined_points_in_past_n_days,
+    total_mined_points_in_past_n_hour,
     validate_worker,
     verify_jwt,
     verify_api_key,
@@ -46,6 +48,7 @@ from mizu_node.types.service import (
     PublishRewardJobRequest,
     QueryClassifierResponse,
     QueryJobResponse,
+    QueryMinedPointsResponse,
     QueryQueueLenResponse,
     QueryRewardJobsResponse,
     RegisterClassifierRequest,
@@ -221,6 +224,26 @@ def queue_len(job_type: JobType = JobType.pow):
     """
     q_len = handle_queue_len(app.rclient, job_type)
     return build_ok_response(QueryQueueLenResponse(length=q_len))
+
+
+@app.get("/stats/mined_points")
+@error_handler
+def get_mined_points(
+    hours: int | None = None, days: int | None = None, user=Depends(get_user)
+):
+    """
+    Return the mined points in the last `hours` hours or last `days` days.
+    """
+    if hours is None and days is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="either hours or days must be provided",
+        )
+    if hours is not None:
+        points = total_mined_points_in_past_n_hour(app.rclient, user, hours)
+    if days is not None:
+        points = total_mined_points_in_past_n_days(app.rclient, user, days)
+    return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
 class MyServer(uvicorn.Server):

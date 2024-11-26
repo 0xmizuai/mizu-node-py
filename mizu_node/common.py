@@ -32,7 +32,7 @@ def build_json_response(
         status_code=status_code,
         content={
             "message": message,
-            "data": data.model_dump(by_alias=True) if data else {},
+            "data": data.model_dump(by_alias=True, exclude_none=True) if data else {},
         },
     )
 

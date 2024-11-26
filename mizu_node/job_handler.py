@@ -23,7 +23,7 @@ from mizu_node.security import (
     record_mined_points,
     record_reward_claim,
     record_reward_event,
-    total_mined_points_in_past_24h,
+    total_mined_points_in_past_n_hour,
 )
 from mizu_node.types.data_job import (
     BatchClassifyContext,
@@ -279,7 +279,7 @@ def _calculate_reward(
             recipient=result.reward_result.recipient,
         )
 
-    past_24h_points = total_mined_points_in_past_24h(rclient, worker)
+    past_24h_points = total_mined_points_in_past_n_hour(rclient, worker, 24)
     factor = 1 if past_24h_points < 500 else (1000 - past_24h_points) / 1000
     return SettleRewardRequest(
         job_id=result.job_id,

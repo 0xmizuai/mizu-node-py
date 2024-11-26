@@ -92,6 +92,12 @@ class QueryRewardJobsResponse(BaseModel):
     jobs: list[WorkerJob]
 
 
+class QueryMinedPointsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    points: float
+
+
 class SettleRewardRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

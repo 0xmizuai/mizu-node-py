@@ -86,9 +86,16 @@ def record_mined_points(rclient: Redis, worker: str, points: float):
         pipeline.execute()
 
 
-def total_mined_points_in_past_24h(rclient: Redis, worker: str) -> float:
+def total_mined_points_in_past_n_hour(rclient: Redis, worker: str, n: int) -> float:
     hour = epoch() // 3600
-    fields = [mined_per_hour_field(hour - i) for i in range(0, 24)]
+    fields = [mined_per_hour_field(hour - i) for i in range(0, n)]
+    values = rclient.hmget(event_name(worker), fields)
+    return sum([float(v or 0) for v in values])
+
+
+def total_mined_points_in_past_n_days(rclient: Redis, worker: str, n: int) -> float:
+    day = epoch() // 86400
+    fields = [mined_per_day_field(day - i) for i in range(0, n)]
     values = rclient.hmget(event_name(worker), fields)
     return sum([float(v or 0) for v in values])
 
