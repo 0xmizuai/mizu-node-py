@@ -190,9 +190,9 @@ class DataJobQueryResult(JobResultBase):
 class RewardJobRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str
-    assigned_at: int
-    reward_ctx: RewardContext
+    job_id: str = Field(alias="_id")
+    assigned_at: int = Field(alias="assignedAt")
+    reward_ctx: RewardContext = Field(alias="rewardCtx")
 
 
 class RewardJobRecords(BaseModel):
