@@ -4,12 +4,11 @@ from fastapi import HTTPException
 import pytest
 
 from mizu_node.security import record_reward_event, validate_worker
-from mizu_node.types.data_job import JobType
+from mizu_node.types.data_job import JobType, RewardContext, WorkerJob
 from tests.redis_mock import RedisMock
 from tests.worker_utils import (
     block_worker,
     clear_cooldown,
-    set_cooldown,
     set_reward_stats,
     set_unclaimed_reward,
 )
@@ -28,7 +27,7 @@ def setenvvar(monkeypatch):
         yield
 
 
-def test_validate_worker(setenvvar):
+def test_validate_worker_blocked(setenvvar):
     r_client = RedisMock()
 
     # given user1 is blocked
@@ -40,6 +39,10 @@ def test_validate_worker(setenvvar):
         validate_worker(r_client, user1, JobType.pow)
     assert e.value.status_code == 403
     assert e.value.detail == "worker is blocked"
+
+
+def test_validate_worker_cooldown(setenvvar):
+    r_client = RedisMock()
 
     # given user2 has cooldown
     user2 = "some_user2"
@@ -66,6 +69,10 @@ def test_validate_worker(setenvvar):
     # should not throw
     validate_worker(r_client, user2, JobType.pow)
 
+
+def test_validate_worker_active_user(setenvvar):
+    r_client = RedisMock()
+
     # given user3 is not active
     user3 = "some_user3"
 
@@ -82,16 +89,32 @@ def test_validate_worker(setenvvar):
     # should not throw
     validate_worker(r_client, user4, JobType.reward)
 
+
+def test_validate_worker_already_rewarded(setenvvar):
+    r_client = RedisMock()
+
     # given user5 is active and has been rewarded
     user5 = "some_user5"
     set_reward_stats(r_client, user5)
-    record_reward_event(r_client, user5, "123")
+    record_reward_event(
+        r_client,
+        user5,
+        WorkerJob(
+            job_id="some_job",
+            job_type=JobType.reward,
+            reward_ctx=RewardContext(amount=100),
+        ),
+    )
 
     # should throw
     with pytest.raises(HTTPException) as e:
-        validate_worker(r_client, user4, JobType.reward)
+        validate_worker(r_client, user5, JobType.reward)
     assert e.value.status_code == 429
     assert e.value.detail.startswith("please retry after")
+
+
+def test_validate_worker_full_pocket(setenvvar):
+    r_client = RedisMock()
 
     # give user 6 is active and
     user6 = "some_user6"

@@ -139,7 +139,7 @@ def handle_take_job(
         return handle_take_job(rclient, jobs, worker, job_type)
     else:
         if job_type == JobType.reward:
-            record_reward_event(rclient, worker, parsed.job_id)
+            record_reward_event(rclient, worker, parsed)
         return parsed
 
 

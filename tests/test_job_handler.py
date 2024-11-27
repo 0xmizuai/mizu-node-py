@@ -26,6 +26,7 @@ from mizu_node.types.data_job import (
     JobType,
     PowContext,
     RewardContext,
+    RewardJobRecords,
     Token,
     WorkerJob,
     WorkerJobResult,
@@ -772,7 +773,6 @@ def test_query_reward_jobs(setenvvar):
             params={"job_type": int(JobType.reward)},
             headers={"Authorization": f"Bearer {worker1_jwt}"},
         )
-        print(response2.text)
         assert response2.status_code == 200
 
     # query reward jobs
@@ -781,10 +781,8 @@ def test_query_reward_jobs(setenvvar):
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
-    jobs = response.json()["data"]["jobs"]
-    jobs = [WorkerJob.model_validate(j) for j in jobs]
-    assert len(jobs) == 2
-    for job in jobs:
+    records = RewardJobRecords.model_validate(response.json()["data"])
+    assert len(records.jobs) == 2
+    for job in records.jobs:
         assert job.job_id in job_ids
-        assert job.job_type == JobType.reward
         assert job.reward_ctx is not None

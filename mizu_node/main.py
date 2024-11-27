@@ -38,7 +38,7 @@ from mizu_node.security import (
     verify_api_key,
 )
 from mizu_node.types.classifier import ClassifierConfig
-from mizu_node.types.data_job import JobType, WorkerJob
+from mizu_node.types.data_job import JobType
 from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobResponse,
@@ -50,7 +50,6 @@ from mizu_node.types.service import (
     QueryJobResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
-    QueryRewardJobsResponse,
     RegisterClassifierRequest,
     RegisterClassifierResponse,
     TakeJobResponse,
@@ -182,18 +181,7 @@ def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publishe
 @error_handler
 def query_reward_jobs(user: str = Depends(get_user)):
     rewards = get_valid_rewards(app.rclient, user)
-    docs = list(
-        app.mdb[JOBS_COLLECTION].find(
-            {"_id": {"$in": [ObjectId(r.job_id) for r in rewards.data]}}
-        )
-    )
-    jobs = [
-        WorkerJob(
-            job_id=str(doc["_id"]), job_type=doc["jobType"], reward_ctx=doc["rewardCtx"]
-        )
-        for doc in docs
-    ]
-    return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
+    return build_ok_response(rewards)
 
 
 @app.get("/take_job")

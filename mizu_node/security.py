@@ -1,5 +1,4 @@
 import os
-from typing import Tuple
 
 from fastapi import HTTPException, status
 from pymongo.database import Collection
@@ -15,7 +14,12 @@ from mizu_node.constants import (
 )
 import jwt
 
-from mizu_node.types.data_job import JobType, RewardJobRecord, RewardJobRecords
+from mizu_node.types.data_job import (
+    JobType,
+    RewardJobRecord,
+    RewardJobRecords,
+    WorkerJob,
+)
 from mizu_node.types.service import CooldownConfig
 
 ALGORITHM = "EdDSA"
@@ -39,7 +43,7 @@ def verify_jwt(token: str, public_key: str) -> str:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"
         )
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Token verification failed"
         )
@@ -108,19 +112,23 @@ def get_valid_rewards(rclient: Redis, worker: str) -> RewardJobRecords:
     rewards = (
         RewardJobRecords.model_validate_json(value) if value else RewardJobRecords()
     )
-    rewards.data = [r for r in rewards.data if r.issued_at + REWARD_TTL > epoch()]
+    rewards.jobs = [r for r in rewards.jobs if r.assigned_at + REWARD_TTL > epoch()]
     return rewards
 
 
-def record_reward_event(rclient: Redis, worker: str, job_id: str):
+def record_reward_event(rclient: Redis, worker: str, job: WorkerJob):
     rewards = get_valid_rewards(rclient, worker)
-    rewards.data.append(RewardJobRecord(job_id=job_id, issued_at=epoch()))
+    rewards.jobs.append(
+        RewardJobRecord(
+            job_id=job.job_id, reward_ctx=job.reward_ctx, assigned_at=epoch()
+        )
+    )
     rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
 
 
 def record_reward_claim(rclient: Redis, worker: str, job_id: str):
     rewards = get_valid_rewards(rclient, worker)
-    rewards.data = [r for r in rewards.data if r.job_id != job_id]
+    rewards.jobs = [r for r in rewards.jobs if r.job_id != job_id]
     rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
 
 
@@ -159,24 +167,24 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             if values[2]
             else RewardJobRecords()
         )
-        valid_rewards = [
-            r for r in parsed_rewards.data if r.issued_at + REWARD_TTL > epoch()
+        valid_jobs = [
+            r for r in parsed_rewards.jobs if r.assigned_at + REWARD_TTL > epoch()
         ]
-        if len(valid_rewards) != len(parsed_rewards.data):
-            parsed_rewards.data = valid_rewards
+        if len(valid_jobs) != len(parsed_rewards.jobs):
+            parsed_rewards.jobs = valid_jobs
             r_client.hset(
                 event_name(worker), REWARD_FIELD, parsed_rewards.model_dump_json()
             )
 
         # check total unclaimed rewards
-        if len(valid_rewards) >= MAX_UNCLAIMED_REWARD:
+        if len(valid_jobs) >= MAX_UNCLAIMED_REWARD:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="unclaimed reward limit reached",
             )
 
         # check last rewarded time
-        last_reward_ts = valid_rewards[-1].issued_at if valid_rewards else 0
+        last_reward_ts = valid_jobs[-1].assigned_at if valid_jobs else 0
         if last_reward_ts + MIN_REWARD_GAP > epoch():
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

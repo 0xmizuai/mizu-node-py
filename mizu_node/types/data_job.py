@@ -191,10 +191,11 @@ class RewardJobRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     job_id: str
-    issued_at: int
+    assigned_at: int
+    reward_ctx: RewardContext
 
 
 class RewardJobRecords(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    data: list[RewardJobRecord] = Field(default=[])
+    jobs: list[RewardJobRecord] = Field(default=[])

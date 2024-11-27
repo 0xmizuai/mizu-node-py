@@ -8,7 +8,12 @@ from mizu_node.security import (
     mined_per_day_field,
     mined_per_hour_field,
 )
-from mizu_node.types.data_job import JobType, RewardJobRecord, RewardJobRecords
+from mizu_node.types.data_job import (
+    JobType,
+    RewardContext,
+    RewardJobRecord,
+    RewardJobRecords,
+)
 from tests.redis_mock import RedisMock
 
 
@@ -38,9 +43,14 @@ def set_reward_stats(rclient: RedisMock, worker: str):
 
 
 def set_unclaimed_reward(r_client, worker: str, total: int = 5):
-    data = [RewardJobRecord(job_id="0x123", issued_at=epoch()) for _ in range(total)]
+    jobs = [
+        RewardJobRecord(
+            job_id="0x123", reward_ctx=RewardContext(amount=100), assigned_at=epoch()
+        )
+        for _ in range(total)
+    ]
     r_client.hset(
-        event_name(worker), REWARD_FIELD, RewardJobRecords(data=data).model_dump_json()
+        event_name(worker), REWARD_FIELD, RewardJobRecords(jobs=jobs).model_dump_json()
     )
 
 
