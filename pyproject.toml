@@ -14,6 +14,7 @@ pymongo = "4.10.0"
 pyjwt = {extras = ["crypto"], version = "^2.9.0"}
 requests = "^2.32.3"
 fastapi-cors = "^0.0.6"
+boto3 = "^1.35.70"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
@@ -23,7 +24,6 @@ isort = "^5.13.2"
 cryptography = "^43.0.3"
 httpx = "^0.27.2"
 pytest-mock = "^3.14.0"
-boto3 = "^1.35.56"
 warcio = "^1.7.4"
 mongomock = "^4.2.0.post1"
 aiohttp = "^3.10.10"
@@ -38,6 +38,7 @@ dev = "mizu_node.main:start_dev"
 start = "mizu_node.main:start"
 publish_pow = "publisher.pow:start"
 publish_reward = "publisher.reward:start"
+backup = "scripts.backup:main"
 
 client = "scripts.client:main"
 import = "scripts.importer_v2:main"
