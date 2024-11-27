@@ -266,17 +266,18 @@ def test_take_job_error(setenvvar):
     worker1_jwt = jwt_token("worker1")
 
     # No jobs published yet
-    response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.batch_classify)},
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["job"] is None
+    for _ in range(10):
+        response = client.get(
+            "/take_job",
+            params={"job_type": int(JobType.pow)},
+            headers={"Authorization": f"Bearer {worker1_jwt}"},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"].get("job", None) is None
 
     response = client.get(
         "/take_job",
-        params={"job_type": int(JobType.batch_classify)},
+        params={"job_type": int(JobType.pow)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
@@ -290,7 +291,7 @@ def test_take_job_error(setenvvar):
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
     assert response.status_code == 200
-    assert response.json()["data"]["job"] is None
+    assert response.json()["data"].get("job", None) is None
 
     # Blocked worker
     worker3_jwt = jwt_token("worker3")
@@ -618,7 +619,7 @@ def test_job_status(mock_requests, setenvvar):
         if status["_id"] in [classify_job["_id"], pow_job["_id"]]:
             assert status["finishedAt"] is not None
         else:
-            assert status["finishedAt"] is None
+            assert "finishedAt" not in status
 
 
 @mongomock.patch((MOCK_MONGO_URL))

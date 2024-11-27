@@ -4,7 +4,7 @@ from mizu_node.security import (
     BLOCKED_FIELD,
     REWARD_FIELD,
     event_name,
-    last_requested_field,
+    rate_limit_field,
     mined_per_day_field,
     mined_per_hour_field,
 )
@@ -45,8 +45,8 @@ def set_unclaimed_reward(r_client, worker: str, total: int = 5):
 
 
 def set_cooldown(rclient: RedisMock, worker: str, job_type: JobType):
-    rclient.hset(event_name(worker), last_requested_field(job_type), epoch())
+    rclient.hset(event_name(worker), rate_limit_field(job_type), str(epoch()))
 
 
 def clear_cooldown(rclient: RedisMock, worker: str, job_type: JobType):
-    rclient.hset(event_name(worker), last_requested_field(job_type), 0)
+    rclient.hset(event_name(worker), rate_limit_field(job_type), "0")

@@ -43,9 +43,18 @@ def test_validate_worker(setenvvar):
 
     # given user2 has cooldown
     user2 = "some_user2"
-    set_cooldown(r_client, user2, JobType.pow)
+    set_reward_stats(r_client, user2)
+    validate_worker(r_client, user2, JobType.reward)
 
     # should throw
+    with pytest.raises(HTTPException) as e:
+        validate_worker(r_client, user2, JobType.reward)
+    assert e.value.status_code == 429
+    assert e.value.detail.startswith("please retry after")
+
+    # skip 10 requests
+    for _ in range(10):
+        validate_worker(r_client, user2, JobType.pow)
     with pytest.raises(HTTPException) as e:
         validate_worker(r_client, user2, JobType.pow)
     assert e.value.status_code == 429

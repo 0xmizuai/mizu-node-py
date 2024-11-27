@@ -1,4 +1,5 @@
 import os
+from typing import Tuple
 
 from fastapi import HTTPException, status
 from pymongo.database import Collection
@@ -15,6 +16,7 @@ from mizu_node.constants import (
 import jwt
 
 from mizu_node.types.data_job import JobType, RewardJobRecord, RewardJobRecords
+from mizu_node.types.service import CooldownConfig
 
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
@@ -63,8 +65,8 @@ def event_name(worker: str):
     return f"event:{worker}"
 
 
-def last_requested_field(job_type: JobType) -> str:
-    return f"last_requested_at:{str(job_type)}"
+def rate_limit_field(job_type: JobType) -> str:
+    return f"rate_limit:{str(job_type)}"
 
 
 def mined_per_hour_field(hour: int):
@@ -123,8 +125,8 @@ def record_reward_claim(rclient: Redis, worker: str, job_id: str):
 
 
 def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
-    last_requested_at_field = last_requested_field(job_type)
-    fields = [BLOCKED_FIELD, last_requested_at_field]
+    rate_limit_key = rate_limit_field(job_type)
+    fields = [BLOCKED_FIELD, rate_limit_key]
     day = epoch() // 86400
     if job_type == JobType.reward:
         fields.append(REWARD_FIELD)
@@ -138,14 +140,18 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             detail="worker is blocked",
         )
 
-    # check if worker is in cool down
-    cooldown_ttl = get_cooldown_ttl(job_type)
-    if int(values[1] or 0) + cooldown_ttl > epoch():
+    # check if worker is rate limited
+    config = get_cooldown_config(job_type)
+    request_ts = (values[1] or "0").split(",")
+    now = epoch()
+    request_ts = [ts for ts in request_ts if int(ts) > now - config.interval]
+    if len(request_ts) >= config.limit:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"please retry after {cooldown_ttl} seconds",
+            detail=f"please retry after {config.interval} seconds",
         )
-    r_client.hset(event_name(worker), last_requested_at_field, epoch())
+    request_ts.append(str(now))
+    r_client.hset(event_name(worker), rate_limit_key, ",".join(request_ts))
 
     if job_type == JobType.reward:
         parsed_rewards = (
@@ -199,10 +205,10 @@ def get_lease_ttl(job_type: JobType) -> int:
         return 600
 
 
-def get_cooldown_ttl(job_type: JobType) -> bool:
+def get_cooldown_config(job_type: JobType) -> CooldownConfig:
     if job_type == JobType.reward:
-        return 60
-    return COOLDOWN_WORKER_EXPIRE_TTL_SECONDS
+        return CooldownConfig(60, 1)
+    return CooldownConfig(COOLDOWN_WORKER_EXPIRE_TTL_SECONDS, 10)
 
 
 def get_allowed_origins() -> list[str]:

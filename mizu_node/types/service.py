@@ -108,3 +108,9 @@ class SettleRewardRequest(BaseModel):
     token: Optional[Token] = Field(default=None)
     amount: Optional[float] = Field(default=None)
     recipient: Optional[str] = Field(default=None)
+
+
+class CooldownConfig:
+    def __init__(self, interval: int, limit: int):
+        self.interval = interval
+        self.limit = limit
