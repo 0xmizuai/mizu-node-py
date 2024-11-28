@@ -26,12 +26,14 @@ class RewardJobConfig(BaseModel):
 ARB_USDT = Token(
     chain="arbitrum",
     address="0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
+    decimals=6,
     protocol="ERC20",
 )
 
 ARB_USDT_TEST = Token(
     chain="arbitrum_sepolia",
     address="0x0C5eAB07a5E082ED5Dc14BAC7e9C706568C2905f",
+    decimals=18,
     protocol="ERC20",
 )
 
@@ -43,13 +45,15 @@ def env():
 def usdt_ctx(amount: int):
     # decimal = 6
     if env() == "production":
-        return RewardContext(token=ARB_USDT, amount=amount * 1_000_000)
+        amount_str = str(amount * 10**ARB_USDT.decimals)
+        return RewardContext(token=ARB_USDT, amount=amount_str)
     else:
-        return RewardContext(token=ARB_USDT_TEST, amount=amount * 1_000_000)
+        amount_str = str(amount * 10**ARB_USDT_TEST.decimals)
+        return RewardContext(token=ARB_USDT_TEST, amount=amount_str)
 
 
-def point_ctx(amount: int):
-    return RewardContext(token=None, amount=amount)
+def point_ctx(amount: float):
+    return RewardContext(token=None, amount=str(amount))
 
 
 USDT_REWARD_CONFIGS = [
@@ -150,7 +154,7 @@ class RewardJobPublisher(object):
                 )
 
     def run(self):
-        for _ in range(1000):
+        while True:
             configs = [config for config in self.reward_configs if self.lottery(config)]
             if len(configs) > 0:
                 logging.info(
@@ -170,9 +174,7 @@ class RewardJobPublisher(object):
             # print stats every 10 runs (10 minutes)
             if random.uniform(0, 1) < 0.1:
                 self.print_stats()
-
-
-#           time.sleep(self.cron_gap)
+            time.sleep(self.cron_gap)
 
 
 parser = argparse.ArgumentParser()

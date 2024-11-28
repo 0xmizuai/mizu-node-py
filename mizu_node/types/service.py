@@ -100,7 +100,7 @@ class SettleRewardRequest(BaseModel):
     worker: str
     # only for reward job
     token: Optional[Token] = Field(default=None)
-    amount: Optional[float] = Field(default=None)
+    amount: Optional[str] = Field(default=None)
     recipient: Optional[str] = Field(default=None)
 
 

@@ -178,7 +178,7 @@ def handle_finish_job(
                 detail=f"failed to settle reward",
             )
         if settle_reward.token is None:
-            reward_points = settle_reward.amount
+            reward_points = float(settle_reward.amount)
 
     if job_result.job_type != JobType.reward and reward_points > 0:
         record_mined_points(rclient, worker, settle_reward.amount)
@@ -284,5 +284,5 @@ def _calculate_reward(
         job_id=result.job_id,
         job_type=job.job_type,
         worker=worker,
-        amount=0.1 * factor,
+        amount=str(0.1 * factor),
     )
