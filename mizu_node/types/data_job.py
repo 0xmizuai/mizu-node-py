@@ -58,7 +58,7 @@ class Token(BaseModel):
 
     chain: str
     address: str
-    decimals: int
+    decimals: int = Field(default=18)
     protocol: Literal["ERC20", "ERC721", "ERC1155"]
 
 
@@ -67,7 +67,7 @@ class RewardContext(BaseModel):
 
     # None if the reward is mizu points
     token: Token | None = Field(default=None)
-    amount: str
+    amount: str | float
 
 
 class DataJobPayload(BaseModel):
