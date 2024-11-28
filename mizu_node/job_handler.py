@@ -274,7 +274,7 @@ def _calculate_reward(
             job_type=job.job_type,
             worker=worker,
             token=job.reward_ctx.token,
-            amount=job.reward_ctx.amount,
+            amount=str(job.reward_ctx.amount),
             recipient=result.reward_result.recipient,
         )
 
