@@ -181,7 +181,7 @@ def handle_finish_job(
             reward_points = float(settle_reward.amount)
 
     if job_result.job_type != JobType.reward and reward_points > 0:
-        record_mined_points(rclient, worker, settle_reward.amount)
+        record_mined_points(rclient, worker, float(reward_points))
     if job_result.job_type == JobType.reward:
         record_reward_claim(rclient, worker, job_result.job_id)
 
