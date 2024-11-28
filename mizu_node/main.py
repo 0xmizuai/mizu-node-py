@@ -54,7 +54,7 @@ from mizu_node.types.service import (
     RegisterClassifierResponse,
     TakeJobResponse,
 )
-from mizu_node.types.job_queue import queue_clean
+from mizu_node.types.job_queue import queue_clean, queue_clear
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -130,6 +130,14 @@ def get_classifier(id: str):
         )
     response = QueryClassifierResponse(classifier=ClassifierConfig(**doc))
     return build_ok_response(response)
+
+
+@app.post("/clear_queue")
+@error_handler
+def clear_queue(job_type: JobType, publisher: str = Depends(get_publisher)):
+    validate_admin_job(publisher)
+    queue_clear(app.rclient, job_type)
+    return build_ok_response()
 
 
 @app.post("/publish_pow_jobs")
