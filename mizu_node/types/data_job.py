@@ -67,7 +67,7 @@ class RewardContext(BaseModel):
 
     # None if the reward is mizu points
     token: Token | None = Field(default=None)
-    amount: str | float
+    amount: str | float | int
 
 
 class DataJobPayload(BaseModel):
