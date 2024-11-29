@@ -185,7 +185,7 @@ def handle_finish_job(
 
         if job_result.job_type != JobType.reward and reward_points > 0:
             record_mined_points(rclient, worker, reward_points)
-        if job_result.job_type != JobType.reward:
+        if job_result.job_type == JobType.reward:
             record_reward_claim(rclient, worker, job_result.job_id)
 
         jobs.update_one(
