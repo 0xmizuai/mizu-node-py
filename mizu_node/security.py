@@ -25,7 +25,8 @@ from mizu_node.types.service import CooldownConfig
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
 REWARD_FIELD = "reward"
-REWARD_TTL = 43200  # 12 hours
+# frontend jobs expire after 12 hours, we add 30mins buffer at backend
+REWARD_TTL = 43200 + 1800  # 12 hours
 
 
 def verify_jwt(token: str, public_key: str) -> str:
@@ -128,8 +129,10 @@ def record_reward_event(rclient: Redis, worker: str, job: WorkerJob):
 
 def record_reward_claim(rclient: Redis, worker: str, job_id: str):
     rewards = get_valid_rewards(rclient, worker)
-    rewards.jobs = [r for r in rewards.jobs if r.job_id != job_id]
-    rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
+    filtered = [r for r in rewards.jobs if r.job_id != job_id]
+    if len(filtered) != len(rewards.jobs):
+        rewards.jobs = filtered
+        rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
 
 
 def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
