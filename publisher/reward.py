@@ -7,7 +7,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 from redis import Redis
-from mizu_node.common import epoch
+from mizu_node.common import epoch, is_prod
 from mizu_node.types.data_job import RewardContext, Token
 from mizu_node.types.service import PublishRewardJobRequest
 from publisher.common import publish
@@ -38,13 +38,9 @@ ARB_USDT_TEST = Token(
 )
 
 
-def env():
-    return os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev")
-
-
 def usdt_ctx(amount: int):
     # decimal = 6
-    if env() == "production":
+    if is_prod():
         amount_str = str(amount * 10**ARB_USDT.decimals)
         return RewardContext(token=ARB_USDT, amount=amount_str)
     else:
