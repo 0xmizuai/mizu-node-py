@@ -26,6 +26,7 @@ from mizu_node.types.service import CooldownConfig
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
 REWARD_FIELD = "reward"
+LAST_REWARDED_AT_FIELD = "last_rewarded_at"
 
 
 def verify_jwt(token: str, public_key: str) -> str:
@@ -123,7 +124,13 @@ def record_reward_event(rclient: Redis, worker: str, job: WorkerJob):
             job_id=job.job_id, reward_ctx=job.reward_ctx, assigned_at=epoch()
         )
     )
-    rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
+    rclient.hmset(
+        event_name(worker),
+        {
+            REWARD_FIELD: rewards.model_dump_json(),
+            LAST_REWARDED_AT_FIELD: str(epoch()),
+        },
+    )
 
 
 def record_reward_claim(rclient: Redis, worker: str, job_id: str):
@@ -139,7 +146,7 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
     fields = [BLOCKED_FIELD, rate_limit_key]
     day = epoch() // 86400
     if job_type == JobType.reward:
-        fields.append(REWARD_FIELD)
+        fields.extend([REWARD_FIELD, LAST_REWARDED_AT_FIELD])
         fields.extend([mined_per_day_field(day - i) for i in range(0, 7)])
     values = r_client.hmget(event_name(worker), fields)
 
@@ -186,7 +193,7 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             )
 
         # check last rewarded time
-        last_reward_ts = valid_jobs[-1].assigned_at if valid_jobs else 0
+        last_reward_ts = int(values[3] or "0")
         if last_reward_ts + MIN_REWARD_GAP > epoch():
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -198,7 +205,7 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             "ENABLE_ACTIVE_USER_CHECK", "false"
         ).lower()
         if enable_active_user_check == "true" and all(
-            [float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[3:]]
+            [float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[4:]]
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
