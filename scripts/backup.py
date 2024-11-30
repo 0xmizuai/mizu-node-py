@@ -104,7 +104,7 @@ def backup():
         UserRecord(
             user_id=str(d["_id"]),
             username=d["user_key"],
-            claimed_point=d["claimed_point"],
+            claimed_point=d.get("claimed_point", 0),
         )
         for d in docs
     ]
