@@ -1,5 +1,6 @@
 import datetime
 from functools import wraps
+import os
 import time
 import traceback
 
@@ -45,3 +46,7 @@ def epoch():
     # use datetime here so we can use freezetime in tests
     d = datetime.datetime.now()
     return int(time.mktime(d.timetuple()))
+
+
+def is_prod():
+    return os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "production"

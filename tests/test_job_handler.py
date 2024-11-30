@@ -14,6 +14,7 @@ from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
 )
+from mizu_node.security import get_valid_rewards
 from mizu_node.types.classifier import (
     ClassifierConfig,
     ClassifyResult,
@@ -26,6 +27,8 @@ from mizu_node.types.data_job import (
     JobType,
     PowContext,
     RewardContext,
+    RewardJobRecords,
+    RewardResult,
     Token,
     WorkerJob,
     WorkerJobResult,
@@ -358,6 +361,7 @@ def test_finish_job(mock_requests, setenvvar):
     worker3_jwt = jwt_token("worker3")
 
     # Publish jobs
+    _publish_jobs_simple(JobType.reward, 3)
     _publish_jobs_simple(JobType.batch_classify, 3)
     _publish_jobs_simple(JobType.pow, 3)
 
@@ -391,7 +395,7 @@ def test_finish_job(mock_requests, setenvvar):
         json=FinishJobRequest(job_result=result).model_dump(),
         headers={"Authorization": f"Bearer {worker2_jwt}"},
     )
-    assert response2.status_code == status.HTTP_403_FORBIDDEN
+    assert response2.status_code == status.HTTP_404_NOT_FOUND
 
     response3 = client.get(
         "/take_job",
@@ -479,7 +483,7 @@ def test_finish_job(mock_requests, setenvvar):
         json=FinishJobRequest(job_result=r14).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker3_jwt}"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
     # Case 2: job 2 finished by worker2
     response = client.get(
@@ -510,27 +514,33 @@ def test_finish_job(mock_requests, setenvvar):
 
     # Case 3: job expired
     worker4_jwt = jwt_token("worker4")
+    set_reward_stats(app.rclient, "worker4")
     response = client.get(
         "/take_job",
-        params={"job_type": int(JobType.pow)},
+        params={"job_type": int(JobType.reward)},
         headers={"Authorization": f"Bearer {worker4_jwt}"},
     )
     assert response.status_code == 200
     job_id = response.json()["data"]["job"]["_id"]
-
-    r3 = WorkerJobResult(job_id=job_id, job_type=JobType.pow, pow_result="166189")
+    rewards = get_valid_rewards(app.rclient, "worker4")
+    assert len(rewards.jobs) == 1
 
     # Manually expire the job by removing it from both Redis queues
-    queue = job_queues[JobType.pow]
+    queue = job_queues[JobType.reward]
     app.rclient.delete(queue._lease_key.of(job_id))
-
+    r3 = WorkerJobResult(
+        job_id=job_id, job_type=JobType.reward, reward_result=RewardResult()
+    )
     response = client.post(
         "/finish_job",
         json=FinishJobRequest(job_result=r3).model_dump(by_alias=True),
         headers={"Authorization": f"Bearer {worker4_jwt}"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
     assert response.json()["message"] == "lease not exists"
+
+    rewards = get_valid_rewards(app.rclient, "worker4")
+    assert len(rewards.jobs) == 0
 
 
 @mongomock.patch((MOCK_MONGO_URL))
@@ -772,7 +782,6 @@ def test_query_reward_jobs(setenvvar):
             params={"job_type": int(JobType.reward)},
             headers={"Authorization": f"Bearer {worker1_jwt}"},
         )
-        print(response2.text)
         assert response2.status_code == 200
 
     # query reward jobs
@@ -781,10 +790,8 @@ def test_query_reward_jobs(setenvvar):
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
-    jobs = response.json()["data"]["jobs"]
-    jobs = [WorkerJob.model_validate(j) for j in jobs]
-    assert len(jobs) == 2
-    for job in jobs:
+    records = RewardJobRecords.model_validate(response.json()["data"])
+    assert len(records.jobs) == 2
+    for job in records.jobs:
         assert job.job_id in job_ids
-        assert job.job_type == JobType.reward
         assert job.reward_ctx is not None

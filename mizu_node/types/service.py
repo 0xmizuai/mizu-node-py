@@ -86,12 +86,6 @@ class FinishJobResponse(BaseModel):
     rewarded_points: float = Field(alias="rewardedPoints")
 
 
-class QueryRewardJobsResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    jobs: list[WorkerJob]
-
-
 class QueryMinedPointsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -106,7 +100,7 @@ class SettleRewardRequest(BaseModel):
     worker: str
     # only for reward job
     token: Optional[Token] = Field(default=None)
-    amount: Optional[float] = Field(default=None)
+    amount: Optional[str] = Field(default=None)
     recipient: Optional[str] = Field(default=None)
 
 

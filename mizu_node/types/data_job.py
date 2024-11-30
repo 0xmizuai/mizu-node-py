@@ -58,6 +58,7 @@ class Token(BaseModel):
 
     chain: str
     address: str
+    decimals: int = Field(default=18)
     protocol: Literal["ERC20", "ERC721", "ERC1155"]
 
 
@@ -66,7 +67,7 @@ class RewardContext(BaseModel):
 
     # None if the reward is mizu points
     token: Token | None = Field(default=None)
-    amount: int
+    amount: str | float | int
 
 
 class DataJobPayload(BaseModel):
@@ -190,11 +191,12 @@ class DataJobQueryResult(JobResultBase):
 class RewardJobRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str
-    issued_at: int
+    job_id: str = Field(alias="_id")
+    assigned_at: int = Field(alias="assignedAt")
+    reward_ctx: RewardContext = Field(alias="rewardCtx")
 
 
 class RewardJobRecords(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    data: list[RewardJobRecord] = Field(default=[])
+    jobs: list[RewardJobRecord] = Field(default=[])

@@ -1,6 +1,8 @@
 import argparse
 import os
 
+import requests
+
 from mizu_node.security import verify_jwt
 from publisher.classifier import list_classifiers, register_classifier
 from scripts.auth import get_api_keys, issue_api_key, sign_jwt
@@ -72,6 +74,11 @@ publish_parser.add_argument("--user", type=str, action="store")
 publish_parser.add_argument("--batch", type=str, action="store")
 publish_parser.add_argument("--classifier", type=str, action="store")
 
+queue_clear_parser = subparsers.add_parser(
+    "clear_queue", add_help=False, description="publish jobs"
+)
+queue_clear_parser.add_argument("--job_type", type=int, action="store")
+
 process_parser = subparsers.add_parser(
     "process", add_help=False, description="process jobs"
 )
@@ -124,5 +131,15 @@ def main():
             list_classifiers(args.user)
         else:
             raise ValueError("Invalid arguments")
+    elif args.command == "clear_queue":
+        service_url = os.environ["NODE_SERVICE_URL"]
+        response = requests.post(
+            f"{service_url}/clear_queue?job_type={args.job_type}",
+            headers={
+                "Authorization": f"Bearer {os.environ['MIZU_ADMIN_USER_API_KEY']}"
+            },
+        )
+        response.raise_for_status()
+        print(response.json())
     else:
         raise ValueError("Invalid arguments")

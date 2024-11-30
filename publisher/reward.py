@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import random
@@ -6,7 +7,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 from redis import Redis
-from mizu_node.common import epoch
+from mizu_node.common import epoch, is_prod
 from mizu_node.types.data_job import RewardContext, Token
 from mizu_node.types.service import PublishRewardJobRequest
 from publisher.common import publish
@@ -25,37 +26,40 @@ class RewardJobConfig(BaseModel):
 ARB_USDT = Token(
     chain="arbitrum",
     address="0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
+    decimals=6,
     protocol="ERC20",
 )
 
 ARB_USDT_TEST = Token(
     chain="arbitrum_sepolia",
     address="0x0C5eAB07a5E082ED5Dc14BAC7e9C706568C2905f",
+    decimals=18,
     protocol="ERC20",
 )
 
 
-def env():
-    return os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev")
-
-
 def usdt_ctx(amount: int):
     # decimal = 6
-    if env() == "production":
-        return RewardContext(token=ARB_USDT, amount=amount * 1_000_000)
+    if is_prod():
+        amount_str = str(amount * 10**ARB_USDT.decimals)
+        return RewardContext(token=ARB_USDT, amount=amount_str)
     else:
-        return RewardContext(token=ARB_USDT_TEST, amount=amount * 1_000_000)
+        amount_str = str(amount * 10**ARB_USDT_TEST.decimals)
+        return RewardContext(token=ARB_USDT_TEST, amount=amount_str)
 
 
-def point_ctx(amount: int):
-    return RewardContext(token=None, amount=amount)
+def point_ctx(amount: float):
+    return RewardContext(token=None, amount=str(amount))
 
 
-REWARD_CONFIGS = [
+USDT_REWARD_CONFIGS = [
     RewardJobConfig(key="1usdt", ctx=usdt_ctx(1), budget_per_day=24),
     RewardJobConfig(key="5usdt", ctx=usdt_ctx(5), budget_per_day=1),
     RewardJobConfig(key="10usdt", ctx=usdt_ctx(10), budget_per_week=3),
     RewardJobConfig(key="100usdt", ctx=usdt_ctx(100), budget_per_week=1),
+]
+
+POINTS_REWARD_CONFIGS = [
     RewardJobConfig(
         key="10points", ctx=point_ctx(10), budget_per_day=2000, batch_size=5
     ),
@@ -65,11 +69,22 @@ REWARD_CONFIGS = [
 ]
 
 
+def build_reward_configs(types: list[str]):
+    REWARD_CONFIGS = []
+    if "all" in types or "usdt" in types:
+        REWARD_CONFIGS += USDT_REWARD_CONFIGS
+    if "all" in types or "points" in types:
+        REWARD_CONFIGS += POINTS_REWARD_CONFIGS
+    return REWARD_CONFIGS
+
+
 class RewardJobPublisher(object):
     def __init__(
         self,
+        types: list[str],
         cron_gap: int = 60,  # run every 60 seconds
     ):
+        self.reward_configs = build_reward_configs(types)
         self.api_key = os.environ["MIZU_ADMIN_USER_API_KEY"]
         self.rclient = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
         self.cron_gap = cron_gap
@@ -124,7 +139,7 @@ class RewardJobPublisher(object):
         return False
 
     def print_stats(self):
-        for config in REWARD_CONFIGS:
+        for config in self.reward_configs:
             if config.budget_per_day:
                 logging.info(
                     f">>>>>> {config.key} spent_per_day: {self.spent_per_day(config.key)}, budget_per_day: {config.budget_per_day}"
@@ -136,7 +151,7 @@ class RewardJobPublisher(object):
 
     def run(self):
         while True:
-            configs = [config for config in REWARD_CONFIGS if self.lottery(config)]
+            configs = [config for config in self.reward_configs if self.lottery(config)]
             if len(configs) > 0:
                 logging.info(
                     f"publishing {len(configs)} reward jobs: {[config.key for config in configs]}"
@@ -155,9 +170,15 @@ class RewardJobPublisher(object):
             # print stats every 10 runs (10 minutes)
             if random.uniform(0, 1) < 0.1:
                 self.print_stats()
-
             time.sleep(self.cron_gap)
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--types", action="store", type=str, default="all", help="types to publish"
+)
+args = parser.parse_args()
+
+
 def start():
-    RewardJobPublisher().run()
+    RewardJobPublisher(args.types.split(",")).run()

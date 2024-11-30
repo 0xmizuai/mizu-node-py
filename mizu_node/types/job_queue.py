@@ -11,6 +11,13 @@ from mizu_node.types.key_prefix import KeyPrefix
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
+def delete_with_prefix(db: Redis, prefix: str) -> None:
+    with db.pipeline() as pipe:
+        for key in db.scan_iter(prefix):
+            pipe.delete(key)
+        pipe.execute()
+
+
 class QueueItem(BaseModel):
     item_id: str
     retry: int = Field(default=0)
@@ -20,6 +27,7 @@ class JobQueue(object):
     """A work queue backed by a redis database"""
 
     def __init__(self, name: KeyPrefix):
+        self._name = name
         self._main_queue_key = name.of(":queue")
         self._processing_key = name.of(":processing")
         self._lease_key = KeyPrefix.concat(name, ":lease:")
@@ -33,6 +41,9 @@ class JobQueue(object):
                 self._main_queue_key, QueueItem(item_id=item_id).model_dump_json()
             )
         pipeline.execute()
+
+    def clear(self, db: Redis) -> None:
+        delete_with_prefix(db, self._name.of("*"))
 
     def queue_len(self, db: Redis) -> int:
         return db.llen(self._main_queue_key)
@@ -123,6 +134,10 @@ job_queues = {
 
 def job_queue(job_type: JobType):
     return job_queues[job_type]
+
+
+def queue_clear(rclient: Redis, job_type: JobType):
+    job_queue(job_type).clear(rclient)
 
 
 def queue_clean(rclient: Redis):
