@@ -25,8 +25,8 @@ from mizu_node.types.service import CooldownConfig
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
 REWARD_FIELD = "reward"
-# frontend jobs expire after 12 hours, we add 30mins buffer at backend
-REWARD_TTL = 43200 + 1800  # 12 hours
+# frontend jobs expire after 12 hours, we add 5mins buffer at backend
+REWARD_TTL = 43200 + 300  # 12 hours
 
 
 def verify_jwt(token: str, public_key: str) -> str:
