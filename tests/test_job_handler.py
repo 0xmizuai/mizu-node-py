@@ -233,7 +233,6 @@ def test_take_job_ok(setenvvar):
         params={"job_type": int(JobType.reward)},
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
-
     assert response1.status_code == 200
     job1 = response1.json()["data"]["job"]
     assert job1["_id"] == rids[0]

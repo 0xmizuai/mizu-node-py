@@ -28,7 +28,6 @@ from mizu_node.job_handler import (
     validate_admin_job,
     validate_classifiers,
 )
-
 from mizu_node.security import (
     get_allowed_origins,
     get_valid_rewards,

@@ -72,7 +72,6 @@ class RecordBatch(object):
 
 
 class CommonCrawlWetImporter(threading.Thread):
-
     def __init__(self, wid: int, source: str, batch: str, q: queue.Queue):
         super().__init__()
         self.wid = wid
