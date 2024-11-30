@@ -28,6 +28,43 @@ class RedisMock:
         value = self.data.get(key)
         return self._check_pipeline(value)
 
+    def hget(self, key, field):
+        value = self.data.get(key, {}).get(field)
+        return self._check_pipeline(value)
+
+    def hset(self, key, field, value):
+        if key not in self.data:
+            self.data[key] = {}
+        self.data[key][field] = value
+        return self._check_pipeline()
+
+    def hmget(self, key, fields):
+        values = [self.data.get(key, {}).get(f) for f in fields]
+        return self._check_pipeline(values)
+
+    def hmset(self, key, mapping):
+        if key not in self.data:
+            self.data[key] = {}
+        self.data[key].update(mapping)
+        return self._check_pipeline()
+
+    def hincrbyfloat(self, key, field, value):
+        if key not in self.data:
+            self.data[key] = {}
+        if field not in self.data[key]:
+            self.data[key][field] = 0.0
+        self.data[key][field] += value
+        return self._check_pipeline()
+
+    def mget(self, keys):
+        values = [self.data.get(k) for k in keys]
+        return self._check_pipeline(values)
+
+    def mset(self, dict):
+        for k, v in dict.items():
+            self.set(k, v)
+        return self._check_pipeline()
+
     def lpush(self, key, *values):
         if key not in self.data:
             self.data[key] = []
@@ -41,13 +78,31 @@ class RedisMock:
             value = self.data[key].pop()
         return self._check_pipeline(value)
 
-    def lmove(self, key1, key2):
-        l = self.rpop(key1)
-        if l is not None:
-            self.lpush(key2, l)
-        return self._check_pipeline(l)
+    def lmove(self, source, destination, src="LEFT", dest="RIGHT"):
+        """
+        Move an element from one list to another.
+        src and dest can be 'LEFT' or 'RIGHT' to indicate which end to pop/push from/to
+        """
+        value = None
+        if src == "RIGHT":
+            value = self.rpop(source)
+        else:  # LEFT
+            if source in self.data and len(self.data[source]) > 0:
+                value = self.data[source].pop(0)
 
-    def lrem(self, key, value):
+        if value is not None:
+            if dest == "RIGHT":
+                if destination not in self.data:
+                    self.data[destination] = []
+                self.data[destination].append(value)
+            else:  # LEFT
+                self.lpush(destination, value)
+
+        return self._check_pipeline(value)
+
+    def lrem(self, key, count, value):
+        if count != 0:
+            raise NotImplementedError("count != 0 is not implemented")
         data = self.get(key)
         if not data:
             return
@@ -70,6 +125,12 @@ class RedisMock:
         return self._check_pipeline()
 
     def incrby(self, key, value):
+        if key not in self.data:
+            self.data[key] = 0
+        self.data[key] += value
+        return self._check_pipeline()
+
+    def incrbyfloat(self, key, value):
         if key not in self.data:
             self.data[key] = 0
         self.data[key] += value

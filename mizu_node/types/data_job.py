@@ -1,8 +1,32 @@
-import time
-from pydantic import BaseModel, ConfigDict, Field
-import uuid
+from enum import Enum
+from typing import Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from mizu_node.types.common import JobType
+from mizu_node.types.classifier import ClassifyResult
+
+
+class VerificationMode(str, Enum):
+    none = "none"
+    always = "always"
+    random = "random"
+
+
+class JobType(int, Enum):
+    pow = 0
+    classify = 1
+    batch_classify = 2
+    reward = 3
+
+
+class JobStatus(int, Enum):
+    pending = 0
+    finished = 1
+    error = 2
+
+
+class ErrorCode(int, Enum):
+    reserved = 0
+    max_retry_exceeded = 1
 
 
 class ClassifyContext(BaseModel):
@@ -23,128 +47,156 @@ class BatchClassifyContext(BaseModel):
 
     data_url: str = Field(alias="dataUrl")
     batch_size: int = Field(alias="batchSize")
-    byte_size: int = Field(alias="byteSize")
+    bytesize: int = Field(alias="bytesize")
     decompressed_byte_size: int = Field(alias="decompressedByteSize")
     checksum_md5: str = Field(alias="checksumMd5")
-    classifer_id: str = Field(alias="classiferId")
+    classifier_id: str = Field(alias="classifierId")
+
+
+class Token(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    chain: str
+    address: str
+    decimals: int = Field(default=18)
+    protocol: Literal["ERC20", "ERC721", "ERC1155"]
+
+
+class RewardContext(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # None if the reward is mizu points
+    token: Token | None = Field(default=None)
+    amount: str | float | int
 
 
 class DataJobPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     job_type: JobType = Field(alias="jobType")
-    classify_ctx: ClassifyContext | None = Field(alias="classifyCtx", default=None)
-    pow_ctx: PowContext | None = Field(alias="powCtx", default=None)
-    batch_classify_ctx: BatchClassifyContext | None = Field(
+    classify_ctx: Optional[ClassifyContext] = Field(alias="classifyCtx", default=None)
+    pow_ctx: Optional[PowContext] = Field(alias="powCtx", default=None)
+    batch_classify_ctx: Optional[BatchClassifyContext] = Field(
         alias="batchClassifyCtx", default=None
     )
+    reward_ctx: Optional[RewardContext] = Field(alias="rewardCtx", default=None)
+
+    @model_validator(mode="after")
+    def _validate_job_type(self):
+        if self.job_type == JobType.reward and self.reward_ctx is None:
+            raise ValueError("reward_ctx is required for reward job")
+        if self.job_type == JobType.classify and self.classify_ctx is None:
+            raise ValueError("classify_ctx is required for classify job")
+        if self.job_type == JobType.pow and self.pow_ctx is None:
+            raise ValueError("pow_ctx is required for pow job")
+        if self.job_type == JobType.batch_classify and self.batch_classify_ctx is None:
+            raise ValueError("batch_classify_ctx is required for batch_classify job")
+        return self
 
 
-class PublishJobRequest(BaseModel):
-    data: list[DataJobPayload]
-
-
-class QueryJobRequest(BaseModel):
-    job_ids: list[str] = Field(alias="jobIds")
-
-
-class DataJob(DataJobPayload):
+class RewardResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="jobId")
+    recipient: Optional[str] = Field(default=None)
+
+
+class ErrorResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: ErrorCode
+    message: Optional[str] = Field(default=None)
+
+
+class JobResultBase(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     job_type: JobType = Field(alias="jobType")
-    publisher: str
-    published_at: int = Field(alias="publishedAt")
+    classify_result: Optional[list[str]] = Field(alias="classifyResult", default=None)
+    pow_result: Optional[str] = Field(alias="powResult", default=None)
+    batch_classify_result: Optional[list[ClassifyResult]] = Field(
+        alias="batchClassifyResult", default=None
+    )
+    reward_result: Optional[RewardResult] = Field(alias="rewardResult", default=None)
+    error_result: Optional[ErrorResult] = Field(alias="errorResult", default=None)
+
+
+class JobResultBaseWithValidator(JobResultBase):
+    @model_validator(mode="after")
+    def _validate_job_type(self):
+        if self.error_result is not None:
+            return self
+
+        if self.job_type == JobType.reward and self.reward_result is None:
+            raise ValueError("reward_result is required for reward job")
+        if self.job_type == JobType.classify and self.classify_result is None:
+            raise ValueError("classify_result is required for classify job")
+        if self.job_type == JobType.pow and self.pow_result is None:
+            raise ValueError("pow_result is required for pow job")
+        if (
+            self.job_type == JobType.batch_classify
+            and self.batch_classify_result is None
+        ):
+            raise ValueError("batch_classify_result is required for batch_classify job")
+        return self
+
+
+##################################### Client Data Type Start ###########################################
 
 
 class WorkerJob(DataJobPayload):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="jobId")
+    job_id: str = Field(alias="_id")
 
 
-class DataLabel(BaseModel):
+class WorkerJobResult(JobResultBaseWithValidator):
     model_config = ConfigDict(populate_by_name=True)
 
-    label: str
-    score: float
+    job_id: str = Field(alias="_id")
 
 
-class WetContext(BaseModel):
-    warc_id: str = Field(alias="warcId")
-    uri: str
-    languages: list[str]
-    crawled_at: int = Field(alias="crawledAt")
+##################################### Client Data Type End ##############################################
 
 
-class ClassifyResult(BaseModel):
+##################################### MONGODB Data Type Start ###########################################
+
+
+class DataJobInputNoId(DataJobPayload):
     model_config = ConfigDict(populate_by_name=True)
 
-    wet_context: WetContext = Field(alias="wetContext")
-    labels: list[DataLabel]
-
-
-class WorkerJobResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    job_id: str = Field(alias="jobId")
-    job_type: JobType = Field(alias="jobType")
-    classify_result: list[str] | None = Field(alias="classifyResult", default=None)
-    pow_result: str | None = Field(alias="powResult", default=None)
-    batch_classify_result: list[ClassifyResult] | None = Field(
-        alias="batchClassifyResult"
-    )
-
-
-class FinishedJob(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    db_id: str = Field(alias="_id")
-    job_type: JobType = Field(alias="jobType")
-    classify_ctx: ClassifyContext | None = Field(alias="classifyCtx")
-    classify_result: list[str] | None = Field(alias="classifyResult")
-    pow_ctx: PowContext | None = Field(alias="powCtx")
-    pow_result: str | None = Field(alias="powResult")
-    batch_classify_ctx: list[ClassifyResult] | None = Field(alias="batchClassifyCtx")
-    batch_classify_result: list[str] | None = Field(alias="batchClassifyResult")
+    status: JobStatus = Field(default=JobStatus.pending)
     published_at: int = Field(alias="publishedAt")
     publisher: str
+
+
+class DataJobResultNoId(JobResultBaseWithValidator):
+    model_config = ConfigDict(populate_by_name=True)
+
+    status: JobStatus
     finished_at: int = Field(alias="finishedAt")
     worker: str
 
-    @classmethod
-    def from_models(cls, worker: str, job: DataJob, result: WorkerJobResult):
-        return cls(
-            db_id=job.job_id,
-            job_type=job.job_type,
-            classify_ctx=job.classify_ctx,
-            pow_ctx=job.pow_ctx,
-            published_at=job.published_at,
-            publisher=job.publisher,
-            finished_at=int(time.time()),
-            worker=worker,
-            classify_result=result.classify_result,
-            pow_result=result.pow_result,
-        )
+
+class DataJobQueryResult(JobResultBase):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str = Field(alias="_id")
+    status: JobStatus = Field(default=JobStatus.pending)
+    finished_at: Optional[int] = Field(alias="finishedAt", default=None)
 
 
-def build_data_job(publisher: str, job: DataJobPayload) -> DataJob:
-    return DataJob(
-        job_id=str(uuid.uuid4()),
-        job_type=job.job_type,
-        publisher=publisher,
-        published_at=int(time.time()),
-        classify_ctx=job.classify_ctx,
-        pow_ctx=job.pow_ctx,
-        batch_classify_ctx=job.batch_classify_ctx,
-    )
+##################################### MONGODB Data Type End ############################################
 
 
-def build_worker_job(job: DataJob) -> WorkerJob:
-    return WorkerJob(
-        job_id=job.job_id,
-        job_type=job.job_type,
-        classify_ctx=job.classify_ctx,
-        pow_ctx=job.pow_ctx,
-        batch_classify_ctx=job.batch_classify_ctx,
-    )
+class RewardJobRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str = Field(alias="_id")
+    assigned_at: int = Field(alias="assignedAt")
+    reward_ctx: RewardContext = Field(alias="rewardCtx")
+
+
+class RewardJobRecords(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    jobs: list[RewardJobRecord] = Field(default=[])

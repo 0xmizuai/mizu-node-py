@@ -1,32 +1,49 @@
-import uuid
+import logging
+import os
+import time
+from typing import Tuple
+from pydantic import BaseModel, Field
 from redis import Redis
 
-import uuid
-from redis import Redis
-
+from mizu_node.types.data_job import JobType
 from mizu_node.types.key_prefix import KeyPrefix
 
+logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
-class QueueItem(object):
-    def __init__(self, id: str, data: str):
-        self.id = id
-        self.data = data
+
+def delete_with_prefix(db: Redis, prefix: str) -> None:
+    with db.pipeline() as pipe:
+        for key in db.scan_iter(prefix):
+            pipe.delete(key)
+        pipe.execute()
+
+
+class QueueItem(BaseModel):
+    item_id: str
+    retry: int = Field(default=0)
 
 
 class JobQueue(object):
     """A work queue backed by a redis database"""
 
     def __init__(self, name: KeyPrefix):
-        self._session = uuid.uuid4().hex
+        self._name = name
         self._main_queue_key = name.of(":queue")
         self._processing_key = name.of(":processing")
         self._lease_key = KeyPrefix.concat(name, ":lease:")
         self._item_data_key = KeyPrefix.concat(name, ":job:")
 
-    def add_items(self, db: Redis, items: list[QueueItem]) -> None:
-        for item in items:
-            db.set(self._item_data_key.of(item.id), item.data)
-        db.lpush(self._main_queue_key, *[item.id for item in items])
+    def add_items(self, db: Redis, item_ids: list[str], data: list[str]) -> None:
+        pipeline = db.pipeline()
+        for item_id, data in zip(item_ids, data):
+            pipeline.set(self._item_data_key.of(item_id), data)
+            pipeline.lpush(
+                self._main_queue_key, QueueItem(item_id=item_id).model_dump_json()
+            )
+        pipeline.execute()
+
+    def clear(self, db: Redis) -> None:
+        delete_with_prefix(db, self._name.of("*"))
 
     def queue_len(self, db: Redis) -> int:
         return db.llen(self._main_queue_key)
@@ -39,28 +56,29 @@ class JobQueue(object):
     def get_item_data(self, db: Redis, item_id: str) -> str | None:
         return db.get(self._item_data_key.of(item_id))
 
-    def lease(self, db: Redis, ttl_secs: int) -> str | None:
-        maybe_item_id: bytes | str | None = db.lmove(
+    def lease(
+        self, db: Redis, ttl_secs: int, worker: str
+    ) -> Tuple[QueueItem, str] | None:
+        maybe_item_id: str | None = db.lmove(
             self._main_queue_key,
             self._processing_key,
+            src="RIGHT",
+            dest="LEFT",
         )
         if maybe_item_id is None:
             return None
 
-        data: str | None = db.get(self._item_data_key.of(maybe_item_id))
-        if data is None:
-            # the item will be cleaned up from processing queue in the next clean
-            return None
-
-        db.setex(
-            self._lease_key.of(maybe_item_id),
-            ttl_secs,
-            self._session,
+        item = QueueItem.model_validate_json(maybe_item_id)
+        values = (
+            db.pipeline()
+            .get(self._item_data_key.of(item.item_id))
+            .setex(self._lease_key.of(item.item_id), ttl_secs, worker)
+            .execute()
         )
-        return data
+        return (item, values[0])
 
-    def lease_exists(self, db: Redis, item_id: str | bytes) -> bool:
-        return db.exists(self._lease_key.of(item_id)) != 0
+    def get_lease(self, db: Redis, item_id: str | bytes) -> str | None:
+        return db.get(self._lease_key.of(item_id))
 
     def complete(self, db: Redis, item_id: str) -> bool:
         job_del_result, _ = (
@@ -77,22 +95,61 @@ class JobQueue(object):
             0,
             -1,
         )
-        for item_id in processing:
-            has_lease_key = self.lease_exists(db, item_id)
-            has_data_key = db.exists(self._item_data_key.of(item_id)) != 0
+        total = len(processing)
+        completed = 0
+        expired = 0
+        for item_str in processing:
+            item = QueueItem.model_validate_json(item_str)
+            has_lease_key = self.get_lease(db, item.item_id) is not None
+            has_data_key = db.exists(self._item_data_key.of(item.item_id)) != 0
 
             # job completed
             if not has_data_key:
-                print(
-                    item_id,
-                    " has been completed, will be deleted from processing queue",
+                logging.debug(
+                    f"{item.item_id} has been completed, will be deleted from processing queue",
                 )
-                db.lrem(self._processing_key, 0, item_id)
+                db.lrem(self._processing_key, 0, item_str)
+                completed += 1
                 continue
 
             # lease expired
             if not has_lease_key:
-                print(item_id, " lease has expired, will reset")
-                db.pipeline().lrem(self._processing_key, 0, item_id).lpush(
-                    self._main_queue_key, item_id
+                logging.debug(f"{item.item_id} lease has expired, will reset")
+                # move the job back to right of the queue
+                item.retry += 1
+                db.pipeline().lrem(self._processing_key, 0, item_str).rpush(
+                    self._main_queue_key, item.model_dump_json()
                 ).execute()
+                expired += 1
+        return total, completed, expired
+
+
+ALL_JOB_TYPES = [JobType.classify, JobType.pow, JobType.batch_classify, JobType.reward]
+
+job_queues = {
+    job_type: JobQueue(KeyPrefix(f"mizu_node_py:job_queue_{job_type.name}"))
+    for job_type in ALL_JOB_TYPES
+}
+
+
+def job_queue(job_type: JobType):
+    return job_queues[job_type]
+
+
+def queue_clear(rclient: Redis, job_type: JobType):
+    job_queue(job_type).clear(rclient)
+
+
+def queue_clean(rclient: Redis):
+    while True:
+        for job_type in ALL_JOB_TYPES:
+            try:
+                logging.info(f"light clean start for queue {str(job_type)}")
+                total, completed, expired = job_queues[job_type].light_clean(rclient)
+                logging.info(
+                    f"light clean done for queue {str(job_type)}: total={total}, completed={completed}, expired={expired}"
+                )
+            except Exception as e:
+                logging.error(f"failed to clean queue {job_type} with error {e}")
+                continue
+        time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
