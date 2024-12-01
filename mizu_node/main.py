@@ -30,12 +30,18 @@ from mizu_node.job_handler import (
 )
 from mizu_node.security import (
     get_allowed_origins,
-    get_valid_rewards,
-    total_mined_points_in_past_n_days,
-    total_mined_points_in_past_n_hour,
     validate_worker,
     verify_jwt,
     verify_api_key,
+)
+from mizu_node.stats import (
+    get_valid_rewards,
+    total_mined_points_in_past_n_days,
+    total_mined_points_in_past_n_days_per_worker,
+    total_mined_points_in_past_n_hour,
+    total_mined_points_in_past_n_hour_per_worker,
+    total_rewarded_in_past_n_days,
+    total_rewarded_in_past_n_hour,
 )
 from mizu_node.types.classifier import ClassifierConfig
 from mizu_node.types.data_job import JobType
@@ -213,6 +219,7 @@ def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
 
 
 @app.get("/stats/queue_len")
+@app.get("/global_stats/queue_len")
 @error_handler
 def queue_len(job_type: JobType = JobType.pow):
     """
@@ -222,7 +229,44 @@ def queue_len(job_type: JobType = JobType.pow):
     return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 
+@app.get("/global_stats/mined_points")
+@error_handler
+def get_mined_points_stats(hours: int | None = None, days: int | None = None):
+    """
+    Return the mined points in the last `hours` hours or last `days` days.
+    """
+    if hours is None and days is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="either hours or days must be provided",
+        )
+    if hours is not None:
+        points = total_mined_points_in_past_n_hour(app.rclient, max(hours, 24))
+    if days is not None:
+        points = total_mined_points_in_past_n_days(app.rclient, max(days, 7))
+    return build_ok_response(QueryMinedPointsResponse(points=points))
+
+
+@app.get("/global_stats/rewards")
+@error_handler
+def get_rewards_stats(token: str, hours: int | None = None, days: int | None = None):
+    """
+    Return the mined points in the last `hours` hours or last `days` days.
+    """
+    if hours is None and days is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="either hours or days must be provided",
+        )
+    if hours is not None:
+        points = total_rewarded_in_past_n_hour(app.rclient, token, max(hours, 24))
+    if days is not None:
+        points = total_rewarded_in_past_n_days(app.rclient, token, max(days, 7))
+    return build_ok_response(QueryMinedPointsResponse(points=points))
+
+
 @app.get("/stats/mined_points")
+@app.get("/worker_stats/mined_points")
 @error_handler
 def get_mined_points(
     hours: int | None = None, days: int | None = None, user=Depends(get_user)
@@ -236,9 +280,13 @@ def get_mined_points(
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_mined_points_in_past_n_hour(app.rclient, user, hours)
+        points = total_mined_points_in_past_n_hour_per_worker(
+            app.rclient, user, max(hours, 24)
+        )
     if days is not None:
-        points = total_mined_points_in_past_n_days(app.rclient, user, days)
+        points = total_mined_points_in_past_n_days_per_worker(
+            app.rclient, user, max(days, 7)
+        )
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 

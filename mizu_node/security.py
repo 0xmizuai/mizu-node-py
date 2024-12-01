@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from pymongo.database import Collection
 from redis import Redis
 
-from mizu_node.common import epoch, is_prod
+from mizu_node.common import epoch
 from mizu_node.constants import (
     ACTIVE_USER_PAST_7D_THRESHOLD,
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
@@ -15,17 +15,21 @@ from mizu_node.constants import (
 )
 import jwt
 
+from mizu_node.stats import (
+    LAST_REWARDED_AT_FIELD,
+    REWARD_FIELD,
+    event_name,
+    mined_per_day_field,
+    rate_limit_field,
+)
 from mizu_node.types.data_job import (
     JobType,
-    RewardJobRecord,
     RewardJobRecords,
-    WorkerJob,
 )
 from mizu_node.types.service import CooldownConfig
 
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
-REWARD_FIELD = "reward"
 
 
 def verify_jwt(token: str, public_key: str) -> str:
@@ -65,81 +69,12 @@ def verify_api_key(mdb: Collection, token: str) -> str:
     return doc["user"]
 
 
-def event_name(worker: str):
-    return f"event:{worker}"
-
-
-def rate_limit_field(job_type: JobType) -> str:
-    return f"rate_limit:{str(job_type)}"
-
-
-def mined_per_hour_field(hour: int):
-    return f"mined_per_hour:{hour}"
-
-
-def mined_per_day_field(day: int):
-    return f"mined_per_day:{day}"
-
-
-def record_mined_points(rclient: Redis, worker: str, points: float):
-    if points > 0.0:
-        now = epoch()
-        hour = now // 3600
-        day = now // 86400
-        pipeline = rclient.pipeline()
-        pipeline.hincrbyfloat(event_name(worker), mined_per_hour_field(hour), points)
-        pipeline.hincrbyfloat(event_name(worker), mined_per_day_field(day), points)
-        pipeline.execute()
-
-
-def total_mined_points_in_past_n_hour(rclient: Redis, worker: str, n: int) -> float:
-    hour = epoch() // 3600
-    fields = [mined_per_hour_field(hour - i) for i in range(0, n)]
-    values = rclient.hmget(event_name(worker), fields)
-    return sum([float(v or 0) for v in values])
-
-
-def total_mined_points_in_past_n_days(rclient: Redis, worker: str, n: int) -> float:
-    day = epoch() // 86400
-    fields = [mined_per_day_field(day - i) for i in range(0, n)]
-    values = rclient.hmget(event_name(worker), fields)
-    return sum([float(v or 0) for v in values])
-
-
-def get_valid_rewards(rclient: Redis, worker: str) -> RewardJobRecords:
-    name = event_name(worker)
-    value = rclient.hget(name, REWARD_FIELD)
-    rewards = (
-        RewardJobRecords.model_validate_json(value) if value else RewardJobRecords()
-    )
-    rewards.jobs = [r for r in rewards.jobs if r.assigned_at + REWARD_TTL > epoch()]
-    return rewards
-
-
-def record_reward_event(rclient: Redis, worker: str, job: WorkerJob):
-    rewards = get_valid_rewards(rclient, worker)
-    rewards.jobs.append(
-        RewardJobRecord(
-            job_id=job.job_id, reward_ctx=job.reward_ctx, assigned_at=epoch()
-        )
-    )
-    rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
-
-
-def record_reward_claim(rclient: Redis, worker: str, job_id: str):
-    rewards = get_valid_rewards(rclient, worker)
-    filtered = [r for r in rewards.jobs if r.job_id != job_id]
-    if len(filtered) != len(rewards.jobs):
-        rewards.jobs = filtered
-        rclient.hset(event_name(worker), REWARD_FIELD, rewards.model_dump_json())
-
-
 def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
     rate_limit_key = rate_limit_field(job_type)
     fields = [BLOCKED_FIELD, rate_limit_key]
     day = epoch() // 86400
     if job_type == JobType.reward:
-        fields.append(REWARD_FIELD)
+        fields.extend([REWARD_FIELD, LAST_REWARDED_AT_FIELD])
         fields.extend([mined_per_day_field(day - i) for i in range(0, 7)])
     values = r_client.hmget(event_name(worker), fields)
 
@@ -186,7 +121,7 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             )
 
         # check last rewarded time
-        last_reward_ts = valid_jobs[-1].assigned_at if valid_jobs else 0
+        last_reward_ts = int(values[3] or "0")
         if last_reward_ts + MIN_REWARD_GAP > epoch():
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -198,7 +133,7 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             "ENABLE_ACTIVE_USER_CHECK", "false"
         ).lower()
         if enable_active_user_check == "true" and all(
-            [float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[3:]]
+            [float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[4:]]
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

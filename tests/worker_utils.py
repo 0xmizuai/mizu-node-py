@@ -2,11 +2,13 @@ import json
 from mizu_node.common import epoch
 from mizu_node.security import (
     BLOCKED_FIELD,
+)
+from mizu_node.stats import (
     REWARD_FIELD,
     event_name,
-    rate_limit_field,
     mined_per_day_field,
     mined_per_hour_field,
+    rate_limit_field,
 )
 from mizu_node.types.data_job import (
     JobType,
