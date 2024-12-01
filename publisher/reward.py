@@ -181,18 +181,22 @@ class RewardJobPublisher(object):
     def run(self):
         while True:
             contexts = []
+            logging.info("======= start to publish reward jobs ======")
             for config in self.reward_configs:
                 if self.lottery(config):
                     batch_size = self.get_batch_size(config)
                     logging.info(f"publishing {batch_size} reward jobs: {config.key}")
                     contexts.extend([config.ctx for _ in range(batch_size)])
                     self.record_spent(config, batch_size)
+                else:
+                    logging.info(f"no reward jobs for {config.key}")
             if len(contexts) > 0:
                 publish(
                     "/publish_reward_jobs",
                     self.api_key,
                     PublishRewardJobRequest(data=contexts),
                 )
+                logging.info("all reward jobs published")
             else:
                 logging.info("no reward job to publish")
 
