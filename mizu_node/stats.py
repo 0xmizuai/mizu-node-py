@@ -95,14 +95,14 @@ def total_mined_points_in_past_n_days_per_worker(
     return sum([float(v or 0) for v in values])
 
 
-def total_mined_points_in_past_n_hour(rclient: Redis, token: str, n: int):
+def total_mined_points_in_past_n_hour(rclient: Redis, n: int):
     hour = epoch() // 3600
     keys = [total_mined_points_per_hour_key(hour - i) for i in range(0, n)]
     values = rclient.mget(keys)
     return sum([float(v or 0) for v in values])
 
 
-def total_mined_points_in_past_n_days(rclient: Redis, token: str, n: int):
+def total_mined_points_in_past_n_days(rclient: Redis, n: int):
     day = epoch() // 86400
     keys = [total_mined_points_per_day_key(day - i) for i in range(0, n)]
     values = rclient.mget(keys)

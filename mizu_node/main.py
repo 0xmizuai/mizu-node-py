@@ -241,11 +241,9 @@ def get_mined_points_stats(hours: int | None = None, days: int | None = None):
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_mined_points_in_past_n_hour_per_worker(
-            app.rclient, max(hours, 24)
-        )
+        points = total_mined_points_in_past_n_hour(app.rclient, max(hours, 24))
     if days is not None:
-        points = total_mined_points_in_past_n_days_per_worker(app.rclient, max(days, 7))
+        points = total_mined_points_in_past_n_days(app.rclient, max(days, 7))
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
@@ -282,9 +280,13 @@ def get_mined_points(
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_mined_points_in_past_n_hour(app.rclient, user, max(hours, 24))
+        points = total_mined_points_in_past_n_hour_per_worker(
+            app.rclient, user, max(hours, 24)
+        )
     if days is not None:
-        points = total_mined_points_in_past_n_days(app.rclient, user, max(days, 7))
+        points = total_mined_points_in_past_n_days_per_worker(
+            app.rclient, user, max(days, 7)
+        )
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
