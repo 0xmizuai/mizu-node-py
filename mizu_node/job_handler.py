@@ -20,10 +20,12 @@ from mizu_node.constants import (
 )
 from mizu_node.security import (
     get_lease_ttl,
+)
+from mizu_node.stats import (
+    record_claim_event,
     record_mined_points,
-    reward_claim_event,
     record_reward_event,
-    total_mined_points_in_past_n_hour,
+    total_mined_points_in_past_n_hour_per_worker,
     try_remove_reward_record,
 )
 from mizu_node.types.data_job import (
@@ -185,7 +187,7 @@ def handle_finish_job(
                 reward_points = float(settle_reward.amount)
 
         if job_result.job_type == JobType.reward:
-            reward_claim_event(rclient, worker, job_result.job_id, parsed.reward_ctx)
+            record_claim_event(rclient, worker, job_result.job_id, parsed.reward_ctx)
         elif reward_points > 0:
             record_mined_points(rclient, worker, reward_points)
 
@@ -289,7 +291,7 @@ def _calculate_reward(
             recipient=result.reward_result.recipient,
         )
 
-    past_24h_points = total_mined_points_in_past_n_hour(rclient, worker, 24)
+    past_24h_points = total_mined_points_in_past_n_hour_per_worker(rclient, worker, 24)
     factor = 1 if past_24h_points < 500 else (1000 - past_24h_points) / 1000
     return SettleRewardRequest(
         job_id=result.job_id,

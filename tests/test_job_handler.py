@@ -14,7 +14,7 @@ from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
 )
-from mizu_node.security import get_valid_rewards
+from mizu_node.stats import get_valid_rewards
 from mizu_node.types.classifier import (
     ClassifierConfig,
     ClassifyResult,
@@ -30,7 +30,6 @@ from mizu_node.types.data_job import (
     RewardJobRecords,
     RewardResult,
     Token,
-    WorkerJob,
     WorkerJobResult,
 )
 
