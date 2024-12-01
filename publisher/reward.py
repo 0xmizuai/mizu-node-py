@@ -3,9 +3,8 @@ import logging
 import os
 import random
 import time
-from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from redis import Redis
 from mizu_node.common import epoch, is_prod
 from mizu_node.types.data_job import RewardContext, Token
@@ -15,12 +14,16 @@ from publisher.common import publish
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
+class BudgetSetting(BaseModel):
+    unit: int
+    unit_name: str
+    budget: int
+
+
 class RewardJobConfig(BaseModel):
     key: str
     ctx: RewardContext
-    budget_per_day: Optional[int] = None
-    budget_per_week: Optional[int] = None
-    batch_size: int = Field(default=1)
+    budget: BudgetSetting | None = None
 
 
 ARB_USDT = Token(
@@ -52,24 +55,86 @@ def point_ctx(amount: float):
     return RewardContext(token=None, amount=str(amount))
 
 
+def get_hourly_active_user():
+    return os.environ.get("HOURLY_ACTIVE_USER", 100)
+
+
 USDT_REWARD_CONFIGS = [
-    RewardJobConfig(key="1usdt", ctx=usdt_ctx(1), budget_per_day=24),
-    RewardJobConfig(key="5usdt", ctx=usdt_ctx(5), budget_per_day=1),
-    RewardJobConfig(key="10usdt", ctx=usdt_ctx(10), budget_per_week=3),
-    RewardJobConfig(key="100usdt", ctx=usdt_ctx(100), budget_per_week=1),
+    RewardJobConfig(
+        key="1usdt",
+        ctx=usdt_ctx(1),
+        budget=BudgetSetting(uint=86400, uint_name="day", budget=5),  # 5u per day
+    ),
+    RewardJobConfig(
+        key="5usdt",
+        ctx=usdt_ctx(5),
+        budget=BudgetSetting(uint=604800, uint_name="week", budget=2),  # 10u per week
+    ),
+    RewardJobConfig(
+        key="10usdt",
+        ctx=usdt_ctx(10),
+        budget=BudgetSetting(uint=604800, uint_name="week", budget=1),  # 10u per week
+    ),
+    RewardJobConfig(
+        key="100usdt",
+        ctx=usdt_ctx(10),
+        budget=BudgetSetting(
+            uint=2419200, uint_name="month", budget=1
+        ),  # 100u per month
+    ),
 ]
 
 POINTS_REWARD_CONFIGS = [
     RewardJobConfig(
-        key="10points", ctx=point_ctx(10), budget_per_day=2000, batch_size=5
+        key="1point",
+        ctx=point_ctx(1),
+        budget=BudgetSetting(
+            uint=3600, uint_name="hour", budget=get_hourly_active_user() * 5
+        ),  # 120k
     ),
-    RewardJobConfig(key="50points", ctx=point_ctx(50), budget_per_day=500),
-    RewardJobConfig(key="100points", ctx=point_ctx(100), budget_per_day=100),
-    RewardJobConfig(key="500points", ctx=point_ctx(500), budget_per_day=20),
+    RewardJobConfig(
+        key="2points",
+        ctx=point_ctx(2),
+        budget=BudgetSetting(
+            uint=3600, uint_name="hour", budget=get_hourly_active_user()
+        ),  # 48k
+    ),
+    RewardJobConfig(
+        key="3points",
+        ctx=point_ctx(3),
+        budget=BudgetSetting(
+            uint=3600, uint_name="hour", budget=get_hourly_active_user()
+        ),  # 72k
+    ),
+    RewardJobConfig(
+        key="5points",
+        ctx=point_ctx(5),
+        budget=BudgetSetting(uint=86400, uint_name="day", budget=1000),  # 5k
+    ),
+    RewardJobConfig(
+        key="10points",
+        ctx=point_ctx(10),
+        budget=BudgetSetting(uint=86400, uint_name="day", budget=500),  # 5k
+    ),
+    RewardJobConfig(
+        key="50points",
+        ctx=point_ctx(50),
+        budget=BudgetSetting(uint=86400, uint_name="day", budget=100),  # 5k
+    ),
+    RewardJobConfig(
+        key="100points",
+        ctx=point_ctx(50),
+        budget=BudgetSetting(uint=86400, uint_name="day", budget=50),  # 5k
+    ),
+    RewardJobConfig(
+        key="500points",
+        ctx=point_ctx(50),
+        budget=BudgetSetting(uint=86400, uint_name="day", budget=10),  # 5k
+    ),
 ]
 
 
-def build_reward_configs(types: list[str]):
+def build_reward_configs(types: list[str]) -> list[RewardJobConfig]:
     REWARD_CONFIGS = []
     if "all" in types or "usdt" in types:
         REWARD_CONFIGS += USDT_REWARD_CONFIGS
@@ -88,82 +153,46 @@ class RewardJobPublisher(object):
         self.api_key = os.environ["MIZU_ADMIN_USER_API_KEY"]
         self.rclient = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
         self.cron_gap = cron_gap
-        self.num_of_runs_per_day = 86400 // self.cron_gap
-        self.num_of_runs_per_week = 604800 // self.cron_gap
 
-    def spent_per_day_key(self, key: str):
-        day_n = epoch() // 86400
-        return f"{key}:spent_per_day:{day_n}"
+    def spent_key(self, config: RewardJobConfig):
+        n = epoch() // config.budget.unit
+        return f"{config.key}:spent_per_{config.budget.unit_name}:{n}"
 
-    def spent_per_day(self, key: str):
-        spent = self.rclient.get(self.spent_per_day_key(key))
+    def spent(self, config: RewardJobConfig):
+        spent = self.rclient.get(self.spent_key(config))
         return int(spent or 0)
 
-    def spent_per_week_key(self, key: str):
-        week_n = epoch() // 604800
-        return f"{key}:spent_per_week:{week_n}"
-
-    def spent_per_week(self, key: str):
-        spent = self.rclient.get(key)
-        return int(spent or 0)
-
-    def record_spent_per_day(self, config: RewardJobConfig):
-        self.rclient.incr(self.spent_per_day_key(config.key), config.batch_size)
-
-    def record_spent_per_week(self, config: RewardJobConfig):
-        self.rclient.incr(self.spent_per_week_key(config.key), config.batch_size)
+    def record_spent(self, config: RewardJobConfig, amount: float):
+        self.rclient.incrbyfloat(self.spent_key(config), amount)
 
     def lottery(self, config: RewardJobConfig):
-        if config.budget_per_day:
-            spent = self.spent_per_day(config.key)
-            if spent >= config.budget_per_day:
-                return False
+        if self.spent(config) > config.budget.budget:
+            return False
+        total_runs = config.budget.unit // self.cron_gap
+        return random.uniform(0, 1) < (config.budget.budget / total_runs)
 
-            max_release_per_day = config.budget_per_day / config.batch_size
-            possibility = max_release_per_day / self.num_of_runs_per_day
-            if random.uniform(0, 1) < possibility:
-                self.record_spent_per_day(config)
-                return True
-
-        elif config.budget_per_week:
-            spent = self.spent_per_week(config.key)
-            if spent >= config.budget_per_week:
-                return False
-
-            max_release_per_week = config.budget_per_week / config.batch_size
-            possibility = max_release_per_week / self.num_of_runs_per_week
-            if random.uniform(0, 1) < possibility:
-                self.record_spent_per_week(config)
-                return True
-
-        return False
-
-    def print_stats(self):
-        for config in self.reward_configs:
-            if config.budget_per_day:
-                logging.info(
-                    f">>>>>> {config.key} spent_per_day: {self.spent_per_day(config.key)}, budget_per_day: {config.budget_per_day}"
-                )
-            elif config.budget_per_week:
-                logging.info(
-                    f">>>>>> {config.key} spent_per_week: {self.spent_per_week(config.key)}, budget_per_week: {config.budget_per_week}"
-                )
+    def get_batch_size(self, config: RewardJobConfig):
+        total_runs = config.budget.unit // self.cron_gap
+        if config.budget.budget > total_runs:
+            return config.budget.budget // total_runs
+        else:
+            return 1
 
     def run(self):
         while True:
-            configs = [config for config in self.reward_configs if self.lottery(config)]
-            if len(configs) > 0:
-                logging.info(
-                    f"publishing {len(configs)} reward jobs: {[config.key for config in configs]}"
+            contexts = []
+            for config in self.reward_configs:
+                if self.lottery(config):
+                    batch_size = self.get_batch_size(config)
+                    logging.info(f"publishing {batch_size} reward jobs: {config.key}")
+                    contexts.extend([config.ctx for _ in range(batch_size)])
+                    self.record_spent(config, batch_size)
+            if len(contexts) > 0:
+                publish(
+                    "/publish_reward_jobs",
+                    self.api_key,
+                    PublishRewardJobRequest(data=contexts),
                 )
-                request = PublishRewardJobRequest(
-                    data=[
-                        config.ctx
-                        for config in configs
-                        for _ in range(config.batch_size)
-                    ]
-                )
-                publish("/publish_reward_jobs", self.api_key, request)
             else:
                 logging.info("no reward job to publish")
 
@@ -171,6 +200,12 @@ class RewardJobPublisher(object):
             if random.uniform(0, 1) < 0.1:
                 self.print_stats()
             time.sleep(self.cron_gap)
+
+    def print_stats(self):
+        for config in self.reward_configs:
+            logging.info(
+                f">>>>>> {config.key} spent_per_{config.budget.unit_name}: {self.spent(config)}, budget_per_{config.budget.unit_name}: {config.budget.budget}"
+            )
 
 
 parser = argparse.ArgumentParser()
