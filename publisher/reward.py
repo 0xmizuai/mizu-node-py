@@ -63,23 +63,23 @@ USDT_REWARD_CONFIGS = [
     RewardJobConfig(
         key="1usdt",
         ctx=usdt_ctx(1),
-        budget=BudgetSetting(uint=86400, uint_name="day", budget=5),  # 5u per day
+        budget=BudgetSetting(unit=86400, unit_name="day", budget=5),  # 5u per day
     ),
     RewardJobConfig(
         key="5usdt",
         ctx=usdt_ctx(5),
-        budget=BudgetSetting(uint=604800, uint_name="week", budget=2),  # 10u per week
+        budget=BudgetSetting(unit=604800, unit_name="week", budget=2),  # 10u per week
     ),
     RewardJobConfig(
         key="10usdt",
         ctx=usdt_ctx(10),
-        budget=BudgetSetting(uint=604800, uint_name="week", budget=1),  # 10u per week
+        budget=BudgetSetting(unit=604800, unit_name="week", budget=1),  # 10u per week
     ),
     RewardJobConfig(
         key="100usdt",
         ctx=usdt_ctx(10),
         budget=BudgetSetting(
-            uint=2419200, uint_name="month", budget=1
+            unit=2419200, unit_name="month", budget=1
         ),  # 100u per month
     ),
 ]
@@ -89,47 +89,47 @@ POINTS_REWARD_CONFIGS = [
         key="1point",
         ctx=point_ctx(1),
         budget=BudgetSetting(
-            uint=3600, uint_name="hour", budget=get_hourly_active_user() * 5
+            unit=3600, unit_name="hour", budget=get_hourly_active_user() * 5
         ),  # 120k
     ),
     RewardJobConfig(
         key="2points",
         ctx=point_ctx(2),
         budget=BudgetSetting(
-            uint=3600, uint_name="hour", budget=get_hourly_active_user()
+            unit=3600, unit_name="hour", budget=get_hourly_active_user()
         ),  # 48k
     ),
     RewardJobConfig(
         key="3points",
         ctx=point_ctx(3),
         budget=BudgetSetting(
-            uint=3600, uint_name="hour", budget=get_hourly_active_user()
+            unit=3600, unit_name="hour", budget=get_hourly_active_user()
         ),  # 72k
     ),
     RewardJobConfig(
         key="5points",
         ctx=point_ctx(5),
-        budget=BudgetSetting(uint=86400, uint_name="day", budget=1000),  # 5k
+        budget=BudgetSetting(unit=86400, unit_name="day", budget=1000),  # 5k
     ),
     RewardJobConfig(
         key="10points",
         ctx=point_ctx(10),
-        budget=BudgetSetting(uint=86400, uint_name="day", budget=500),  # 5k
+        budget=BudgetSetting(unit=86400, unit_name="day", budget=500),  # 5k
     ),
     RewardJobConfig(
         key="50points",
         ctx=point_ctx(50),
-        budget=BudgetSetting(uint=86400, uint_name="day", budget=100),  # 5k
+        budget=BudgetSetting(unit=86400, unit_name="day", budget=100),  # 5k
     ),
     RewardJobConfig(
         key="100points",
         ctx=point_ctx(50),
-        budget=BudgetSetting(uint=86400, uint_name="day", budget=50),  # 5k
+        budget=BudgetSetting(unit=86400, unit_name="day", budget=50),  # 5k
     ),
     RewardJobConfig(
         key="500points",
         ctx=point_ctx(50),
-        budget=BudgetSetting(uint=86400, uint_name="day", budget=10),  # 5k
+        budget=BudgetSetting(unit=86400, unit_name="day", budget=10),  # 5k
     ),
 ]
 
