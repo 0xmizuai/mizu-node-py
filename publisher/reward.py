@@ -56,7 +56,7 @@ def point_ctx(amount: float):
 
 
 def get_hourly_active_user():
-    return os.environ.get("HOURLY_ACTIVE_USER", 100)
+    return int(os.environ.get("HOURLY_ACTIVE_USER", 100))
 
 
 USDT_REWARD_CONFIGS = [
