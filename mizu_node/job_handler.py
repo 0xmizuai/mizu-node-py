@@ -292,7 +292,12 @@ def _calculate_reward(
         )
 
     past_24h_points = total_mined_points_in_past_n_hour_per_worker(rclient, worker, 24)
-    factor = 1 if past_24h_points < 500 else (1000 - past_24h_points) / 1000
+    if past_24h_points < 500:
+        factor = 1
+    elif past_24h_points < 1000:
+        factor = (1000 - past_24h_points) / 1000
+    else:
+        factor = 0
     return SettleRewardRequest(
         job_id=result.job_id,
         job_type=job.job_type,
