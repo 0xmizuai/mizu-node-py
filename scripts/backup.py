@@ -8,7 +8,7 @@ import pymongo
 import redis
 
 from mizu_node.common import epoch
-from mizu_node.security import event_name, mined_per_day_field, mined_per_hour_field
+from mizu_node.stats import event_name, mined_per_day_field, mined_per_hour_field
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
