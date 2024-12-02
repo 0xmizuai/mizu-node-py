@@ -1,6 +1,8 @@
+import argparse
 import logging
 import os
-from typing import Dict
+from datetime import datetime
+from typing import Callable, Dict
 import zlib
 import boto3
 from pydantic import BaseModel, Field
@@ -46,10 +48,28 @@ class UserRecord(BaseModel):
     mined_points_past_7d: Dict[int, float] = Field(default={})  # past 7days
 
 
-def load_backup(epoch: int, verbose: bool = False):
-    env = os.environ.get("RAILWAY_ENVIRONMENT_NAME", "local")
-    file = f"{env}/mizu_users/{epoch}.zz"
-    logging.info(f"Loading backup file {file}")
+def inspect_by_points_users(env: str, point: float):
+    filter: Callable[[UserRecord], bool] = lambda user: user.claimed_point > point
+    load_backups(filter, env=env, verbose=False)
+
+
+def inspect_by_user(env: str, u: str):
+    filter: Callable[[UserRecord], bool] = lambda user: user.username == u
+    load_backups(filter, env=env, verbose=False)
+
+
+def load_backups(filter: Callable, env: str, verbose: bool = False):
+    keys = r2.meta.client.list_objects_v2(
+        Bucket=R2_BACKCUP_BUCKET_NAME, Prefix=f"{env}/mizu_users/"
+    )
+    for obj in keys.get("Contents", []):
+        epoch = int(obj["Key"].split("/")[-1].split(".")[0])
+        logging.info(f"Loading backup file {epoch}.zz: {datetime.fromtimestamp(epoch)}")
+        file = f"{env}/mizu_users/{epoch}.zz"
+        load_backup(file, filter, verbose)
+
+
+def load_backup(file: str, filter: Callable, verbose: bool = False):
     obj = r2.meta.client.get_object(
         Bucket=R2_BACKCUP_BUCKET_NAME,
         Key=file,
@@ -57,11 +77,14 @@ def load_backup(epoch: int, verbose: bool = False):
     compressed = obj["Body"].read()
     json_str = zlib.decompress(compressed).decode("utf-8")
     users = [UserRecord.model_validate_json(line) for line in json_str.split("\n")]
-    if verbose:
-        for user in users:
-            logging.info(
-                f"User {user.user_id}: username={user.username}, points = {user.claimed_point}"
-            )
+    for user in users:
+        if not filter(user):
+            continue
+
+        logging.info(
+            f"User {user.user_id}: username={user.username}, points = {user.claimed_point}"
+        )
+        if verbose:
             logging.info(f"mined_points_past_24h: {user.mined_points_past_24h}")
             logging.info(f"mined_points_past_7d: {user.mined_points_past_7d}")
     return users
@@ -93,7 +116,7 @@ def restore(epoch: int):
     logging.info("Backup file restored")
 
 
-def backup():
+def backup(env: str):
     now = int(epoch())
     logging.info("Backing up user data to R2")
     hour = now // 3600
@@ -130,7 +153,6 @@ def backup():
     json_str = "\n".join([user.model_dump_json() for user in users])
     compressed = zlib.compress(json_str.encode("utf-8"))
     logging.info("Uploading user data")
-    env = os.environ.get("RAILWAY_ENVIRONMENT_NAME", "local")
     r2.meta.client.put_object(
         Bucket=R2_BACKCUP_BUCKET_NAME,
         Key=f"{env}/mizu_users/{epoch()}.zz",
@@ -140,5 +162,11 @@ def backup():
     logging.info("Backup done")
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--env", type=str, action="store", default="local")
+args = parser.parse_args()
+
+
 def main():
-    backup()
+    env = os.environ.get("RAILWAY_ENVIRONMENT_NAME", "local")
+    backup(args.env or env)
