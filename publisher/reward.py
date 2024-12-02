@@ -44,10 +44,10 @@ ARB_USDT_TEST = Token(
 def usdt_ctx(amount: int):
     # decimal = 6
     if is_prod():
-        amount_str = str(amount * 10**ARB_USDT.decimals)
+        amount_str = str(int(amount * 10**ARB_USDT.decimals))
         return RewardContext(token=ARB_USDT, amount=amount_str)
     else:
-        amount_str = str(amount * 10**ARB_USDT_TEST.decimals)
+        amount_str = str(int(amount * 10**ARB_USDT_TEST.decimals))
         return RewardContext(token=ARB_USDT_TEST, amount=amount_str)
 
 
@@ -61,14 +61,34 @@ def get_hourly_active_user():
 
 USDT_REWARD_CONFIGS = [
     RewardJobConfig(
+        key="0.01usdt",
+        ctx=usdt_ctx(0.01),
+        budget=BudgetSetting(unit=3600, unit_name="hour", budget=120),  # 28.8u per day
+    ),
+    RewardJobConfig(
+        key="0.02usdt",
+        ctx=usdt_ctx(0.02),
+        budget=BudgetSetting(unit=3600, unit_name="hour", budget=20),  # 9.6u per day
+    ),
+    RewardJobConfig(
+        key="0.03usdt",
+        ctx=usdt_ctx(0.03),
+        budget=BudgetSetting(unit=3600, unit_name="hour", budget=10),  # 7.2u per day
+    ),
+    RewardJobConfig(
+        key="0.1usdt",
+        ctx=usdt_ctx(0.1),
+        budget=BudgetSetting(unit=86400, unit_name="day", budget=20),  # 2u per day
+    ),
+    RewardJobConfig(
         key="1usdt",
         ctx=usdt_ctx(1),
-        budget=BudgetSetting(unit=86400, unit_name="day", budget=5),  # 5u per day
+        budget=BudgetSetting(unit=604800, unit_name="week", budget=5),  # 5u per week
     ),
     RewardJobConfig(
         key="5usdt",
         ctx=usdt_ctx(5),
-        budget=BudgetSetting(unit=604800, unit_name="week", budget=2),  # 10u per week
+        budget=BudgetSetting(unit=604800, unit_name="week", budget=1),  # 5u per week
     ),
     RewardJobConfig(
         key="10usdt",
@@ -77,7 +97,7 @@ USDT_REWARD_CONFIGS = [
     ),
     RewardJobConfig(
         key="100usdt",
-        ctx=usdt_ctx(10),
+        ctx=usdt_ctx(100),
         budget=BudgetSetting(
             unit=2419200, unit_name="month", budget=1
         ),  # 100u per month
@@ -89,22 +109,22 @@ POINTS_REWARD_CONFIGS = [
         key="1point",
         ctx=point_ctx(1),
         budget=BudgetSetting(
-            unit=3600, unit_name="hour", budget=get_hourly_active_user() * 5
+            unit=3600, unit_name="hour", budget=get_hourly_active_user() * 5  # 5000
         ),  # 120k
     ),
     RewardJobConfig(
         key="2points",
         ctx=point_ctx(2),
         budget=BudgetSetting(
-            unit=3600, unit_name="hour", budget=get_hourly_active_user()
+            unit=3600, unit_name="hour", budget=get_hourly_active_user()  # 1000
         ),  # 48k
     ),
     RewardJobConfig(
         key="3points",
         ctx=point_ctx(3),
         budget=BudgetSetting(
-            unit=3600, unit_name="hour", budget=get_hourly_active_user()
-        ),  # 72k
+            unit=3600, unit_name="hour", budget=get_hourly_active_user() // 2  # 500
+        ),  # 36k
     ),
     RewardJobConfig(
         key="5points",
