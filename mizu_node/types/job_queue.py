@@ -146,7 +146,7 @@ class JobQueue:
                     """
                     UPDATE job_queue 
                     SET status = %s, 
-                        expired_at = EXTRACT(EPOCH FROM NOW())::BIGINT, 
+                        expired_at = EXTRACT(EPOCH FROM NOW())::BIGINT,
                         worker = NULL,
                         retry = retry + 1
                     WHERE status = %s
