@@ -1,8 +1,8 @@
 import logging
 import os
-from mongomock import MongoClient
 import psycopg2
 import redis
+from pymongo import MongoClient
 
 
 class Connections:
