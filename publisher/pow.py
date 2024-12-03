@@ -1,3 +1,4 @@
+import argparse
 import logging
 import math
 import os
@@ -15,9 +16,9 @@ class PowDataJobPublisher(object):
 
     def __init__(
         self,
-        batch_size: int = 1000,
-        cooldown: int = 300,  # check every 5 mins
-        threshold: int = 500_000,  # auto-publish when queue length is below 1_000_000
+        batch_size: int,
+        cooldown: int,
+        threshold: int,
     ):
         self.api_key = os.environ["MIZU_ADMIN_USER_API_KEY"]
         self.batch_size = batch_size
@@ -55,5 +56,14 @@ class PowDataJobPublisher(object):
             time.sleep(self.cooldown)
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--batch_size", type=int, action="store", default="1000")
+parser.add_argument("--cooldown", type=int, action="store", default="300")
+parser.add_argument("--threshold", type=int, action="store", default="500000")
+args = parser.parse_args()
+
+
 def start():
-    PowDataJobPublisher().run()
+    PowDataJobPublisher(
+        batch_size=args.batch_size, cooldown=args.cooldown, threshold=args.threshold
+    ).run()
