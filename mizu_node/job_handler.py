@@ -172,10 +172,10 @@ HANDLE_FINISH_JOB_LATENCY = Histogram(
 )
 
 
-def get_legacy_leaser(conn: Connections, job_id: str) -> str | None:
+def get_legacy_leaser(conn: Connections, job_type: JobType, job_id: str) -> str | None:
     if epoch() - 3600 * 12 > int(os.environ.get("MIGRATION_START_TIME", 0)):
         return None
-    return job_queue_legacy(job_id).get_lease(conn.redis, job_id)
+    return job_queue_legacy(job_type).get_lease(conn.redis, job_id)
 
 
 def handle_finish_job(
@@ -186,7 +186,7 @@ def handle_finish_job(
     job_type = job_result.job_type
     try:
         if job_queue(job_type).get_lease(conn.postgres, job_result.job_id) != worker:
-            if get_legacy_leaser(conn, job_result.job_id) != worker:
+            if get_legacy_leaser(conn, job_type, job_result.job_id) != worker:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
                 )
