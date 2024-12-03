@@ -226,7 +226,7 @@ def query_reward_jobs(user: str = Depends(get_user)):
     return build_ok_response(rewards)
 
 
-TAKE_JOB = Counter("take_job", "Total take_job Request", ["job_type"])
+TAKE_JOB = Counter("take_job", "# of take_job requests per job_type", ["job_type"])
 
 
 @app.get("/take_job")
@@ -241,7 +241,7 @@ def take_job(
 
 
 FINISH_JOB = Counter(
-    "finish_job", "Execution latency of take_job Request", ["job_type"]
+    "finish_job", "# of finish_job requests per job_type", ["job_type"]
 )
 
 
