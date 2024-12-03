@@ -31,6 +31,7 @@ from mizu_node.stats import (
     total_mined_points_in_past_n_hour_per_worker,
     try_remove_reward_record,
 )
+from mizu_node.types import job_queue_legacy
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     BatchClassifyContext,
@@ -171,6 +172,12 @@ HANDLE_FINISH_JOB_LATENCY = Histogram(
 )
 
 
+def get_legacy_leaser(conn: Connections, job_id: str) -> str | None:
+    if epoch() - 3600 * 12 > int(os.environ.get("MIGRATION_START_TIME", 0)):
+        return None
+    return job_queue_legacy(job_id).get_lease(conn.redis, job_id)
+
+
 def handle_finish_job(
     conn: Connections, worker: str, job_result: WorkerJobResult
 ) -> float:
@@ -179,9 +186,10 @@ def handle_finish_job(
     job_type = job_result.job_type
     try:
         if job_queue(job_type).get_lease(conn.postgres, job_result.job_id) != worker:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
-            )
+            if get_legacy_leaser(conn, job_result.job_id) != worker:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
+                )
         doc = conn.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(job_result.job_id)})
         if doc is None:
             raise HTTPException(
