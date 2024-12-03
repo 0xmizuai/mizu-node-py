@@ -2,6 +2,7 @@ import logging
 import os
 import time
 from typing import Tuple
+from prometheus_client import Gauge
 from pydantic import BaseModel, Field
 from redis import Redis
 
@@ -140,9 +141,17 @@ def queue_clear(rclient: Redis, job_type: JobType):
     job_queue(job_type).clear(rclient)
 
 
+QUEUE_LEN = Gauge(
+    "app_job_queue_len",
+    "the queue length of each job_type",
+    ["job_type"],
+)
+
+
 def queue_clean(rclient: Redis):
     while True:
         for job_type in ALL_JOB_TYPES:
+            QUEUE_LEN.labels(job_type.name).set(job_queue(job_type).queue_len(rclient))
             try:
                 logging.info(f"light clean start for queue {str(job_type)}")
                 total, completed, expired = job_queues[job_type].light_clean(rclient)
