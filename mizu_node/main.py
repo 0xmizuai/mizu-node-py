@@ -2,16 +2,20 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
+import random
+import time
 from typing import List
 from bson import ObjectId
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Security, status, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 import redis
 
-from mizu_node.common import build_ok_response, error_handler
+from prometheus_client import Counter, Histogram, make_asgi_app
+
+from mizu_node.common import build_ok_response, epoch_ms, error_handler
 from mizu_node.constants import (
     API_KEY_COLLECTION,
     CLASSIFIER_COLLECTION,
@@ -91,6 +95,25 @@ app.add_middleware(
 app.rclient = rclient
 app.mclient = MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
 app.mdb = app.mclient[MIZU_NODE_MONGO_DB_NAME]
+
+REQUEST_TOTAL = Counter("app_http_request_count", "Total App HTTP Request")
+REQUEST_TOTAL_WITH_LABEL = Counter(
+    "app_http_request_count_with_label",
+    "Total App HTTP Request With Labels",
+    ["endpoint"],
+)
+
+
+@app.middleware("tracing")
+def tracing(request: Request, call_next):
+    REQUEST_TOTAL.inc()
+    REQUEST_TOTAL_WITH_LABEL.labels(request.url.path).inc()
+    response = call_next(request)
+    return response
+
+
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
 
 
 def get_user(
@@ -198,23 +221,55 @@ def query_reward_jobs(user: str = Depends(get_user)):
     return build_ok_response(rewards)
 
 
+TAKE_JOB = Counter("take_job", "Total take_job Request", ["job_type"])
+TAKE_JOB_VALIDATION_LATENCY = Histogram(
+    "take_job_validation_latency_ms",
+    "Validation latency of take_job Request",
+    ["job_type"],
+)
+TAKE_JOB_EXECUTION_LATENCY = Histogram(
+    "take_job_execution_latency_ms",
+    "Execution latency of take_job Request",
+    ["job_type"],
+)
+
+
 @app.get("/take_job")
 @error_handler
 def take_job(
     job_type: JobType,
     user: str = Depends(get_user),
 ):
+    start_time = epoch_ms()
     validate_worker(app.rclient, user, job_type)
+    TAKE_JOB_VALIDATION_LATENCY.labels(job_type).observe(epoch_ms - start_time)
+    after_validation = epoch_ms()
     job = handle_take_job(app.rclient, app.mdb[JOBS_COLLECTION], user, job_type)
+    TAKE_JOB_EXECUTION_LATENCY.labels(job_type).observe(epoch_ms - after_validation)
+    TAKE_JOB.labels(str(job_type)).inc()
     return build_ok_response(TakeJobResponse(job=job))
+
+
+FINISH_JOB = Counter(
+    "finish_job", "Execution latency of take_job Request", ["job_type"]
+)
+FINISH_JOB_EXECUTION_LATENCY = Histogram(
+    "finish_job_validation_latency_ms",
+    "Execution latency of finish_job Request",
+    ["job_type"],
+)
 
 
 @app.post("/finish_job")
 @error_handler
 def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
+    start_time = epoch_ms()
     points = handle_finish_job(
         app.rclient, app.mdb[JOBS_COLLECTION], user, request.job_result
     )
+    job_type = request.job_result.job_type
+    FINISH_JOB.labels(str(job_type)).inc()
+    FINISH_JOB_EXECUTION_LATENCY.labels(str(job_type)).observe(epoch_ms - start_time)
     return build_ok_response(FinishJobResponse(rewarded_points=points))
 
 

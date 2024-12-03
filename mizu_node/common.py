@@ -48,5 +48,9 @@ def epoch():
     return int(time.mktime(d.timetuple()))
 
 
+def epoch_ms():
+    return int(time.time() * 1000)
+
+
 def is_prod():
     return os.environ.get("RAILWAY_ENVIRONMENT_NAME", "dev") == "production"
