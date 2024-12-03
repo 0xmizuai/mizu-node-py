@@ -31,7 +31,7 @@ from mizu_node.stats import (
     total_mined_points_in_past_n_hour_per_worker,
     try_remove_reward_record,
 )
-from mizu_node.types import job_queue_legacy
+from mizu_node.types.job_queue_legacy import job_queue_legacy
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     BatchClassifyContext,

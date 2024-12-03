@@ -1,6 +1,4 @@
 import logging
-import os
-import time
 from typing import Tuple
 from prometheus_client import Gauge
 from pydantic import BaseModel, Field

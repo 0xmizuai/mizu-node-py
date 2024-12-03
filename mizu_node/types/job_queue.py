@@ -166,7 +166,9 @@ def job_queue(job_type: JobType):
 
 
 def queue_clear(db: connection, job_type: JobType):
-    job_queue(job_type).clear(db)
+    with db.cursor() as cur:
+        cur.execute(sql.SQL("DELETE FROM job_queue WHERE job_type = %s"), (job_type))
+        db.commit()
 
 
 QUEUE_LEN = Gauge(
