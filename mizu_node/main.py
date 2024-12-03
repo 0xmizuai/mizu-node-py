@@ -66,32 +66,27 @@ logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 # Security scheme
 bearer_scheme = HTTPBearer()
+conn = Connections()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, queue_clean, app.conn.redis)
+    loop.run_in_executor(None, queue_clean, conn.redis)
     yield
 
 
-def build_app(isUnitTest: bool = False):
-    app = FastAPI(lifespan=lifespan)
-    origins = get_allowed_origins()
-    logging.info(f"allowed origins are {origins}")
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    if "unittest" not in sys.modules.keys():
-        app.conn = Connections(isUnitTest=isUnitTest)
-    return app
+app = FastAPI(lifespan=lifespan)
+origins = get_allowed_origins()
+logging.info(f"allowed origins are {origins}")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-
-app = build_app(isUnitTest=False)
 
 REQUEST_TOTAL = Counter("app_http_request_count", "Total App HTTP Request")
 REQUEST_TOTAL_WITH_LABEL = Counter(
@@ -133,7 +128,7 @@ def get_publisher(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    return verify_api_key(app.conn.mdb[API_KEY_COLLECTION], token)
+    return verify_api_key(conn.mdb[API_KEY_COLLECTION], token)
 
 
 @app.get("/")
@@ -148,7 +143,7 @@ def register_classifier(
     request: RegisterClassifierRequest, publisher: str = Depends(get_publisher)
 ):
     request.config.publisher = publisher
-    result = app.conn.mdb[CLASSIFIER_COLLECTION].insert_one(
+    result = conn.mdb[CLASSIFIER_COLLECTION].insert_one(
         request.config.model_dump(by_alias=True)
     )
     response = RegisterClassifierResponse(id=str(result.inserted_id))
@@ -158,7 +153,7 @@ def register_classifier(
 @app.get("/classifier_info")
 @error_handler
 def get_classifier(id: str):
-    doc = app.conn.mdb[CLASSIFIER_COLLECTION].find_one({"_id": ObjectId(id)})
+    doc = conn.mdb[CLASSIFIER_COLLECTION].find_one({"_id": ObjectId(id)})
     if doc is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="classifier not found"
@@ -171,7 +166,7 @@ def get_classifier(id: str):
 @error_handler
 def clear_queue(job_type: JobType, publisher: str = Depends(get_publisher)):
     validate_admin_job(publisher)
-    queue_clear(app.conn.postgres, job_type)
+    queue_clear(conn.postgres, job_type)
     return build_ok_response()
 
 
@@ -182,7 +177,7 @@ def publish_pow_jobs(
     publisher: str = Depends(get_publisher),
 ):
     validate_admin_job(publisher)
-    ids = handle_publish_jobs(app.conn, publisher, JobType.pow, request.data)
+    ids = handle_publish_jobs(conn, publisher, JobType.pow, request.data)
     return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
@@ -193,7 +188,7 @@ def publish_reward_jobs(
     publisher: str = Depends(get_publisher),
 ):
     validate_admin_job(publisher)
-    ids = handle_publish_jobs(app.conn, publisher, JobType.reward, request.data)
+    ids = handle_publish_jobs(conn, publisher, JobType.reward, request.data)
     return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
@@ -202,22 +197,22 @@ def publish_reward_jobs(
 def publish_batch_classify_jobs(
     request: PublishBatchClassifyJobRequest, publisher: str = Depends(get_publisher)
 ):
-    validate_classifiers(app.conn.mdb, request.data)
-    ids = handle_publish_jobs(app.conn, publisher, JobType.batch_classify, request.data)
+    validate_classifiers(conn.mdb, request.data)
+    ids = handle_publish_jobs(conn, publisher, JobType.batch_classify, request.data)
     return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
 @app.get("/job_status")
 @error_handler
 def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publisher)):
-    jobs = handle_query_job(app.conn.mdb[JOBS_COLLECTION], ids)
+    jobs = handle_query_job(conn.mdb[JOBS_COLLECTION], ids)
     return build_ok_response(QueryJobResponse(jobs=jobs))
 
 
 @app.get("/reward_jobs")
 @error_handler
 def query_reward_jobs(user: str = Depends(get_user)):
-    rewards = get_valid_rewards(app.conn.redis, user)
+    rewards = get_valid_rewards(conn.redis, user)
     return build_ok_response(rewards)
 
 
@@ -230,7 +225,7 @@ def take_job(
     job_type: JobType,
     user: str = Depends(get_user),
 ):
-    job = handle_take_job(app.conn, user, job_type)
+    job = handle_take_job(conn, user, job_type)
     TAKE_JOB.labels(job_type.name).inc()
     return build_ok_response(TakeJobResponse(job=job))
 
@@ -243,7 +238,7 @@ FINISH_JOB = Counter(
 @app.post("/finish_job")
 @error_handler
 def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
-    points = handle_finish_job(app.conn, user, request.job_result)
+    points = handle_finish_job(conn, user, request.job_result)
     job_type = request.job_result.job_type
     FINISH_JOB.labels(job_type.name).inc()
     return build_ok_response(FinishJobResponse(rewarded_points=points))
@@ -256,7 +251,7 @@ def queue_len(job_type: JobType = JobType.pow):
     """
     Return the number of queued classify jobs.
     """
-    q_len = handle_queue_len(app.conn, job_type)
+    q_len = handle_queue_len(conn, job_type)
     return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 
@@ -272,9 +267,9 @@ def get_mined_points_stats(hours: int | None = None, days: int | None = None):
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_mined_points_in_past_n_hour(app.conn.redis, max(hours, 24))
+        points = total_mined_points_in_past_n_hour(conn.redis, max(hours, 24))
     if days is not None:
-        points = total_mined_points_in_past_n_days(app.conn.redis, max(days, 7))
+        points = total_mined_points_in_past_n_days(conn.redis, max(days, 7))
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
@@ -290,9 +285,9 @@ def get_rewards_stats(token: str, hours: int | None = None, days: int | None = N
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_rewarded_in_past_n_hour(app.conn.redis, token, max(hours, 24))
+        points = total_rewarded_in_past_n_hour(conn.redis, token, max(hours, 24))
     if days is not None:
-        points = total_rewarded_in_past_n_days(app.conn.redis, token, max(days, 7))
+        points = total_rewarded_in_past_n_days(conn.redis, token, max(days, 7))
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
@@ -312,11 +307,11 @@ def get_mined_points(
         )
     if hours is not None:
         points = total_mined_points_in_past_n_hour_per_worker(
-            app.conn.redis, user, max(hours, 24)
+            conn.redis, user, max(hours, 24)
         )
     if days is not None:
         points = total_mined_points_in_past_n_days_per_worker(
-            app.conn.redis, user, max(days, 7)
+            conn.redis, user, max(days, 7)
         )
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
