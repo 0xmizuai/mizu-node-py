@@ -72,7 +72,7 @@ conn = Connections()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, queue_clean, conn.redis)
+    loop.run_in_executor(None, queue_clean, conn.postgres)
     yield
 
 

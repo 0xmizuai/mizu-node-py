@@ -125,7 +125,7 @@ class JobQueue:
                     UPDATE job_queue 
                     SET status = %s, 
                         expired_at = NULL, 
-                        worker = NULL
+                        worker = NULL,
                         retry = retry + 1
                     WHERE status = %s
                     AND expired_at < NOW()
