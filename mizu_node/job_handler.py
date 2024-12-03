@@ -118,7 +118,7 @@ def handle_query_job(
 HANDLE_TAKE_JOB_LATENCY = Histogram(
     "handle_take_job_latency_ms",
     "Detailed latency of handle_take_job function",
-    ["job_type", "action"],
+    ["job_type", "step"],
 )
 
 
@@ -127,12 +127,12 @@ def handle_take_job(
 ) -> WorkerJob | None:
     start_time = epoch_ms()
     validate_worker(rclient, worker, job_type)
-    HANDLE_TAKE_JOB_LATENCY.labels(str(job_type), "validate").observe(
+    HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "validate").observe(
         epoch_ms() - start_time
     )
     after_validation = epoch_ms()
     result = job_queue(job_type).lease(rclient, get_lease_ttl(job_type), worker)
-    HANDLE_TAKE_JOB_LATENCY.labels(str(job_type), "lease").observe(
+    HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
         epoch_ms() - after_validation
     )
     if result is None:
@@ -178,10 +178,7 @@ def handle_finish_job(
     start_time = epoch_ms()
     job_type = job_result.job_type
     try:
-        if (
-            job_queue(job_result.job_type).get_lease(rclient, job_result.job_id)
-            != worker
-        ):
+        if job_queue(job_type).get_lease(rclient, job_result.job_id) != worker:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
@@ -192,7 +189,7 @@ def handle_finish_job(
             )
         parsed = DataJobInputNoId.model_validate(doc)
         job_status = _validate_job_result(parsed, job_result)
-        HANDLE_FINISH_JOB_LATENCY.labels(str(job_type), "validate").observe(
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "validate").observe(
             epoch_ms() - start_time
         )
         after_validation = epoch_ms()
@@ -216,16 +213,16 @@ def handle_finish_job(
                 )
             if settle_reward.token is None:
                 reward_points = float(settle_reward.amount)
-            HANDLE_FINISH_JOB_LATENCY.labels(str(job_type), "settle").observe(
+            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "settle").observe(
                 epoch_ms() - after_validation
             )
 
         after_settle_reward = epoch_ms()
-        if job_result.job_type == JobType.reward:
+        if job_type == JobType.reward:
             record_claim_event(rclient, worker, job_result.job_id, parsed.reward_ctx)
         elif reward_points > 0:
             record_mined_points(rclient, worker, reward_points)
-        HANDLE_FINISH_JOB_LATENCY.labels(str(job_type), "record").observe(
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
             epoch_ms() - after_settle_reward
         )
 
@@ -241,16 +238,13 @@ def handle_finish_job(
                 ).model_dump(by_alias=True),
             },
         )
-        job_queue(job_result.job_type).complete(rclient, job_result.job_id)
-        HANDLE_FINISH_JOB_LATENCY.labels(str(job_type), "execute").observe(
+        job_queue(job_type).complete(rclient, job_result.job_id)
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
             epoch_ms() - after_record
         )
         return reward_points
     except HTTPException as e:
-        if (
-            job_result.job_type == JobType.reward
-            and e.status_code == status.HTTP_404_NOT_FOUND
-        ):
+        if job_type == JobType.reward and e.status_code == status.HTTP_404_NOT_FOUND:
             try_remove_reward_record(rclient, worker, job_result.job_id)
         raise e
 
