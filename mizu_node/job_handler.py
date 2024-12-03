@@ -21,6 +21,7 @@ from mizu_node.constants import (
 )
 from mizu_node.security import (
     get_lease_ttl,
+    validate_worker,
 )
 from mizu_node.stats import (
     record_claim_event,
@@ -125,9 +126,14 @@ def handle_take_job(
     rclient: Redis, jobs: Collection, worker: str, job_type: JobType
 ) -> WorkerJob | None:
     start_time = epoch_ms()
+    validate_worker(rclient, worker, job_type)
+    HANDLE_TAKE_JOB_LATENCY.labels(str(job_type), "validate").observe(
+        epoch_ms() - start_time
+    )
+    after_validation = epoch_ms()
     result = job_queue(job_type).lease(rclient, get_lease_ttl(job_type), worker)
     HANDLE_TAKE_JOB_LATENCY.labels(str(job_type), "lease").observe(
-        epoch_ms() - start_time
+        epoch_ms() - after_validation
     )
     if result is None:
         return None
