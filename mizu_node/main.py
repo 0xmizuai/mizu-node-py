@@ -18,6 +18,7 @@ from mizu_node.constants import (
     API_KEY_COLLECTION,
     CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
+    LATENCY_BUCKETS,
     MIZU_NODE_MONGO_DB_NAME,
     REDIS_URL,
 )
@@ -104,6 +105,7 @@ OVERALL_LATENCY_WITH_LABEL = Histogram(
     "app_http_request_overall_latency_ms",
     "Overal Latency of App HTTP Request With Labels",
     ["endpoint"],
+    buckets=LATENCY_BUCKETS,
 )
 
 
