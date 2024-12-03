@@ -609,7 +609,7 @@ def test_finish_job(mock_requests, mock_connections):
         cur.execute(
             """
             UPDATE job_queue 
-            SET expired_at = CURRENT_TIMESTAMP - INTERVAL '1 hour'
+            SET expired_at = EXTRACT(EPOCH FROM NOW())::BIGINT - 3600
             WHERE id = %s
             """,
             (job_id,),
