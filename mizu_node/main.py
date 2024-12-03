@@ -236,7 +236,7 @@ def take_job(
     user: str = Depends(get_user),
 ):
     job = handle_take_job(app.rclient, app.mdb[JOBS_COLLECTION], user, job_type)
-    TAKE_JOB.labels(str(job_type)).inc()
+    TAKE_JOB.labels(job_type.name).inc()
     return build_ok_response(TakeJobResponse(job=job))
 
 
@@ -252,7 +252,7 @@ def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
         app.rclient, app.mdb[JOBS_COLLECTION], user, request.job_result
     )
     job_type = request.job_result.job_type
-    FINISH_JOB.labels(str(job_type)).inc()
+    FINISH_JOB.labels(job_type.name).inc()
     return build_ok_response(FinishJobResponse(rewarded_points=points))
 
 
