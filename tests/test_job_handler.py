@@ -9,7 +9,7 @@ import psycopg2
 import pymongo
 import pytest
 from fastapi import status
-from unittest.mock import patch as mock_patch
+from unittest.mock import MagicMock, patch as mock_patch
 
 from mizu_node.common import epoch
 from mizu_node.constants import (
@@ -50,7 +50,6 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from mizu_node.main import app
 from tests.worker_utils import (
     block_worker,
     clear_cooldown,
@@ -61,14 +60,20 @@ from freezegun import freeze_time
 from unittest import mock
 import pytest
 
-
 TEST_API_KEY1 = "test_api_key1"
 TEST_API_KEY2 = "test_api_key2"
 MOCK_MONGO_URL = "mongodb://localhost:27017"
 CLASSIFIER_ID = ObjectId("666666666666666666666666")
 MIZU_ADMIN_USER_API_KEY = "admin_key"
 
-client = TestClient(app)
+
+# Mock the Connections class
+class MockConnections:
+    def __init__(self, mdb=None, postgres=None, redis=None):
+        self.mdb = mdb if mdb is not None else MagicMock()
+        self.postgres = postgres if postgres is not None else MagicMock()
+        self.redis = redis if redis is not None else RedisMock()
+
 
 # Convert to PEM format
 private_key_obj = Ed25519PrivateKey.generate()
@@ -199,6 +204,7 @@ def _new_data_job_payload(
 
 
 def _publish_jobs(
+    client: TestClient,
     job_type: JobType,
     payloads: list[RewardContext] | list[PowContext] | list[BatchClassifyContext],
 ):
@@ -219,18 +225,28 @@ def _publish_jobs(
         json={"data": [p.model_dump() for p in payloads]},
         headers={"Authorization": f"Bearer {token}"},
     )
+    print(f"Response status: {response.status_code}")
+    print(f"Response body: {response.json()}")
     assert response.status_code == 200
     return response.json()["data"]["jobIds"]
 
 
-def _publish_jobs_simple(job_type: JobType, num_jobs=3):
+def _publish_jobs_simple(client: TestClient, job_type: JobType, num_jobs=3):
     payloads = [_new_data_job_payload(job_type) for i in range(num_jobs)]
-    return _publish_jobs(job_type, payloads)
+    return _publish_jobs(client, job_type, payloads)
 
 
-def mock_all(pg_conn):
+@pytest.fixture(scope="function")
+def mock_connections(monkeypatch, pg_conn, setenvvar):
+    monkeypatch.setattr("mizu_node.types.connections.Connections", MockConnections)
     client = pymongo.MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
     mdb = client[os.environ["MIZU_NODE_MONGO_DB_NAME"]]
+
+    # Clear existing collections before inserting test data
+    mdb[API_KEY_COLLECTION].delete_many({})
+    mdb[CLASSIFIER_COLLECTION].delete_many({})
+
+    # Insert test data
     mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY1, "user": "test_user1"})
     mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY2, "user": "test_user2"})
     mdb[CLASSIFIER_COLLECTION].insert_one(
@@ -241,39 +257,52 @@ def mock_all(pg_conn):
             "embedding_model": "test_embedding_model",
         }
     )
-    app.conn = Connections(mdb=mdb, postgres=pg_conn, redis=RedisMock())
+
+    # Create mock connections
+    mock_conn = MockConnections(mdb=mdb, postgres=pg_conn, redis=RedisMock())
+
+    # Mock the global conn instance in main.py
+    import mizu_node.main
+
+    monkeypatch.setattr("mizu_node.main.conn", mock_conn)
+
+    # Now import the app after mocking
+    from mizu_node.main import app
+
+    # Add the connection instance to the app
+    app.state.conn = mock_conn
+    return app
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-def test_publish_jobs_simple(pg_conn, setenvvar):
-    # Add this line to set up the test environment
-    mock_all(pg_conn)
+def test_publish_jobs_simple(mock_connections):
+    client = TestClient(mock_connections)
 
     # Test publishing classify jobs
-    job_ids1 = _publish_jobs_simple(JobType.reward, 3)
+    job_ids1 = _publish_jobs_simple(client, JobType.reward, 3)
     assert len(job_ids1) == 3
 
     # Test publishing pow jobs
-    job_ids2 = _publish_jobs_simple(JobType.pow, 3)
+    job_ids2 = _publish_jobs_simple(client, JobType.pow, 3)
     assert len(job_ids2) == 3
 
     # Test publishing batch classify jobs
-    job_ids3 = _publish_jobs_simple(JobType.batch_classify, 3)
+    job_ids3 = _publish_jobs_simple(client, JobType.batch_classify, 3)
     assert len(job_ids3) == 3
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-def test_take_job_ok(pg_conn, setenvvar):
-    mock_all(pg_conn)
+def test_take_job_ok(mock_connections):
+    client = TestClient(mock_connections)
 
     # Publish jobs first
-    pids = _publish_jobs_simple(JobType.pow, 3)
-    rids = _publish_jobs_simple(JobType.reward, 3)
-    bids = _publish_jobs_simple(JobType.batch_classify, 3)
+    pids = _publish_jobs_simple(client, JobType.pow, 3)
+    rids = _publish_jobs_simple(client, JobType.reward, 3)
+    bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
 
     # Take reward job 1
     worker1_jwt = jwt_token("worker1")
-    set_reward_stats(app.conn.redis, "worker1")
+    set_reward_stats(mock_connections.state.conn.redis, "worker1")
     response1 = client.get(
         "/take_job",
         params={"job_type": int(JobType.reward)},
@@ -310,8 +339,8 @@ def test_take_job_ok(pg_conn, setenvvar):
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-def test_take_job_error(pg_conn, setenvvar):
-    mock_all(pg_conn)
+def test_take_job_error(mock_connections):
+    client = TestClient(mock_connections)
     worker1_jwt = jwt_token("worker1")
 
     # No jobs published yet
@@ -332,7 +361,7 @@ def test_take_job_error(pg_conn, setenvvar):
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
     # Wrong job type (pow jobs published, trying to take batch classify job)
-    _publish_jobs_simple(JobType.pow, 3)
+    _publish_jobs_simple(client, JobType.pow, 3)
     worker2_jwt = jwt_token("worker2")
     response = client.get(
         "/take_job",
@@ -344,7 +373,7 @@ def test_take_job_error(pg_conn, setenvvar):
 
     # Blocked worker
     worker3_jwt = jwt_token("worker3")
-    block_worker(app.conn.redis, "worker3")
+    block_worker(mock_connections.state.conn.redis, "worker3")
     response = client.get(
         "/take_job",
         params={"job_type": int(JobType.batch_classify)},
@@ -354,7 +383,7 @@ def test_take_job_error(pg_conn, setenvvar):
     assert response.json()["message"] == "worker is blocked"
 
     # user not active for reward job
-    _publish_jobs_simple(JobType.reward, 3)
+    _publish_jobs_simple(client, JobType.reward, 3)
     worker4_jwt = jwt_token("worker4")
     response = client.get(
         "/take_job",
@@ -374,8 +403,8 @@ def test_take_job_error(pg_conn, setenvvar):
     assert response.json()["message"].startswith("please retry after")
 
     # take reward job
-    clear_cooldown(app.conn.redis, "worker4", JobType.reward)
-    set_reward_stats(app.conn.redis, "worker4")
+    clear_cooldown(mock_connections.state.conn.redis, "worker4", JobType.reward)
+    set_reward_stats(mock_connections.state.conn.redis, "worker4")
     response = client.get(
         "/take_job",
         params={"job_type": int(JobType.reward)},
@@ -385,7 +414,7 @@ def test_take_job_error(pg_conn, setenvvar):
     assert response.json()["data"]["job"] is not None
 
     # should not be able to take another reward job
-    clear_cooldown(app.conn.redis, "worker4", JobType.reward)
+    clear_cooldown(mock_connections.state.conn.redis, "worker4", JobType.reward)
     response = client.get(
         "/take_job",
         params={"job_type": int(JobType.reward)},
@@ -397,8 +426,8 @@ def test_take_job_error(pg_conn, setenvvar):
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
-def test_finish_job(mock_requests, pg_conn, setenvvar):
-    mock_all(pg_conn)
+def test_finish_job(mock_requests, mock_connections):
+    client = TestClient(mock_connections)
     mock_requests.return_value = MockedHttpResponse(200)
 
     # Take jobs
@@ -407,9 +436,9 @@ def test_finish_job(mock_requests, pg_conn, setenvvar):
     worker3_jwt = jwt_token("worker3")
 
     # Publish jobs
-    _publish_jobs_simple(JobType.reward, 3)
-    _publish_jobs_simple(JobType.batch_classify, 3)
-    _publish_jobs_simple(JobType.pow, 3)
+    _publish_jobs_simple(client, JobType.reward, 3)
+    _publish_jobs_simple(client, JobType.batch_classify, 3)
+    _publish_jobs_simple(client, JobType.pow, 3)
 
     response1 = client.get(
         "/take_job",
@@ -421,7 +450,7 @@ def test_finish_job(mock_requests, pg_conn, setenvvar):
     pid = response1.json()["data"]["job"]["_id"]
 
     # delete pow job 1 from database
-    app.conn.mdb[JOBS_COLLECTION].delete_many({"_id": ObjectId(pid)})
+    mock_connections.state.conn.mdb[JOBS_COLLECTION].delete_many({"_id": ObjectId(pid)})
     # Try to finish job not in recorded - should fail
     result = WorkerJobResult(
         job_id=pid,  # job id not exists
@@ -506,7 +535,9 @@ def test_finish_job(mock_requests, pg_conn, setenvvar):
     assert resp.rewarded_points == 0.5
 
     # Verify job 1 in database
-    j1 = app.conn.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(bid)})
+    j1 = mock_connections.state.conn.mdb[JOBS_COLLECTION].find_one(
+        {"_id": ObjectId(bid)}
+    )
     assert j1["jobType"] == JobType.batch_classify
     # the empty labels are filtered out
     assert len(j1["batchClassifyResult"]) == 1
@@ -552,7 +583,9 @@ def test_finish_job(mock_requests, pg_conn, setenvvar):
     assert resp.rewarded_points == 0.5
 
     # Verify job 2 in database
-    j2 = app.conn.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(pid)})
+    j2 = mock_connections.state.conn.mdb[JOBS_COLLECTION].find_one(
+        {"_id": ObjectId(pid)}
+    )
     assert j2["jobType"] == JobType.pow
     assert j2["powResult"] == "166189"
     assert j2["worker"] == "worker2"
@@ -560,7 +593,7 @@ def test_finish_job(mock_requests, pg_conn, setenvvar):
 
     # Case 3: job expired
     worker4_jwt = jwt_token("worker4")
-    set_reward_stats(app.conn.redis, "worker4")
+    set_reward_stats(mock_connections.state.conn.redis, "worker4")
     response = client.get(
         "/take_job",
         params={"job_type": int(JobType.reward)},
@@ -568,11 +601,11 @@ def test_finish_job(mock_requests, pg_conn, setenvvar):
     )
     assert response.status_code == 200
     job_id = response.json()["data"]["job"]["_id"]
-    rewards = get_valid_rewards(app.conn.redis, "worker4")
+    rewards = get_valid_rewards(mock_connections.state.conn.redis, "worker4")
     assert len(rewards.jobs) == 1
 
     # Manually expire the job in postgres by setting expired_at to a past time
-    with closing(app.conn.postgres.cursor()) as cur:
+    with closing(mock_connections.state.conn.postgres.cursor()) as cur:
         cur.execute(
             """
             UPDATE job_queue 
@@ -581,7 +614,7 @@ def test_finish_job(mock_requests, pg_conn, setenvvar):
             """,
             (job_id,),
         )
-        app.conn.postgres.commit()
+        mock_connections.state.conn.postgres.commit()
 
     r3 = WorkerJobResult(
         job_id=job_id, job_type=JobType.reward, reward_result=RewardResult()
@@ -594,19 +627,19 @@ def test_finish_job(mock_requests, pg_conn, setenvvar):
     assert response.status_code == 404
     assert response.json()["message"] == "lease not exists"
 
-    rewards = get_valid_rewards(app.conn.redis, "worker4")
+    rewards = get_valid_rewards(mock_connections.state.conn.redis, "worker4")
     assert len(rewards.jobs) == 0
 
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
-def test_job_status(mock_requests, pg_conn, setenvvar):
-    mock_all(pg_conn)
+def test_job_status(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
+    client = TestClient(mock_connections)
 
     # Publish jobs
-    bids = _publish_jobs_simple(JobType.batch_classify, 3)
-    pids = _publish_jobs_simple(JobType.pow, 2)
+    bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
+    pids = _publish_jobs_simple(client, JobType.pow, 2)
     all_job_ids = bids + pids
 
     # Check initial status
@@ -688,8 +721,8 @@ def test_job_status(mock_requests, pg_conn, setenvvar):
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-def test_register_classifier(pg_conn, setenvvar):
-    mock_all(pg_conn)
+def test_register_classifier(mock_connections):
+    client = TestClient(mock_connections)
 
     classifier_config = ClassifierConfig(
         name="test_classifier",
@@ -757,12 +790,11 @@ def test_register_classifier(pg_conn, setenvvar):
 
 @mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
-def test_pow_validation(mock_requests, pg_conn, setenvvar):
-    mock_all(pg_conn)
+def test_pow_validation(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
-
+    client = TestClient(mock_connections)
     # Publish a PoW job
-    _publish_jobs_simple(JobType.pow, 1)
+    _publish_jobs_simple(client, JobType.pow, 1)
     worker_jwt = jwt_token("worker1")
 
     # Take the job
@@ -806,11 +838,12 @@ def test_pow_validation(mock_requests, pg_conn, setenvvar):
 
 
 @mongomock.patch((MOCK_MONGO_URL))
-def test_query_reward_jobs(pg_conn, setenvvar):
-    mock_all(pg_conn)
+def test_query_reward_jobs(mock_connections):
+    client = TestClient(mock_connections)
 
     # Publish reward jobs
     job_ids = _publish_jobs(
+        client,
         JobType.reward,
         [
             _build_reward_ctx(),
@@ -818,7 +851,7 @@ def test_query_reward_jobs(pg_conn, setenvvar):
         ],
     )
 
-    set_reward_stats(app.conn.redis, "worker1")
+    set_reward_stats(mock_connections.state.conn.redis, "worker1")
 
     # take reward jobs
     initial_time = datetime.datetime.now()
