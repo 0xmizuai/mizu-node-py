@@ -24,15 +24,37 @@ class JobQueue:
         self.job_type = int(job_type)
 
     def add_items(self, db: connection, item_ids: list[int], data: list[str]) -> None:
-        with db.cursor() as cur:
-            for item_id, data in zip(item_ids, data):
-                cur.execute(
-                    sql.SQL(
-                        "INSERT INTO job_queue (id, job_type, data, status, created_at) VALUES (%s, %s, %s, %s, %s)"
-                    ),
-                    (item_id, self.job_type, data, JobStatus.PENDING, datetime.now()),
-                )
-            db.commit()
+        try:
+            with db.cursor() as cur:
+                for item_id, data in zip(item_ids, data):
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO job_queue (id, job_type, data, status, created_at) 
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (id) DO UPDATE 
+                            SET job_type = EXCLUDED.job_type,
+                                data = EXCLUDED.data,
+                                status = EXCLUDED.status,
+                                created_at = EXCLUDED.created_at,
+                                expired_at = NULL,
+                                worker = NULL,
+                                retry = 0
+                            """
+                        ),
+                        (
+                            item_id,
+                            self.job_type,
+                            data,
+                            JobStatus.PENDING,
+                            datetime.now(),
+                        ),
+                    )
+                db.commit()
+        except Exception as e:
+            db.rollback()
+            logging.error(f"Failed to add items to job queue: {e}")
+            raise
 
     def clear(self, db: connection) -> None:
         with db.cursor() as cur:
