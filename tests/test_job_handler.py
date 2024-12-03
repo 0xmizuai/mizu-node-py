@@ -111,8 +111,8 @@ def pg_conn(postgresql):
                 job_type INTEGER NOT NULL,
                 status INTEGER NOT NULL DEFAULT 0,
                 data TEXT NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                expired_at TIMESTAMP,
+                created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+                expired_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
                 worker VARCHAR(255),
                 retry INTEGER NOT NULL DEFAULT 0,
                 CONSTRAINT valid_status CHECK (status IN (0, 1, 2))
