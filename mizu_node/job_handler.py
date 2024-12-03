@@ -84,7 +84,6 @@ def handle_publish_jobs(
         for ctx in contexts
     ]
     result = conn.mdb[JOBS_COLLECTION].insert_many(jobs)
-    logging.info(f"inserted {len(result.inserted_ids)} jobs")
     ids = [str(id) for id in result.inserted_ids]
     worker_jobs = [
         WorkerJob(
@@ -188,13 +187,11 @@ def handle_finish_job(
     try:
         if job_queue(job_type).get_lease(conn.postgres, job_result.job_id) != worker:
             if get_legacy_leaser(conn, job_type, job_result.job_id) != worker:
-                logging.info(f"lease not exists for {job_result.job_id}")
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
                 )
         doc = conn.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(job_result.job_id)})
         if doc is None:
-            logging.info(f"job not found for {job_result.job_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
             )
