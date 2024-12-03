@@ -31,6 +31,7 @@ from mizu_node.stats import (
     total_mined_points_in_past_n_hour_per_worker,
     try_remove_reward_record,
 )
+from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     BatchClassifyContext,
     ClassifyContext,
@@ -53,8 +54,7 @@ logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 def handle_publish_jobs(
-    rclient: Redis,
-    mdb: Database,
+    conn: Connections,
     publisher: str,
     job_type: JobType,
     contexts: (
@@ -82,7 +82,7 @@ def handle_publish_jobs(
         ).model_dump(by_alias=True, exclude_none=True)
         for ctx in contexts
     ]
-    result = mdb[JOBS_COLLECTION].insert_many(jobs)
+    result = conn.mdb[JOBS_COLLECTION].insert_many(jobs)
     ids = [str(id) for id in result.inserted_ids]
     worker_jobs = [
         WorkerJob(
@@ -95,7 +95,7 @@ def handle_publish_jobs(
         ).model_dump_json(exclude_none=True)
         for id, ctx in zip(ids, contexts)
     ]
-    job_queue(job_type).add_items(rclient, ids, worker_jobs)
+    job_queue(job_type).add_items(conn.postgres, ids, worker_jobs)
     return ids
 
 
@@ -125,44 +125,41 @@ HANDLE_TAKE_JOB_LATENCY = Histogram(
 
 
 def handle_take_job(
-    rclient: Redis, jobs: Collection, worker: str, job_type: JobType
+    conn: Connections, worker: str, job_type: JobType
 ) -> WorkerJob | None:
     start_time = epoch_ms()
-    validate_worker(rclient, worker, job_type)
+    validate_worker(conn.redis, worker, job_type)
     HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "validate").observe(
         epoch_ms() - start_time
     )
     after_validation = epoch_ms()
-    result = job_queue(job_type).lease(rclient, get_lease_ttl(job_type), worker)
+    result = job_queue(job_type).lease(conn.postgres, get_lease_ttl(job_type), worker)
     HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
         epoch_ms() - after_validation
     )
     if result is None:
         return None
 
-    (item, job) = result
+    (item_id, retry, job) = result
     parsed = WorkerJob.model_validate_json(job)
-    if item.retry > MAX_RETRY_ALLOWED:
+    if retry > MAX_RETRY_ALLOWED:
         try:
             handle_finish_job(
-                rclient,
-                jobs,
+                conn,
                 worker,
                 WorkerJobResult(
-                    job_id=item.item_id,
+                    job_id=item_id,
                     job_type=job_type,
                     error_result=ErrorResult(code=ErrorCode.max_retry_exceeded),
                 ),
             )
         except HTTPException as e:
-            logging.warning(
-                f"failed to retire job {item.item_id} with error {e.detail}"
-            )
+            logging.warning(f"failed to retire job {item_id} with error {e.detail}")
             pass
-        return handle_take_job(rclient, jobs, worker, job_type)
+        return handle_take_job(conn, worker, job_type)
     else:
         if job_type == JobType.reward:
-            record_reward_event(rclient, worker, parsed)
+            record_reward_event(conn.redis, worker, parsed)
         return parsed
 
 
@@ -175,17 +172,17 @@ HANDLE_FINISH_JOB_LATENCY = Histogram(
 
 
 def handle_finish_job(
-    rclient: Redis, jobs: Collection, worker: str, job_result: WorkerJobResult
+    conn: Connections, worker: str, job_result: WorkerJobResult
 ) -> float:
     reward_points = 0
     start_time = epoch_ms()
     job_type = job_result.job_type
     try:
-        if job_queue(job_type).get_lease(rclient, job_result.job_id) != worker:
+        if job_queue(job_type).get_lease(conn.postgres, job_result.job_id) != worker:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
-        doc = jobs.find_one({"_id": ObjectId(job_result.job_id)})
+        doc = conn.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(job_result.job_id)})
         if doc is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
@@ -197,7 +194,7 @@ def handle_finish_job(
         )
         after_validation = epoch_ms()
         if job_status == JobStatus.finished:
-            settle_reward = _calculate_reward(rclient, worker, parsed, job_result)
+            settle_reward = _calculate_reward(conn.redis, worker, parsed, job_result)
             response = requests.post(
                 os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
                 json=settle_reward.model_dump(exclude_none=True),
@@ -222,15 +219,15 @@ def handle_finish_job(
 
         after_settle_reward = epoch_ms()
         if job_type == JobType.reward:
-            record_claim_event(rclient, worker, job_result.job_id, parsed.reward_ctx)
+            record_claim_event(conn.redis, worker, job_result.job_id, parsed.reward_ctx)
         elif reward_points > 0:
-            record_mined_points(rclient, worker, reward_points)
+            record_mined_points(conn.redis, worker, reward_points)
         HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
             epoch_ms() - after_settle_reward
         )
 
         after_record = epoch_ms()
-        jobs.update_one(
+        conn.mdb[JOBS_COLLECTION].update_one(
             {"_id": ObjectId(job_result.job_id)},
             {
                 "$set": DataJobResultNoId(
@@ -241,19 +238,19 @@ def handle_finish_job(
                 ).model_dump(by_alias=True),
             },
         )
-        job_queue(job_type).complete(rclient, job_result.job_id)
+        job_queue(job_type).complete(conn.postgres, job_result.job_id)
         HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
             epoch_ms() - after_record
         )
         return reward_points
     except HTTPException as e:
         if job_type == JobType.reward and e.status_code == status.HTTP_404_NOT_FOUND:
-            try_remove_reward_record(rclient, worker, job_result.job_id)
+            try_remove_reward_record(conn.redis, worker, job_result.job_id)
         raise e
 
 
-def handle_queue_len(rclient: Redis, job_type: JobType) -> int:
-    return job_queue(job_type).queue_len(rclient)
+def handle_queue_len(conn: Connections, job_type: JobType) -> int:
+    return job_queue(job_type).queue_len(conn.postgres)
 
 
 def validate_admin_job(publisher: str):
