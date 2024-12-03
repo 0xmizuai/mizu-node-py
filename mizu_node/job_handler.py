@@ -4,13 +4,14 @@ import os
 from typing import Iterator
 
 from bson import ObjectId
+from prometheus_client import Histogram
 from pymongo.database import Database, Collection
 from redis import Redis
 from fastapi import HTTPException, status
 import requests
 
 
-from mizu_node.common import epoch
+from mizu_node.common import epoch, epoch_ms
 from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
     DEFAULT_POW_DIFFICULTY,
@@ -113,10 +114,21 @@ def handle_query_job(
     ]
 
 
+HANDLE_TAKE_JOB_LATENCY = Histogram(
+    "handle_take_job_latency_ms",
+    "Detailed latency of handle_take_job function",
+    ["job_type", "action"],
+)
+
+
 def handle_take_job(
     rclient: Redis, jobs: Collection, worker: str, job_type: JobType
 ) -> WorkerJob | None:
+    start_time = epoch_ms()
     result = job_queue(job_type).lease(rclient, get_lease_ttl(job_type), worker)
+    HANDLE_TAKE_JOB_LATENCY.labels(str(job_type), "lease").observe(
+        epoch_ms() - start_time
+    )
     if result is None:
         return None
 
@@ -146,10 +158,19 @@ def handle_take_job(
         return parsed
 
 
+HANDLE_FINISH_JOB_LATENCY = Histogram(
+    "handle_finish_job_latency_ms",
+    "Detailed latency of handle_finish_job function",
+    ["job_type", "step"],
+)
+
+
 def handle_finish_job(
     rclient: Redis, jobs: Collection, worker: str, job_result: WorkerJobResult
 ) -> float:
     reward_points = 0
+    start_time = epoch_ms()
+    job_type = job_result.job_type
     try:
         if (
             job_queue(job_result.job_type).get_lease(rclient, job_result.job_id)
@@ -165,6 +186,10 @@ def handle_finish_job(
             )
         parsed = DataJobInputNoId.model_validate(doc)
         job_status = _validate_job_result(parsed, job_result)
+        HANDLE_FINISH_JOB_LATENCY.labels(str(job_type), "validate").observe(
+            epoch_ms() - start_time
+        )
+        after_validation = epoch_ms()
         if job_status == JobStatus.finished:
             settle_reward = _calculate_reward(rclient, worker, parsed, job_result)
             response = requests.post(
@@ -185,12 +210,20 @@ def handle_finish_job(
                 )
             if settle_reward.token is None:
                 reward_points = float(settle_reward.amount)
+            HANDLE_FINISH_JOB_LATENCY.labels(str(job_type), "settle").observe(
+                epoch_ms() - after_validation
+            )
 
+        after_settle_reward = epoch_ms()
         if job_result.job_type == JobType.reward:
             record_claim_event(rclient, worker, job_result.job_id, parsed.reward_ctx)
         elif reward_points > 0:
             record_mined_points(rclient, worker, reward_points)
+        HANDLE_FINISH_JOB_LATENCY.labels(str(job_type), "record").observe(
+            epoch_ms() - after_settle_reward
+        )
 
+        after_record = epoch_ms()
         jobs.update_one(
             {"_id": ObjectId(job_result.job_id)},
             {
@@ -203,6 +236,9 @@ def handle_finish_job(
             },
         )
         job_queue(job_result.job_type).complete(rclient, job_result.job_id)
+        HANDLE_FINISH_JOB_LATENCY.labels(str(job_type), "execute").observe(
+            epoch_ms() - after_record
+        )
         return reward_points
     except HTTPException as e:
         if (

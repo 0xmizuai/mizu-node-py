@@ -16,6 +16,7 @@ requests = "^2.32.3"
 fastapi-cors = "^0.0.6"
 boto3 = "^1.35.70"
 
+prometheus-client = "^0.21.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 pre-commit = "^4.0.1"
