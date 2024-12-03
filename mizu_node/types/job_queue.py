@@ -6,6 +6,8 @@ from prometheus_client import Gauge
 from psycopg2 import sql
 from datetime import datetime, timedelta
 
+from mizu_node.common import epoch
+from mizu_node.constants import MAX_RETRY_ALLOWED
 from mizu_node.types.data_job import JobType
 
 from psycopg2.extensions import connection
@@ -47,7 +49,7 @@ class JobQueue:
                             self.job_type,
                             data,
                             JobStatus.PENDING,
-                            datetime.now(),
+                            epoch(),
                         ),
                     )
                 db.commit()
@@ -94,7 +96,7 @@ class JobQueue:
                 ),
                 (
                     JobStatus.PROCESSING,
-                    datetime.now() + timedelta(seconds=ttl_secs),
+                    epoch() + ttl_secs,
                     worker,
                     item_id,
                 ),
@@ -128,7 +130,7 @@ class JobQueue:
                         worker = NULL,
                         retry = retry + 1
                     WHERE status = %s
-                    AND expired_at < NOW()
+                    AND expired_at < EXTRACT(EPOCH FROM NOW())::BIGINT
                 """
                 ),
                 (JobStatus.PENDING, JobStatus.PROCESSING),
@@ -145,7 +147,7 @@ class JobQueue:
                     WHERE id = %s 
                     AND job_type = %s 
                     AND status = %s
-                    AND expired_at > NOW()
+                    AND expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
                 """
                 ),
                 (item_id, self.job_type, JobStatus.PROCESSING),
