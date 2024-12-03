@@ -16,6 +16,7 @@ from mizu_node.constants import (
     CLASSIFIER_COLLECTION,
     DEFAULT_POW_DIFFICULTY,
     JOBS_COLLECTION,
+    LATENCY_BUCKETS,
     MAX_RETRY_ALLOWED,
     MIZU_ADMIN_USER,
 )
@@ -119,6 +120,7 @@ HANDLE_TAKE_JOB_LATENCY = Histogram(
     "handle_take_job_latency_ms",
     "Detailed latency of handle_take_job function",
     ["job_type", "step"],
+    buckets=LATENCY_BUCKETS,
 )
 
 
@@ -168,6 +170,7 @@ HANDLE_FINISH_JOB_LATENCY = Histogram(
     "handle_finish_job_latency_ms",
     "Detailed latency of handle_finish_job function",
     ["job_type", "step"],
+    buckets=LATENCY_BUCKETS,
 )
 
 

@@ -29,3 +29,17 @@ REWARD_TTL = int(
 MAX_RETRY_ALLOWED = int(os.environ.get("MAX_RETRY_ALLOWED", 3))
 
 MAX_UNCLAIMED_REWARD = 5
+
+LATENCY_BUCKETS = [
+    1.0,
+    5.0,
+    10.0,
+    20.0,
+    50.0,
+    100.0,
+    500.0,
+    1000.0,
+    2000.0,
+    3000.0,
+    float("inf"),
+]
