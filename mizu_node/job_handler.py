@@ -84,6 +84,7 @@ def handle_publish_jobs(
         for ctx in contexts
     ]
     result = conn.mdb[JOBS_COLLECTION].insert_many(jobs)
+    logging.info(f"inserted {len(result.inserted_ids)} jobs")
     ids = [str(id) for id in result.inserted_ids]
     worker_jobs = [
         WorkerJob(
