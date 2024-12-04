@@ -37,18 +37,25 @@ def lease_job(
     ttl_secs: int,
     worker: str,
 ) -> Tuple[int, int, DataJobContext] | None:
-    """Attempt to lease a job with better transaction handling."""
+    """Optimized job leasing with less contention."""
     with db.cursor() as cur:
-        # Combine SELECT and UPDATE in a single query to reduce transaction time
+        # Add randomization to reduce contention
         cur.execute(
             sql.SQL(
                 """
-                WITH selected_job AS (
-                    SELECT id, retry, ctx
+                WITH candidate_jobs AS (
+                    SELECT id, retry, ctx,
+                           random() as r  -- Add randomization
                     FROM job_queue
                     WHERE job_type = %s
                     AND status = %s
-                    ORDER BY published_at
+                    AND published_at < EXTRACT(EPOCH FROM NOW())::BIGINT
+                    LIMIT 100  -- Get a batch of candidates
+                ),
+                selected_job AS (
+                    SELECT id, retry, ctx
+                    FROM candidate_jobs
+                    ORDER BY r  -- Random order
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
                 )
@@ -72,11 +79,8 @@ def lease_job(
         )
 
         row = cur.fetchone()
-        if row is None:
-            return None
-
         item_id, retry, ctx = row
-        return item_id, retry, DataJobContext.model_validate(ctx)
+        return (item_id, retry, DataJobContext.model_validate(ctx)) if row else None
 
 
 @with_transaction
