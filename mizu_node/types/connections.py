@@ -4,12 +4,21 @@ import os
 import psycopg2
 import redis
 from pymongo import MongoClient
+from asyncio import Semaphore
+import time
 
 
 class Connections:
     def __init__(self):
-        self.postgres_url = os.environ["POSTGRES_URL"]
-        logging.info(f"Connecting to postgres at {self.postgres_url}")
+        self.postgres_url = os.environ["POSTGRES_URL"] + "?connect_timeout=5"
+        # Limit concurrent connections
+        self.connection_semaphore = Semaphore(
+            20
+        )  # Adjust number based on your PostgreSQL max_connections
+        self.active_connections = 0
+        logging.info(
+            f"Initialized postgres connection config with max 20 concurrent connections"
+        )
 
         REDIS_URL = os.environ["REDIS_URL"]
         logging.info(f"Connecting to redis at {REDIS_URL}")
@@ -23,12 +32,23 @@ class Connections:
         logging.info(f"Connected to mongo at {os.environ['MIZU_NODE_MONGO_URL']}")
 
     @contextmanager
-    def get_pg_connection(self):
-        conn = None
-        try:
-            conn = psycopg2.connect(self.postgres_url)
-            yield conn
-        finally:
-            if conn:
-                conn.close()
-                logging.debug("Connection closed")
+    async def get_pg_connection(self):
+        """Get a connection with concurrency control."""
+        start_time = time.time()
+
+        async with self.connection_semaphore:  # Wait if too many connections
+            self.active_connections += 1
+            logging.info(f"Creating connection ({self.active_connections} active)")
+
+            conn = None
+            try:
+                conn = psycopg2.connect(self.postgres_url)
+                yield conn
+            finally:
+                if conn:
+                    conn.close()
+                self.active_connections -= 1
+                logging.debug(
+                    f"Connection closed. Active: {self.active_connections}. "
+                    f"Duration: {time.time() - start_time:.2f}s"
+                )
