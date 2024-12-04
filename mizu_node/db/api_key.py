@@ -8,25 +8,25 @@ from mizu_node.db.common import with_transaction
 
 @with_transaction
 def create_api_key(
-    db: connection, user_id: str, api_key: str, description: Optional[str] = None
+    db: connection, user_id: str, token: str, description: Optional[str] = None
 ) -> tuple[str, datetime]:
     """Create a new API key for a user"""
     with db.cursor() as cur:
         cur.execute(
             sql.SQL(
                 """
-                INSERT INTO api_key (api_key, user_id, description)
+                INSERT INTO api_key (token, user_id, description)
                 VALUES (%s, %s, %s)
                 RETURNING id
                 """
             ),
-            (api_key, user_id, description),
+            (token, user_id, description),
         )
         return cur.fetchone()[0]
 
 
 @with_transaction
-def get_user_id(db: connection, api_key: str) -> Optional[str]:
+def get_user_id(db: connection, token: str) -> Optional[str]:
     """Get user_id for a given API key if it's active"""
     with db.cursor() as cur:
         cur.execute(
@@ -34,11 +34,11 @@ def get_user_id(db: connection, api_key: str) -> Optional[str]:
                 """
                 UPDATE api_key 
                 SET last_used_at = CURRENT_TIMESTAMP
-                WHERE api_key = %s AND is_active = TRUE
+                WHERE token = %s AND is_active = TRUE
                 RETURNING user_id
                 """
             ),
-            (api_key,),
+            (token,),
         )
         row = cur.fetchone()
         return row[0] if row else None
@@ -66,7 +66,7 @@ def list_keys(
 
         # Get keys
         query = """
-            SELECT api_key, description, created_at, 
+            SELECT token, description, created_at, 
                    last_used_at, is_active
             FROM api_key
             WHERE user_id = %s
@@ -78,7 +78,7 @@ def list_keys(
         cur.execute(sql.SQL(query), (user_id, limit, offset))
         keys = [
             {
-                "api_key": row[0],
+                "token": row[0],
                 "description": row[1],
                 "created_at": row[2],
                 "last_used_at": row[3],
@@ -90,7 +90,7 @@ def list_keys(
 
 
 @with_transaction
-def disable_key(db: connection, api_key: str, user_id: str) -> bool:
+def disable_key(db: connection, token: str, user_id: str) -> bool:
     """Disable an API key (requires user_id for security)"""
     with db.cursor() as cur:
         cur.execute(
@@ -98,10 +98,10 @@ def disable_key(db: connection, api_key: str, user_id: str) -> bool:
                 """
                 UPDATE api_key
                 SET is_active = FALSE
-                WHERE api_key = %s AND user_id = %s
+                WHERE token = %s AND user_id = %s
                 """
             ),
-            (api_key, user_id),
+            (token, user_id),
         )
         return cur.rowcount > 0
 
@@ -124,7 +124,7 @@ def disable_all_user_keys(db: connection, user_id: str) -> int:
 
 
 @with_transaction
-def get_key_info(db: connection, api_key: str) -> Optional[dict]:
+def get_key_info(db: connection, token: str) -> Optional[dict]:
     """Get detailed information about an API key"""
     with db.cursor() as cur:
         cur.execute(
@@ -133,10 +133,10 @@ def get_key_info(db: connection, api_key: str) -> Optional[dict]:
                 SELECT user_id, description, created_at, 
                        last_used_at, is_active
                 FROM api_key
-                WHERE api_key = %s
+                WHERE token = %s
                 """
             ),
-            (api_key,),
+            (token,),
         )
         row = cur.fetchone()
         if not row:

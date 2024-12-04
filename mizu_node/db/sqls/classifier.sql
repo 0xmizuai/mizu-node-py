@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS classifier_config (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_classifier_config_publisher ON classifier_config(publisher);
+CREATE INDEX idx_classifier_config_embedding_model ON classifier_config(embedding_model);
+
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN

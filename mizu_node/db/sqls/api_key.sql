@@ -1,12 +1,12 @@
 CREATE TABLE IF NOT EXISTS api_key (
     id SERIAL PRIMARY KEY,
-    api_key VARCHAR(64) NOT NULL,
+    token VARCHAR(64) NOT NULL,
     user_id VARCHAR(255) NOT NULL,
     description TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_used_at TIMESTAMP WITH TIME ZONE,
     is_active BOOLEAN DEFAULT TRUE,
-    UNIQUE(api_key)
+    UNIQUE(token)
 );
 
 -- Indexes for better query performance
@@ -20,7 +20,7 @@ RETURNS TRIGGER AS $$
 BEGIN
     UPDATE api_key 
     SET last_used_at = CURRENT_TIMESTAMP 
-    WHERE api_key = OLD.api_key;
+    WHERE token = OLD.token;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
