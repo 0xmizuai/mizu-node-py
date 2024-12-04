@@ -22,12 +22,12 @@ from mizu_node.stats import (
     mined_per_day_field,
     rate_limit_field,
 )
-from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     JobType,
     RewardJobRecords,
 )
 from mizu_node.types.service import CooldownConfig
+from psycopg2.extensions import connection
 
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
@@ -54,11 +54,11 @@ def verify_jwt(token: str, public_key: str) -> str:
         )
 
 
-def verify_api_key(conn: Connections, token: str) -> str:
+def verify_api_key(pg_conn: connection, token: str) -> str:
     if token == os.environ["MIZU_ADMIN_USER_API_KEY"]:
         return MIZU_ADMIN_USER
 
-    user_id = get_user_id(conn.postgres, token)
+    user_id = get_user_id(pg_conn, token)
     if user_id is None or user_id == MIZU_ADMIN_USER:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="API key is invalid"
