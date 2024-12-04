@@ -1,10 +1,8 @@
 from contextlib import closing
 import datetime
 import os
-from pathlib import Path
 from unittest import mock
 import testing.postgresql
-from bson import ObjectId
 from fastapi.testclient import TestClient
 import psycopg2
 import pytest

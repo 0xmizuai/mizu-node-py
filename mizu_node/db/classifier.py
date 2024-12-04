@@ -1,7 +1,6 @@
 from typing import Optional
 from psycopg2.extensions import connection
 from psycopg2 import sql
-import json
 
 from mizu_node.db.common import with_transaction
 from mizu_node.types.classifier import ClassifierConfig

@@ -1,7 +1,6 @@
 import os
 
 from fastapi import HTTPException, status
-from pymongo.database import Collection
 from redis import Redis
 
 from mizu_node.common import epoch
