@@ -108,11 +108,6 @@ def complete_job(
 @with_transaction
 def light_clean(db: connection):
     with db.cursor() as cur:
-        # Clean finished jobs
-        cur.execute(
-            sql.SQL("DELETE FROM job_queue WHERE status = %s"),
-            (JobStatus.finished,),
-        )
         # Reset expired processing jobs back to pending
         cur.execute(
             sql.SQL(
