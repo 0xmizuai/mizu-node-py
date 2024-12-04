@@ -169,9 +169,7 @@ def handle_finish_job(
     start_time = epoch_ms()
     job_type = job_result.job_type
     try:
-        if job_result.job_type == JobType.reward and ObjectId.is_valid(
-            str(job_result.job_id)
-        ):
+        if job_result.job_type == JobType.reward and len(str(job_result.job_id)) == 24:
             HANDLE_FINISH_JOB_LEGACY_COUNTER.inc()
             return handle_finish_job_legacy(conn, worker, job_result)
 
