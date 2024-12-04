@@ -37,66 +37,45 @@ def lease_job(
     ttl_secs: int,
     worker: str,
 ) -> Tuple[int, int, DataJobContext] | None:
-    """
-    Attempt to lease a job.
-
-    Args:
-        db: Database connection
-        job_type: Type of job to lease
-        ttl_secs: Time-to-live in seconds for the lease
-        worker: Worker ID
-
-    Returns:
-        Tuple of (job_id, retry_count, context) if successful, None otherwise
-    """
-    random_offset = get_random_offset()
+    """Attempt to lease a job with better transaction handling."""
     with db.cursor() as cur:
-        # Try to find and lock a job
+        # Combine SELECT and UPDATE in a single query to reduce transaction time
         cur.execute(
             sql.SQL(
                 """
-                SELECT id, retry, ctx
-                FROM job_queue
-                WHERE job_type = %s
-                AND status = %s
-                ORDER BY published_at
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
+                WITH selected_job AS (
+                    SELECT id, retry, ctx
+                    FROM job_queue
+                    WHERE job_type = %s
+                    AND status = %s
+                    ORDER BY published_at
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE job_queue j
+                SET status = %s,
+                    assigned_at = EXTRACT(EPOCH FROM NOW())::BIGINT,
+                    lease_expired_at = %s,
+                    worker = %s
+                FROM selected_job s
+                WHERE j.id = s.id
+                RETURNING j.id, s.retry, s.ctx
                 """
             ),
-            (job_type, JobStatus.pending),
+            (
+                job_type,
+                JobStatus.pending,
+                JobStatus.processing,
+                epoch() + ttl_secs,
+                worker,
+            ),
         )
+
         row = cur.fetchone()
         if row is None:
             return None
 
         item_id, retry, ctx = row
-
-        # Update the job status
-        cur.execute(
-            sql.SQL(
-                """
-                UPDATE job_queue
-                SET status = %s,
-                    assigned_at = EXTRACT(EPOCH FROM NOW())::BIGINT,
-                    lease_expired_at = %s,
-                    worker = %s
-                WHERE id = %s
-                AND status = %s
-                """
-            ),
-            (
-                JobStatus.processing,
-                epoch() + ttl_secs,
-                worker,
-                item_id,
-                JobStatus.pending,
-            ),
-        )
-
-        if cur.rowcount == 0:
-            return None
-
         return item_id, retry, DataJobContext.model_validate(ctx)
 
 
