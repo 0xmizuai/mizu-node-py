@@ -15,7 +15,6 @@ from mizu_node.common import build_ok_response, epoch_ms, error_handler
 from mizu_node.constants import (
     LATENCY_BUCKETS,
 )
-from mizu_node.db.common import initiate_db
 from mizu_node.job_handler import (
     handle_query_job,
     handle_take_job,
