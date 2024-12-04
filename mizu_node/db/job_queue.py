@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 def get_random_offset():
-    max_concurrent_lease = int(os.environ.get("MAX_CONCURRENT_LEASE", 100))
+    max_concurrent_lease = int(os.environ.get("MAX_CONCURRENT_LEASE", 10))
     return random.randint(0, max_concurrent_lease)
 
 
