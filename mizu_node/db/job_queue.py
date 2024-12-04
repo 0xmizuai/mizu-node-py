@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 from prometheus_client import Gauge
 from psycopg2 import sql
 from pydantic import BaseModel

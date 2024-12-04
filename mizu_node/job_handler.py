@@ -5,7 +5,6 @@ import os
 from bson import ObjectId
 from prometheus_client import Counter, Histogram
 from pydantic import BaseModel
-from pymongo.database import Database
 from redis import Redis
 from fastapi import HTTPException, status
 import requests
@@ -50,7 +49,6 @@ from mizu_node.types.data_job import (
 from mizu_node.db.job_queue import (
     add_jobs,
     complete_job,
-    get_job_info_raw,
     get_jobs_info,
     get_job_lease,
     lease_job,
