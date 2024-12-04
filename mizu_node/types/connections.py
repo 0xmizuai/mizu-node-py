@@ -1,16 +1,16 @@
+from contextlib import contextmanager
 import logging
 import os
 import psycopg2
 import redis
 from pymongo import MongoClient
+from psycopg2 import pool
 
 
 class Connections:
     def __init__(self):
-        POSTGRES_URL = os.environ["POSTGRES_URL"]
-        logging.info(f"Connecting to postgres at {POSTGRES_URL}")
-        self.postgres = psycopg2.connect(POSTGRES_URL)
-        logging.info(f"Connected to postgres at {POSTGRES_URL}")
+        self.postgres_url = os.environ["POSTGRES_URL"]
+        logging.info(f"Connecting to postgres at {self.postgres_url}")
 
         REDIS_URL = os.environ["REDIS_URL"]
         logging.info(f"Connecting to redis at {REDIS_URL}")
@@ -22,3 +22,12 @@ class Connections:
         MIZU_NODE_MONGO_DB_NAME = os.environ.get("MIZU_NODE_MONGO_DB_NAME", "mizu_node")
         self.mdb = MongoClient(MIZU_NODE_MONGO_URL)[MIZU_NODE_MONGO_DB_NAME]
         logging.info(f"Connected to mongo at {os.environ['MIZU_NODE_MONGO_URL']}")
+
+    @contextmanager
+    def get_pg_connection(self):
+        """Get a connection from PgBouncer."""
+        conn = psycopg2.connect(self.postgres_url)
+        try:
+            yield conn
+        finally:
+            conn.close()
