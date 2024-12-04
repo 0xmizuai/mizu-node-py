@@ -16,10 +16,6 @@ def store_config(db: connection, config: ClassifierConfig) -> int:
                 INSERT INTO classifier_config 
                     (name, embedding_model, labels, publisher)
                 VALUES (%s, %s, %s::jsonb, %s)
-                ON CONFLICT (name) DO UPDATE SET
-                    embedding_model = EXCLUDED.embedding_model,
-                    labels = EXCLUDED.labels,
-                    publisher = EXCLUDED.publisher
                 RETURNING id
                 """
             ),
@@ -41,7 +37,7 @@ def get_config(db: connection, id: int) -> Optional[ClassifierConfig]:
                 """
                 SELECT name, embedding_model, labels, publisher
                 FROM classifier_config
-                WHERE name = %s
+                WHERE id = %s
                 """
             ),
             (id,),
@@ -52,8 +48,8 @@ def get_config(db: connection, id: int) -> Optional[ClassifierConfig]:
 
         return ClassifierConfig(
             name=row[0],
-            embeddingModel=row[1],  # Using alias defined in model
-            labels=json.loads(row[2])["labels"],
+            embedding_model=row[1],  # Using alias defined in model
+            labels=row[2]["labels"],
             publisher=row[3],
         )
 
@@ -76,7 +72,7 @@ def list_configs(db: connection, ids: list[int]) -> list[ClassifierConfig]:
             ClassifierConfig(
                 name=row[0],
                 embeddingModel=row[1],
-                labels=json.loads(row[2])["labels"],
+                labels=row[2]["labels"],
                 publisher=row[3],
             )
             for row in cur.fetchall()

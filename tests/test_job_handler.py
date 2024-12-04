@@ -1,22 +1,23 @@
 from contextlib import closing
 import datetime
 import os
+from pathlib import Path
 from unittest import mock
 import testing.postgresql
 from bson import ObjectId
 from fastapi.testclient import TestClient
 import psycopg2
-import pymongo
 import pytest
 from fastapi import status
 from unittest.mock import MagicMock, patch as mock_patch
 
+from mizu_node.db.classifier import store_config
 from mizu_node.common import epoch
-from mizu_node.constants import (
-    API_KEY_COLLECTION,
-    CLASSIFIER_COLLECTION,
-    JOBS_COLLECTION,
-)
+
+from mizu_node.db.api_key import create_api_key
+from mizu_node.db.common import initiate_db
+from mizu_node.db.job_queue import delete_one_job
+from mizu_node.db.job_queue import get_jobs_info
 from mizu_node.stats import get_valid_rewards
 from mizu_node.types.classifier import (
     ClassifierConfig,
@@ -24,7 +25,6 @@ from mizu_node.types.classifier import (
     DataLabel,
     WetContext,
 )
-from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     BatchClassifyContext,
     JobStatus,
@@ -62,7 +62,6 @@ import pytest
 TEST_API_KEY1 = "test_api_key1"
 TEST_API_KEY2 = "test_api_key2"
 MOCK_MONGO_URL = "mongodb://localhost:27017"
-CLASSIFIER_ID = ObjectId("666666666666666666666666")
 MIZU_ADMIN_USER_API_KEY = "admin_key"
 
 
@@ -89,47 +88,14 @@ public_key = private_key_obj.public_key().public_bytes(
 public_key_str = public_key.decode("utf-8")
 
 
-@pytest.fixture(scope="function")
-def postgresql():
-    # Initialize a temporary in-memory PostgreSQL instance
-    with testing.postgresql.Postgresql() as postgresql:
-        yield postgresql
-
-
 @pytest.fixture
-def pg_conn(postgresql):
-    # Create a connection to the temporary database
-    conn = psycopg2.connect(**postgresql.dsn())
-
-    # Create your table schema
-    with closing(conn.cursor()) as cur:
-        cur.execute(
-            """
-            CREATE TABLE job_queue (
-                id SERIAL PRIMARY KEY,
-                job_type INTEGER NOT NULL,
-                status INTEGER NOT NULL DEFAULT 0,
-                ctx JSONB NOT NULL,
-                publisher VARCHAR(255),
-                published_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
-                lease_expired_at BIGINT NOT NULL DEFAULT 0,
-                result JSONB,
-                finished_at BIGINT NOT NULL DEFAULT 0,
-                worker VARCHAR(255),
-                retry INTEGER NOT NULL DEFAULT 0,
-                CONSTRAINT valid_status CHECK (status IN (0, 1, 2))
-            );
-            CREATE INDEX idx_job_type ON job_queue (job_type);
-            CREATE INDEX idx_status ON job_queue (status);
-            CREATE INDEX idx_created_at ON job_queue (created_at);
-            CREATE INDEX idx_expired_at ON job_queue (expired_at);
-            CREATE INDEX idx_worker ON job_queue (worker);
-        """
-        )
-        conn.commit()
-    yield conn
-    # Cleanup
-    conn.close()
+def pg_conn():
+    with testing.postgresql.Postgresql() as postgresql:
+        # Create a connection to the temporary database
+        conn = psycopg2.connect(**postgresql.dsn())
+        yield conn
+        # Cleanup
+        conn.close()
 
 
 class MockedHttpResponse:
@@ -178,14 +144,14 @@ def _build_pow_ctx():
     )
 
 
-def _build_batch_classify_ctx():
+def _build_batch_classify_ctx(config_id: int):
     return BatchClassifyContext(
         data_url="https://example.com/data",
         batch_size=1000,
         bytesize=5000000,
         decompressed_byte_size=20000000,
         checksum_md5="0x",
-        classifier_id=str(CLASSIFIER_ID),
+        classifier_id=config_id,
     )
 
 
@@ -195,13 +161,14 @@ def _build_reward_ctx(token: Token | None = None):
 
 def _new_data_job_payload(
     job_type: str,
+    config_id: int | None = None,
 ) -> RewardContext | PowContext | BatchClassifyContext:
     if job_type == JobType.reward:
         return _build_reward_ctx()
     elif job_type == JobType.pow:
         return _build_pow_ctx()
     elif job_type == JobType.batch_classify:
-        return _build_batch_classify_ctx()
+        return _build_batch_classify_ctx(config_id)
     else:
         raise ValueError(f"Invalid job type: {job_type}")
 
@@ -228,38 +195,21 @@ def _publish_jobs(
         json={"data": [p.model_dump() for p in payloads]},
         headers={"Authorization": f"Bearer {token}"},
     )
-    print(f"Response status: {response.status_code}")
-    print(f"Response body: {response.json()}")
     assert response.status_code == 200
     return response.json()["data"]["jobIds"]
 
 
-def _publish_jobs_simple(client: TestClient, job_type: JobType, num_jobs=3):
-    payloads = [_new_data_job_payload(job_type) for i in range(num_jobs)]
+def _publish_jobs_simple(
+    client: TestClient, job_type: JobType, num_jobs=3, config_id: int | None = None
+):
+    payloads = [_new_data_job_payload(job_type, config_id) for i in range(num_jobs)]
     return _publish_jobs(client, job_type, payloads)
 
 
 @pytest.fixture(scope="function")
 def mock_connections(monkeypatch, pg_conn, setenvvar):
     monkeypatch.setattr("mizu_node.types.connections.Connections", MockConnections)
-    client = pymongo.MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
-    mdb = client[os.environ["MIZU_NODE_MONGO_DB_NAME"]]
-
-    # Clear existing collections before inserting test data
-    mdb[API_KEY_COLLECTION].delete_many({})
-    mdb[CLASSIFIER_COLLECTION].delete_many({})
-
-    # Insert test data
-    mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY1, "user": "test_user1"})
-    mdb[API_KEY_COLLECTION].insert_one({"api_key": TEST_API_KEY2, "user": "test_user2"})
-    mdb[CLASSIFIER_COLLECTION].insert_one(
-        {
-            "_id": CLASSIFIER_ID,
-            "publisher": "test_user1",
-            "name": "default",
-            "embedding_model": "test_embedding_model",
-        }
-    )
+    mdb = mongomock.MongoClient(MOCK_MONGO_URL)[os.environ["MIZU_NODE_MONGO_DB_NAME"]]
 
     # Create mock connections
     mock_conn = MockConnections(mdb=mdb, postgres=pg_conn, redis=RedisMock())
@@ -269,17 +219,30 @@ def mock_connections(monkeypatch, pg_conn, setenvvar):
 
     monkeypatch.setattr("mizu_node.main.conn", mock_conn)
 
-    # Now import the app after mocking
     from mizu_node.main import app
 
-    # Add the connection instance to the app
     app.state.conn = mock_conn
+
+    initiate_db(mock_conn.postgres)
+    create_api_key(pg_conn, "test_user1", TEST_API_KEY1)
+    create_api_key(pg_conn, "test_user2", TEST_API_KEY2)
+    classififer_id = store_config(
+        pg_conn,
+        ClassifierConfig(
+            name="test_classifier",
+            embedding_model="test_embedding_model",
+            labels=[DataLabel(label="t1", description="test_label1")],
+            publisher="test_user1",
+        ),
+    )
+    app.state.classifier_id = classififer_id
     return app
 
 
 @mongomock.patch((MOCK_MONGO_URL))
 def test_publish_jobs_simple(mock_connections):
     client = TestClient(mock_connections)
+    classifier_id = client.app.state.classifier_id
 
     # Test publishing classify jobs
     job_ids1 = _publish_jobs_simple(client, JobType.reward, 3)
@@ -290,18 +253,19 @@ def test_publish_jobs_simple(mock_connections):
     assert len(job_ids2) == 3
 
     # Test publishing batch classify jobs
-    job_ids3 = _publish_jobs_simple(client, JobType.batch_classify, 3)
+    job_ids3 = _publish_jobs_simple(client, JobType.batch_classify, 3, classifier_id)
     assert len(job_ids3) == 3
 
 
 @mongomock.patch((MOCK_MONGO_URL))
 def test_take_job_ok(mock_connections):
     client = TestClient(mock_connections)
+    classifier_id = client.app.state.classifier_id
 
     # Publish jobs first
     pids = _publish_jobs_simple(client, JobType.pow, 3)
     rids = _publish_jobs_simple(client, JobType.reward, 3)
-    bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
+    bids = _publish_jobs_simple(client, JobType.batch_classify, 3, classifier_id)
 
     # Take reward job 1
     worker1_jwt = jwt_token("worker1")
@@ -431,6 +395,8 @@ def test_take_job_error(mock_connections):
 @mock_patch("requests.post")
 def test_finish_job(mock_requests, mock_connections):
     client = TestClient(mock_connections)
+    classifier_id = client.app.state.classifier_id
+
     mock_requests.return_value = MockedHttpResponse(200)
 
     # Take jobs
@@ -440,7 +406,7 @@ def test_finish_job(mock_requests, mock_connections):
 
     # Publish jobs
     _publish_jobs_simple(client, JobType.reward, 3)
-    _publish_jobs_simple(client, JobType.batch_classify, 3)
+    _publish_jobs_simple(client, JobType.batch_classify, 3, classifier_id)
     _publish_jobs_simple(client, JobType.pow, 3)
 
     response1 = client.get(
@@ -453,7 +419,7 @@ def test_finish_job(mock_requests, mock_connections):
     pid = response1.json()["data"]["job"]["_id"]
 
     # delete pow job 1 from database
-    mock_connections.state.conn.mdb[JOBS_COLLECTION].delete_many({"_id": ObjectId(pid)})
+    delete_one_job(mock_connections.state.conn.postgres, pid)
     # Try to finish job not in recorded - should fail
     result = WorkerJobResult(
         job_id=pid,  # job id not exists
@@ -466,7 +432,7 @@ def test_finish_job(mock_requests, mock_connections):
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response2.status_code == status.HTTP_404_NOT_FOUND
-    assert response2.json()["message"] == "job not found"
+    assert response2.json()["message"] == "lease not exists"
 
     response2 = client.post(
         "/finish_job",
@@ -538,14 +504,12 @@ def test_finish_job(mock_requests, mock_connections):
     assert resp.rewarded_points == 0.5
 
     # Verify job 1 in database
-    j1 = mock_connections.state.conn.mdb[JOBS_COLLECTION].find_one(
-        {"_id": ObjectId(bid)}
-    )
-    assert j1["jobType"] == JobType.batch_classify
+    j1 = get_jobs_info(mock_connections.state.conn.postgres, [bid])[0]
+    assert j1.job_type == JobType.batch_classify
     # the empty labels are filtered out
-    assert len(j1["batchClassifyResult"]) == 1
-    assert j1["worker"] == "worker3"
-    assert j1["finishedAt"] is not None
+    assert len(j1.result.batch_classify_result) == 1
+    assert j1.worker == "worker3"
+    assert j1.finished_at is not None
 
     # Case 1.4: finishing finished jobs
     r14 = WorkerJobResult(
@@ -586,13 +550,11 @@ def test_finish_job(mock_requests, mock_connections):
     assert resp.rewarded_points == 0.5
 
     # Verify job 2 in database
-    j2 = mock_connections.state.conn.mdb[JOBS_COLLECTION].find_one(
-        {"_id": ObjectId(pid)}
-    )
-    assert j2["jobType"] == JobType.pow
-    assert j2["powResult"] == "166189"
-    assert j2["worker"] == "worker2"
-    assert j2["finishedAt"] is not None
+    j2 = get_jobs_info(mock_connections.state.conn.postgres, [pid])[0]
+    assert j2.job_type == JobType.pow
+    assert j2.result.pow_result == "166189"
+    assert j2.worker == "worker2"
+    assert j2.finished_at is not None
 
     # Case 3: job expired
     worker4_jwt = jwt_token("worker4")
@@ -612,7 +574,7 @@ def test_finish_job(mock_requests, mock_connections):
         cur.execute(
             """
             UPDATE job_queue 
-            SET expired_at = EXTRACT(EPOCH FROM NOW())::BIGINT - 3600
+            SET lease_expired_at = EXTRACT(EPOCH FROM NOW())::BIGINT - 3600
             WHERE id = %s
             """,
             (job_id,),
@@ -639,9 +601,10 @@ def test_finish_job(mock_requests, mock_connections):
 def test_job_status(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
     client = TestClient(mock_connections)
+    classifier_id = client.app.state.classifier_id
 
     # Publish jobs
-    bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
+    bids = _publish_jobs_simple(client, JobType.batch_classify, 3, classifier_id)
     pids = _publish_jobs_simple(client, JobType.pow, 2)
     all_job_ids = bids + pids
 
@@ -718,9 +681,9 @@ def test_job_status(mock_requests, mock_connections):
     # Verify specific job statuses
     for status in final_statuses:
         if status["_id"] in [classify_job["_id"], pow_job["_id"]]:
-            assert status["finishedAt"] is not None
+            assert status["finishedAt"] != 0
         else:
-            assert "finishedAt" not in status
+            assert status["finishedAt"] == 0
 
 
 @mongomock.patch((MOCK_MONGO_URL))
@@ -747,9 +710,7 @@ def test_register_classifier(mock_connections):
     assert response.status_code == 401
 
     # Try to get non-existent classifier
-    response = client.get(
-        "/classifier_info", params={"id": "507f1f77bcf86cd799439011"}  # Random ObjectId
-    )
+    response = client.get("/classifier_info", params={"id": 1000})
     assert response.status_code == 404
 
     # Register with correct API key

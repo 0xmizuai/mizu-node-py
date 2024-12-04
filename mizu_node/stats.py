@@ -65,7 +65,7 @@ def record_reward_event(rclient: Redis, worker: str, job: WorkerJob):
     rewards = get_valid_rewards(rclient, worker)
     rewards.jobs.append(
         RewardJobRecord(
-            job_id=job.job_id, reward_ctx=job.context.reward_ctx, assigned_at=epoch()
+            job_id=job.job_id, reward_ctx=job.reward_ctx, assigned_at=epoch()
         )
     )
     rclient.hmset(
@@ -137,7 +137,9 @@ def get_token_name(ctx: RewardContext) -> str:
     return "point" if ctx.token is None else "usdt"
 
 
-def record_claim_event(rclient: Redis, worker: str, job_id: str, ctx: RewardContext):
+def record_claim_event(
+    rclient: Redis, worker: str, job_id: str | int, ctx: RewardContext
+):
     rewards = get_valid_rewards(rclient, worker)
     rewards.jobs = [r for r in rewards.jobs if r.job_id != job_id]
     now = epoch()

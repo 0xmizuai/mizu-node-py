@@ -8,24 +8,21 @@ from mizu_node.db.common import with_transaction
 
 @with_transaction
 def create_api_key(
-    db: connection, user_id: str, description: Optional[str] = None
+    db: connection, user_id: str, api_key: str, description: Optional[str] = None
 ) -> tuple[str, datetime]:
     """Create a new API key for a user"""
     with db.cursor() as cur:
-        cur.execute("SELECT generate_api_key()")
-        api_key = cur.fetchone()[0]
-
         cur.execute(
             sql.SQL(
                 """
                 INSERT INTO api_key (api_key, user_id, description)
                 VALUES (%s, %s, %s)
-                RETURNING api_key, created_at
+                RETURNING id
                 """
             ),
             (api_key, user_id, description),
         )
-        return cur.fetchone()
+        return cur.fetchone()[0]
 
 
 @with_transaction

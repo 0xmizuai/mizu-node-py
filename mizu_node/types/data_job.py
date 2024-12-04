@@ -88,24 +88,20 @@ class DataJobContext(BaseModel):
     reward_ctx: Optional[RewardContext] = Field(alias="rewardCtx", default=None)
 
 
-class DataJobPayload(BaseModel):
+class DataJobContextWithValidator(DataJobContext):
     model_config = ConfigDict(populate_by_name=True)
 
     job_type: JobType = Field(alias="jobType")
-    context: DataJobContext
 
     @model_validator(mode="after")
     def _validate_job_type(self):
-        if self.job_type == JobType.reward and self.context.reward_ctx is None:
+        if self.job_type == JobType.reward and self.reward_ctx is None:
             raise ValueError("reward_ctx is required for reward job")
-        if self.job_type == JobType.classify and self.context.classify_ctx is None:
+        if self.job_type == JobType.classify and self.classify_ctx is None:
             raise ValueError("classify_ctx is required for classify job")
-        if self.job_type == JobType.pow and self.context.pow_ctx is None:
+        if self.job_type == JobType.pow and self.pow_ctx is None:
             raise ValueError("pow_ctx is required for pow job")
-        if (
-            self.job_type == JobType.batch_classify
-            and self.context.batch_classify_ctx is None
-        ):
+        if self.job_type == JobType.batch_classify and self.batch_classify_ctx is None:
             raise ValueError("batch_classify_ctx is required for batch_classify job")
         return self
 
@@ -135,24 +131,25 @@ class DataJobResult(BaseModel):
     error_result: Optional[ErrorResult] = Field(alias="errorResult", default=None)
 
 
-class DataJobResultWithValidator(BaseModel):
+class DataJobResultWithValidator(DataJobResult):
+    model_config = ConfigDict(populate_by_name=True)
+
     job_type: JobType = Field(alias="jobType")
-    result: DataJobResult
 
     @model_validator(mode="after")
     def _validate_job_type(self):
         if self.error_result is not None:
             return self
 
-        if self.job_type == JobType.reward and self.result.reward_result is None:
+        if self.job_type == JobType.reward and self.reward_result is None:
             raise ValueError("reward_result is required for reward job")
-        if self.job_type == JobType.classify and self.result.classify_result is None:
+        if self.job_type == JobType.classify and self.classify_result is None:
             raise ValueError("classify_result is required for classify job")
-        if self.job_type == JobType.pow and self.result.pow_result is None:
+        if self.job_type == JobType.pow and self.pow_result is None:
             raise ValueError("pow_result is required for pow job")
         if (
             self.job_type == JobType.batch_classify
-            and self.result.batch_classify_result is None
+            and self.batch_classify_result is None
         ):
             raise ValueError("batch_classify_result is required for batch_classify job")
         return self
@@ -161,7 +158,7 @@ class DataJobResultWithValidator(BaseModel):
 ##################################### Client Data Type Start ###########################################
 
 
-class WorkerJob(DataJobPayload):
+class WorkerJob(DataJobContextWithValidator):
     model_config = ConfigDict(populate_by_name=True)
 
     job_id: str | int = Field(alias="_id")
@@ -179,7 +176,7 @@ class WorkerJobResult(DataJobResultWithValidator):
 ##################################### MONGODB Data Type Start ###########################################
 
 
-class DataJobInputNoId(DataJobPayload):
+class DataJobInputNoId(DataJobContextWithValidator):
     model_config = ConfigDict(populate_by_name=True)
 
     status: JobStatus = Field(default=JobStatus.pending)
@@ -203,6 +200,7 @@ class DataJobQueryResult(BaseModel):
     context: DataJobContext
     result: DataJobResult | None = Field(default=None)
     status: JobStatus = Field(default=JobStatus.pending)
+    worker: Optional[str] = Field(default=None)
     finished_at: Optional[int] = Field(alias="finishedAt", default=None)
 
 

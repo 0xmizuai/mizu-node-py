@@ -25,15 +25,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Optional: Add helper functions for API key generation
-CREATE OR REPLACE FUNCTION generate_api_key() 
-RETURNS TEXT AS $$
-BEGIN
-    -- Generate a random 32-byte string
-    RETURN encode(gen_random_bytes(32), 'hex');
-END;
-$$ LANGUAGE plpgsql;
-
 -- Example usage:
 -- INSERT INTO api_key (api_key, user_id, description)
 -- VALUES (generate_api_key(), 'user123', 'Development API key'); 
