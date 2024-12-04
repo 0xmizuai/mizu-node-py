@@ -61,13 +61,13 @@ logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 # Security scheme
 bearer_scheme = HTTPBearer()
+conn = Connections()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.conn = Connections()
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, queue_clean, app.state.conn)
+    loop.run_in_executor(None, queue_clean, conn.postgres)
     yield
 
 
@@ -123,8 +123,7 @@ def get_publisher(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    with app.state.conn.get_pg_connection() as db:
-        return verify_api_key(db, token)
+    return verify_api_key(conn, token)
 
 
 @app.get("/")
@@ -139,30 +138,27 @@ def register_classifier(
     request: RegisterClassifierRequest, publisher: str = Depends(get_publisher)
 ):
     request.config.publisher = publisher
-    with app.state.conn.get_pg_connection() as db:
-        id = store_config(db, request.config)
-        return build_ok_response(RegisterClassifierResponse(id=id))
+    id = store_config(conn.postgres, request.config)
+    return build_ok_response(RegisterClassifierResponse(id=id))
 
 
 @app.get("/classifier_info")
 @error_handler
 def get_classifier(id: int):
-    with app.state.conn.get_pg_connection() as db:
-        config = get_config(db, id)
-        if config is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="classifier not found"
-            )
-        response = QueryClassifierResponse(classifier=config)
-        return build_ok_response(response)
+    config = get_config(conn.postgres, id)
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="classifier not found"
+        )
+    response = QueryClassifierResponse(classifier=config)
+    return build_ok_response(response)
 
 
 @app.post("/clear_queue")
 @error_handler
 def clear_queue(job_type: JobType, publisher: str = Depends(get_publisher)):
     validate_admin_job(publisher)
-    with app.state.conn.get_pg_connection() as db:
-        clear_jobs(db, job_type)
+    clear_jobs(conn.postgres, job_type)
     return build_ok_response()
 
 
@@ -173,9 +169,8 @@ def publish_pow_jobs(
     publisher: str = Depends(get_publisher),
 ):
     validate_admin_job(publisher)
-    with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, publisher, JobType.pow, request.data)
-        return build_ok_response(PublishJobResponse(job_ids=ids))
+    ids = handle_publish_jobs(conn, publisher, JobType.pow, request.data)
+    return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
 @app.post("/publish_reward_jobs")
@@ -185,9 +180,8 @@ def publish_reward_jobs(
     publisher: str = Depends(get_publisher),
 ):
     validate_admin_job(publisher)
-    with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, publisher, JobType.reward, request.data)
-        return build_ok_response(PublishJobResponse(job_ids=ids))
+    ids = handle_publish_jobs(conn, publisher, JobType.reward, request.data)
+    return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
 @app.post("/publish_batch_classify_jobs")
@@ -195,24 +189,22 @@ def publish_reward_jobs(
 def publish_batch_classify_jobs(
     request: PublishBatchClassifyJobRequest, publisher: str = Depends(get_publisher)
 ):
-    with app.state.conn.get_pg_connection() as db:
-        validate_classifiers(db, request.data)
-        ids = handle_publish_jobs(db, publisher, JobType.batch_classify, request.data)
-        return build_ok_response(PublishJobResponse(job_ids=ids))
+    validate_classifiers(conn, request.data)
+    ids = handle_publish_jobs(conn, publisher, JobType.batch_classify, request.data)
+    return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
 @app.get("/job_status")
 @error_handler
 def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publisher)):
-    with app.state.conn.get_pg_connection() as db:
-        jobs = handle_query_job(db, ids)
-        return build_ok_response(QueryJobResponse(jobs=jobs))
+    jobs = handle_query_job(conn, ids)
+    return build_ok_response(QueryJobResponse(jobs=jobs))
 
 
 @app.get("/reward_jobs")
 @error_handler
 def query_reward_jobs(user: str = Depends(get_user)):
-    rewards = get_valid_rewards(app.state.conn.redis, user)
+    rewards = get_valid_rewards(conn.redis, user)
     return build_ok_response(rewards)
 
 
@@ -225,7 +217,7 @@ def take_job(
     job_type: JobType,
     user: str = Depends(get_user),
 ):
-    job = handle_take_job(app.state.conn, user, job_type)
+    job = handle_take_job(conn, user, job_type)
     TAKE_JOB.labels(job_type.name).inc()
     return build_ok_response(TakeJobResponse(job=job))
 
@@ -238,7 +230,7 @@ FINISH_JOB = Counter(
 @app.post("/finish_job")
 @error_handler
 def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
-    points = handle_finish_job(app.state.conn, user, request.job_result)
+    points = handle_finish_job(conn, user, request.job_result)
     job_type = request.job_result.job_type
     FINISH_JOB.labels(job_type.name).inc()
     return build_ok_response(FinishJobResponse(rewarded_points=points))
@@ -251,9 +243,8 @@ def queue_len(job_type: JobType = JobType.pow):
     """
     Return the number of queued classify jobs.
     """
-    with app.state.conn.get_pg_connection() as db:
-        q_len = handle_queue_len(db, job_type)
-        return build_ok_response(QueryQueueLenResponse(length=q_len))
+    q_len = handle_queue_len(conn, job_type)
+    return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 
 @app.get("/global_stats/mined_points")
@@ -268,9 +259,9 @@ def get_mined_points_stats(hours: int | None = None, days: int | None = None):
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_mined_points_in_past_n_hour(app.state.conn.redis, max(hours, 24))
+        points = total_mined_points_in_past_n_hour(conn.redis, max(hours, 24))
     if days is not None:
-        points = total_mined_points_in_past_n_days(app.state.conn.redis, max(days, 7))
+        points = total_mined_points_in_past_n_days(conn.redis, max(days, 7))
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
@@ -286,13 +277,9 @@ def get_rewards_stats(token: str, hours: int | None = None, days: int | None = N
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_rewarded_in_past_n_hour(
-            app.state.conn.redis, token, max(hours, 24)
-        )
+        points = total_rewarded_in_past_n_hour(conn.redis, token, max(hours, 24))
     if days is not None:
-        points = total_rewarded_in_past_n_days(
-            app.state.conn.redis, token, max(days, 7)
-        )
+        points = total_rewarded_in_past_n_days(conn.redis, token, max(days, 7))
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
@@ -312,11 +299,11 @@ def get_mined_points(
         )
     if hours is not None:
         points = total_mined_points_in_past_n_hour_per_worker(
-            app.state.conn.redis, user, max(hours, 24)
+            conn.redis, user, max(hours, 24)
         )
     if days is not None:
         points = total_mined_points_in_past_n_days_per_worker(
-            app.state.conn.redis, user, max(days, 7)
+            conn.redis, user, max(days, 7)
         )
     return build_ok_response(QueryMinedPointsResponse(points=points))
 

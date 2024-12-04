@@ -12,7 +12,6 @@ from psycopg2.extensions import connection
 
 from mizu_node.common import epoch
 from mizu_node.db.common import with_transaction
-from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     DataJobContext,
     DataJobQueryResult,
@@ -259,16 +258,15 @@ QUEUE_LEN = Gauge(
 )
 
 
-def queue_clean(conn: Connections):
+def queue_clean(db: connection):
     while True:
-        with conn.get_pg_connection() as db:
-            for job_type in ALL_JOB_TYPES:
-                QUEUE_LEN.labels(job_type.name).set(queue_len(db, job_type))
-            try:
-                logging.info(f"light clean start for queue {str(job_type)}")
-                light_clean(db)
-                logging.info(f"light clean done for queue {str(job_type)}")
-            except Exception as e:
-                logging.error(f"failed to clean queue {job_type} with error {e}")
-                continue
-            time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
+        for job_type in ALL_JOB_TYPES:
+            QUEUE_LEN.labels(job_type.name).set(queue_len(db, job_type))
+        try:
+            logging.info(f"light clean start for queue {str(job_type)}")
+            light_clean(db)
+            logging.info(f"light clean done for queue {str(job_type)}")
+        except Exception as e:
+            logging.error(f"failed to clean queue {job_type} with error {e}")
+            continue
+        time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
