@@ -63,7 +63,7 @@ def lease_job(
                 FOR UPDATE SKIP LOCKED
                 """
             ),
-            (job_type, JobStatus.pending, random_offset),
+            (job_type, JobStatus.pending),
         )
         row = cur.fetchone()
         if row is None:
