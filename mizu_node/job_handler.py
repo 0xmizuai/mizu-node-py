@@ -55,7 +55,6 @@ from mizu_node.db.job_queue import (
     queue_len,
 )
 from mizu_node.types.service import SettleRewardRequest
-from psycopg2.extensions import connection
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -72,7 +71,7 @@ def build_data_job_context(job_type: JobType, ctx: BaseModel) -> DataJobContext:
 
 
 def handle_publish_jobs(
-    pg_conn: connection,
+    conn: Connections,
     publisher: str,
     job_type: JobType,
     contexts: list[BaseModel],
@@ -82,7 +81,7 @@ def handle_publish_jobs(
             status_code=status.HTTP_400_BAD_REQUEST, detail="data cannot be empty"
         )
     return add_jobs(
-        pg_conn,
+        conn.postgres,
         job_type,
         publisher,
         [build_data_job_context(job_type, ctx) for ctx in contexts],
@@ -90,14 +89,14 @@ def handle_publish_jobs(
 
 
 def handle_query_job(
-    pg_conn: connection, job_ids: list[int]
+    conn: Connections, job_ids: list[int]
 ) -> list[DataJobQueryResult] | None:
     if not job_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
         )
     job_ids = [int(id) for id in job_ids]
-    return get_jobs_info(pg_conn, job_ids)
+    return get_jobs_info(conn.postgres, job_ids)
 
 
 HANDLE_TAKE_JOB_LATENCY = Histogram(
@@ -117,38 +116,37 @@ def handle_take_job(
         epoch_ms() - start_time
     )
     after_validation = epoch_ms()
-    with conn.get_pg_connection() as pg_conn:
-        result = lease_job(pg_conn, job_type, get_lease_ttl(job_type), worker)
-        HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
-            epoch_ms() - after_validation
-        )
-        if result is None:
-            return None
+    result = lease_job(conn.postgres, job_type, get_lease_ttl(job_type), worker)
+    HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
+        epoch_ms() - after_validation
+    )
+    if result is None:
+        return None
 
-        (item_id, retry, ctx) = result
-        if retry > MAX_RETRY_ALLOWED:
-            try:
-                complete_job(
-                    pg_conn,
-                    item_id,
-                    JobStatus.error,
-                    DataJobResult(
-                        error_result=ErrorResult(code=ErrorCode.max_retry_exceeded)
-                    ),
-                )
-            except HTTPException as e:
-                logging.warning(f"failed to retire job {item_id} with error {e.detail}")
-                pass
-            return handle_take_job(conn, worker, job_type)
-        else:
-            job = WorkerJob(
-                job_id=item_id,
-                job_type=job_type,
-                **ctx.model_dump(exclude_none=True),
+    (item_id, retry, ctx) = result
+    if retry > MAX_RETRY_ALLOWED:
+        try:
+            complete_job(
+                conn.postgres,
+                item_id,
+                JobStatus.error,
+                DataJobResult(
+                    error_result=ErrorResult(code=ErrorCode.max_retry_exceeded)
+                ),
             )
-            if job_type == JobType.reward:
-                record_reward_event(conn.redis, worker, job)
-            return job
+        except HTTPException as e:
+            logging.warning(f"failed to retire job {item_id} with error {e.detail}")
+            pass
+        return handle_take_job(conn, worker, job_type)
+    else:
+        job = WorkerJob(
+            job_id=item_id,
+            job_type=job_type,
+            **ctx.model_dump(exclude_none=True),
+        )
+        if job_type == JobType.reward:
+            record_reward_event(conn.redis, worker, job)
+        return job
 
 
 HANDLE_FINISH_JOB_LATENCY = Histogram(
@@ -180,54 +178,54 @@ def handle_finish_job(
             HANDLE_FINISH_JOB_LEGACY_COUNTER.inc()
             return handle_finish_job_legacy(conn, worker, job_result)
 
-        with conn.get_pg_connection() as pg_conn:
-            job_id = int(job_result.job_id)
-            ctx, assigner = get_job_lease(pg_conn, job_id, job_type)
-            if assigner != worker:
+        job_id = int(job_result.job_id)
+        ctx, assigner = get_job_lease(conn.postgres, job_id, job_type)
+        if assigner != worker:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
+            )
+
+        job_status = _validate_job_result(ctx, job_result)
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "validate").observe(
+            epoch_ms() - start_time
+        )
+        after_validation = epoch_ms()
+        if job_status == JobStatus.finished:
+            settle_reward = _calculate_reward(conn.redis, worker, ctx, job_result)
+            response = requests.post(
+                os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
+                json=settle_reward.model_dump(exclude_none=True),
+                headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
+            )
+            if response.status_code != 200:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"failed to settle reward",
                 )
-            job_status = _validate_job_result(ctx, job_result)
-            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "validate").observe(
-                epoch_ms() - start_time
-            )
-            after_validation = epoch_ms()
-            if job_status == JobStatus.finished:
-                settle_reward = _calculate_reward(conn.redis, worker, ctx, job_result)
-                response = requests.post(
-                    os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
-                    json=settle_reward.model_dump(exclude_none=True),
-                    headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
-                )
-                if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"failed to settle reward",
-                    )
-                if settle_reward.token is None:
-                    reward_points = float(settle_reward.amount)
-                HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "settle").observe(
-                    epoch_ms() - after_validation
-                )
-
-            after_settle_reward = epoch_ms()
-            if job_type == JobType.reward:
-                record_claim_event(conn.redis, worker, job_id, ctx.reward_ctx)
-            elif reward_points > 0:
-                record_mined_points(conn.redis, worker, reward_points)
-            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
-                epoch_ms() - after_settle_reward
+            if settle_reward.token is None:
+                reward_points = float(settle_reward.amount)
+            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "settle").observe(
+                epoch_ms() - after_validation
             )
 
-            after_record = epoch_ms()
-            job_result_to_save = DataJobResult.model_validate(
-                job_result.model_dump(exclude_none=True, exclude={"job_id", "job_type"})
-            )
-            complete_job(pg_conn, job_result.job_id, job_status, job_result_to_save)
-            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
-                epoch_ms() - after_record
-            )
-            return reward_points
+        after_settle_reward = epoch_ms()
+        if job_type == JobType.reward:
+            record_claim_event(conn.redis, worker, job_id, ctx.reward_ctx)
+        elif reward_points > 0:
+            record_mined_points(conn.redis, worker, reward_points)
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
+            epoch_ms() - after_settle_reward
+        )
+
+        after_record = epoch_ms()
+        job_result_to_save = DataJobResult.model_validate(
+            job_result.model_dump(exclude_none=True, exclude={"job_id", "job_type"})
+        )
+        complete_job(conn.postgres, job_result.job_id, job_status, job_result_to_save)
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
+            epoch_ms() - after_record
+        )
+        return reward_points
     except HTTPException as e:
         if e.status_code == status.HTTP_404_NOT_FOUND:
             HANDLE_FINISH_JOB_404_COUNTER.inc()
@@ -297,8 +295,8 @@ def handle_finish_job_legacy(
         raise e
 
 
-def handle_queue_len(pg_conn: connection, job_type: JobType) -> int:
-    return queue_len(pg_conn, job_type)
+def handle_queue_len(conn: Connections, job_type: JobType) -> int:
+    return queue_len(conn.postgres, job_type)
 
 
 def validate_admin_job(publisher: str):
@@ -308,9 +306,9 @@ def validate_admin_job(publisher: str):
         )
 
 
-def validate_classifiers(pg_conn: connection, contexts: list[BatchClassifyContext]):
+def validate_classifiers(conn: Connections, contexts: list[BatchClassifyContext]):
     cids = list(set([ctx.classifier_id for ctx in contexts]))
-    configs = list_configs(pg_conn, cids)
+    configs = list_configs(conn.postgres, cids)
     if len(configs) != len(cids):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
