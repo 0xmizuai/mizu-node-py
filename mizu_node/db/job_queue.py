@@ -37,24 +37,6 @@ def try_to_lease_job(
 ) -> Tuple[LeaseJobResult, Tuple[int, int, DataJobContext] | None]:
     with db.cursor() as cur:
         try:
-            # First check if we have any jobs without starting a transaction
-            cur.execute(
-                sql.SQL(
-                    """
-                    SELECT id, retry, ctx
-                    FROM job_queue
-                    WHERE job_type = %s
-                    AND status = %s
-                    ORDER BY published_at
-                    LIMIT 1
-                    """
-                ),
-                (job_type, JobStatus.pending),
-            )
-            row = cur.fetchone()
-            if row is None:
-                return LeaseJobResult.NO_JOBS, None
-
             # Now start transaction and try to lock the row
             cur.execute("BEGIN")
             cur.execute(
@@ -62,12 +44,18 @@ def try_to_lease_job(
                     """
                     SELECT id, retry, ctx
                     FROM job_queue
-                    WHERE id = %s
-                    FOR UPDATE NOWAIT
+                    WHERE job_type = %s
+                    AND status = %s
+                    ORDER BY published_atq
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
                     """
                 ),
-                (row[0],),
+                (job_type, JobStatus.pending),
             )
+            row = cur.fetchone()
+            if row is None:
+                return LeaseJobResult.NO_JOBS, None
 
             item_id, retry, ctx = row
             cur.execute(
