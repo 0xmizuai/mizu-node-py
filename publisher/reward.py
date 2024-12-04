@@ -109,8 +109,8 @@ POINTS_REWARD_CONFIGS = [
         key="1point",
         ctx=point_ctx(1),
         budget=BudgetSetting(
-            unit=3600, unit_name="hour", budget=get_hourly_active_user() * 5  # 5000
-        ),  # 120k
+            unit=3600, unit_name="hour", budget=get_hourly_active_user() * 3  # 3000
+        ),  # 72k
     ),
     RewardJobConfig(
         key="2points",
@@ -129,12 +129,12 @@ POINTS_REWARD_CONFIGS = [
     RewardJobConfig(
         key="5points",
         ctx=point_ctx(5),
-        budget=BudgetSetting(unit=86400, unit_name="day", budget=1000),  # 5k
+        budget=BudgetSetting(unit=3600, unit_name="hour", budget=200),  # 24k
     ),
     RewardJobConfig(
         key="10points",
         ctx=point_ctx(10),
-        budget=BudgetSetting(unit=86400, unit_name="day", budget=500),  # 5k
+        budget=BudgetSetting(unit=3600, unit_name="hour", budget=120),  # 28k
     ),
     RewardJobConfig(
         key="50points",
