@@ -5,6 +5,7 @@ CREATE TABLE job_queue (
     ctx JSONB NOT NULL,
     publisher VARCHAR(255),
     published_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+    assigned_at BIGINT NOT NULL DEFAULT 0,
     lease_expired_at BIGINT NOT NULL DEFAULT 0,
     result JSONB,
     finished_at BIGINT NOT NULL DEFAULT 0,
@@ -36,6 +37,7 @@ BEGIN
     -- If status changes back to pending (0)
     IF (NEW.status = 0 AND OLD.status != 0) THEN
         NEW.lease_expired_at = 0;
+        NEW.assigned_at = 0;
         NEW.worker = NULL;
     END IF;
     RETURN NEW;
