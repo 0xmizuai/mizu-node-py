@@ -12,6 +12,12 @@ class Connections:
         self.postgres_url = os.environ["POSTGRES_URL"]
         logging.info(f"Connecting to postgres at {self.postgres_url}")
 
+        # Create a connection pool
+        self.pg_pool = pool.SimpleConnectionPool(
+            minconn=1, maxconn=20, dsn=self.postgres_url
+        )
+        logging.info("Postgres connection pool created")
+
         REDIS_URL = os.environ["REDIS_URL"]
         logging.info(f"Connecting to redis at {REDIS_URL}")
         self.redis = redis.Redis.from_url(REDIS_URL, decode_responses=True)
@@ -25,9 +31,9 @@ class Connections:
 
     @contextmanager
     def get_pg_connection(self):
-        """Get a connection from PgBouncer."""
-        conn = psycopg2.connect(self.postgres_url)
+        """Get a connection from the connection pool."""
+        conn = self.pg_pool.getconn()
         try:
             yield conn
         finally:
-            conn.close()
+            self.pg_pool.putconn(conn)
