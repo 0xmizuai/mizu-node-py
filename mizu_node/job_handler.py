@@ -161,6 +161,11 @@ HANDLE_FINISH_JOB_LEGACY_COUNTER = Counter(
     "total requests of handle_finish_job_legacy function",
 )
 
+HANDLE_FINISH_JOB_404_COUNTER = Counter(
+    "handle_finish_job_404",
+    "total requests of handle_finish_job 404 cases",
+)
+
 
 def handle_finish_job(
     conn: Connections, worker: str, job_result: WorkerJobResult
@@ -222,8 +227,10 @@ def handle_finish_job(
         )
         return reward_points
     except HTTPException as e:
-        if job_type == JobType.reward and e.status_code == status.HTTP_404_NOT_FOUND:
-            try_remove_reward_record(conn.redis, worker, job_result.job_id)
+        if e.status_code == status.HTTP_404_NOT_FOUND:
+            HANDLE_FINISH_JOB_404_COUNTER.inc()
+            if job_type == JobType.reward:
+                try_remove_reward_record(conn.redis, worker, job_result.job_id)
         raise e
 
 

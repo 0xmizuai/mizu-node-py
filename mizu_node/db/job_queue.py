@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import time
 from typing import Any, Tuple
 from enum import Enum
@@ -25,6 +26,11 @@ from mizu_node.types.data_job import (
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
+def get_random_offset():
+    max_concurrent_lease = int(os.environ.get("MAX_CONCURRENT_LEASE", 10))
+    return random.randint(0, max_concurrent_lease)
+
+
 class LeaseJobResult(Enum):
     SUCCESS = "success"
     NO_JOBS = "no_jobs"
@@ -35,9 +41,9 @@ class LeaseJobResult(Enum):
 def try_to_lease_job(
     db: connection, job_type: JobType, ttl_secs: int, worker: str
 ) -> Tuple[LeaseJobResult, Tuple[int, int, DataJobContext] | None]:
+    random_offset = get_random_offset()
     with db.cursor() as cur:
         try:
-            # Now start transaction and try to lock the row
             cur.execute("BEGIN")
             cur.execute(
                 sql.SQL(
@@ -47,14 +53,16 @@ def try_to_lease_job(
                     WHERE job_type = %s
                     AND status = %s
                     ORDER BY published_at
+                    OFFSET %s
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
                     """
                 ),
-                (job_type, JobStatus.pending),
+                (job_type, JobStatus.pending, random_offset),
             )
             row = cur.fetchone()
             if row is None:
+                cur.execute("ROLLBACK")
                 return LeaseJobResult.NO_JOBS, None
 
             item_id, retry, ctx = row
@@ -67,9 +75,7 @@ def try_to_lease_job(
                         lease_expired_at = %s,
                         worker = %s
                     WHERE id = %s
-                    AND status = %s;
-
-                    COMMIT;
+                    AND status = %s
                     """
                 ),
                 (
@@ -80,6 +86,12 @@ def try_to_lease_job(
                     JobStatus.pending,
                 ),
             )
+
+            if cur.rowcount == 0:
+                cur.execute("ROLLBACK")
+                return LeaseJobResult.ERROR, None
+
+            db.commit()
             return LeaseJobResult.SUCCESS, (
                 item_id,
                 retry,
@@ -87,10 +99,10 @@ def try_to_lease_job(
             )
 
         except errors.LockNotAvailable:
-            cur.execute("ROLLBACK;")
+            db.rollback()
             return LeaseJobResult.LOCKED, None
         except Exception as e:
-            cur.execute("ROLLBACK;")
+            db.rollback()
             logging.error(f"Failed to lease job: {e}")
             return LeaseJobResult.ERROR, None
 
