@@ -37,7 +37,6 @@ from mizu_node.types.data_job import (
     WorkerJobResult,
 )
 
-from mizu_node.types.job_queue import job_queues
 from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobResponse,
@@ -107,12 +106,15 @@ def pg_conn(postgresql):
         cur.execute(
             """
             CREATE TABLE job_queue (
-                id VARCHAR(255) PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 job_type INTEGER NOT NULL,
                 status INTEGER NOT NULL DEFAULT 0,
-                data TEXT NOT NULL,
-                created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
-                expired_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+                ctx JSONB NOT NULL,
+                publisher VARCHAR(255),
+                published_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+                lease_expired_at BIGINT NOT NULL DEFAULT 0,
+                result JSONB,
+                finished_at BIGINT NOT NULL DEFAULT 0,
                 worker VARCHAR(255),
                 retry INTEGER NOT NULL DEFAULT 0,
                 CONSTRAINT valid_status CHECK (status IN (0, 1, 2))
@@ -121,6 +123,7 @@ def pg_conn(postgresql):
             CREATE INDEX idx_status ON job_queue (status);
             CREATE INDEX idx_created_at ON job_queue (created_at);
             CREATE INDEX idx_expired_at ON job_queue (expired_at);
+            CREATE INDEX idx_worker ON job_queue (worker);
         """
         )
         conn.commit()

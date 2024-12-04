@@ -20,6 +20,13 @@ class JobType(int, Enum):
 
 class JobStatus(int, Enum):
     pending = 0
+    processing = 1
+    finished = 2
+    error = 3
+
+
+class JobStatusLegacy(int, Enum):
+    pending = 0
     finished = 1
     error = 2
 
@@ -50,7 +57,7 @@ class BatchClassifyContext(BaseModel):
     bytesize: int = Field(alias="bytesize")
     decompressed_byte_size: int = Field(alias="decompressedByteSize")
     checksum_md5: str = Field(alias="checksumMd5")
-    classifier_id: str = Field(alias="classifierId")
+    classifier_id: int = Field(alias="classifierId")
 
 
 class Token(BaseModel):
@@ -70,10 +77,9 @@ class RewardContext(BaseModel):
     amount: str | float | int
 
 
-class DataJobPayload(BaseModel):
+class DataJobContext(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_type: JobType = Field(alias="jobType")
     classify_ctx: Optional[ClassifyContext] = Field(alias="classifyCtx", default=None)
     pow_ctx: Optional[PowContext] = Field(alias="powCtx", default=None)
     batch_classify_ctx: Optional[BatchClassifyContext] = Field(
@@ -81,15 +87,25 @@ class DataJobPayload(BaseModel):
     )
     reward_ctx: Optional[RewardContext] = Field(alias="rewardCtx", default=None)
 
+
+class DataJobPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_type: JobType = Field(alias="jobType")
+    context: DataJobContext
+
     @model_validator(mode="after")
     def _validate_job_type(self):
-        if self.job_type == JobType.reward and self.reward_ctx is None:
+        if self.job_type == JobType.reward and self.context.reward_ctx is None:
             raise ValueError("reward_ctx is required for reward job")
-        if self.job_type == JobType.classify and self.classify_ctx is None:
+        if self.job_type == JobType.classify and self.context.classify_ctx is None:
             raise ValueError("classify_ctx is required for classify job")
-        if self.job_type == JobType.pow and self.pow_ctx is None:
+        if self.job_type == JobType.pow and self.context.pow_ctx is None:
             raise ValueError("pow_ctx is required for pow job")
-        if self.job_type == JobType.batch_classify and self.batch_classify_ctx is None:
+        if (
+            self.job_type == JobType.batch_classify
+            and self.context.batch_classify_ctx is None
+        ):
             raise ValueError("batch_classify_ctx is required for batch_classify job")
         return self
 
@@ -107,10 +123,9 @@ class ErrorResult(BaseModel):
     message: Optional[str] = Field(default=None)
 
 
-class JobResultBase(BaseModel):
+class DataJobResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_type: JobType = Field(alias="jobType")
     classify_result: Optional[list[str]] = Field(alias="classifyResult", default=None)
     pow_result: Optional[str] = Field(alias="powResult", default=None)
     batch_classify_result: Optional[list[ClassifyResult]] = Field(
@@ -120,21 +135,24 @@ class JobResultBase(BaseModel):
     error_result: Optional[ErrorResult] = Field(alias="errorResult", default=None)
 
 
-class JobResultBaseWithValidator(JobResultBase):
+class DataJobResultWithValidator(BaseModel):
+    job_type: JobType = Field(alias="jobType")
+    result: DataJobResult
+
     @model_validator(mode="after")
     def _validate_job_type(self):
         if self.error_result is not None:
             return self
 
-        if self.job_type == JobType.reward and self.reward_result is None:
+        if self.job_type == JobType.reward and self.result.reward_result is None:
             raise ValueError("reward_result is required for reward job")
-        if self.job_type == JobType.classify and self.classify_result is None:
+        if self.job_type == JobType.classify and self.result.classify_result is None:
             raise ValueError("classify_result is required for classify job")
-        if self.job_type == JobType.pow and self.pow_result is None:
+        if self.job_type == JobType.pow and self.result.pow_result is None:
             raise ValueError("pow_result is required for pow job")
         if (
             self.job_type == JobType.batch_classify
-            and self.batch_classify_result is None
+            and self.result.batch_classify_result is None
         ):
             raise ValueError("batch_classify_result is required for batch_classify job")
         return self
@@ -146,13 +164,13 @@ class JobResultBaseWithValidator(JobResultBase):
 class WorkerJob(DataJobPayload):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="_id")
+    job_id: str | int = Field(alias="_id")
 
 
-class WorkerJobResult(JobResultBaseWithValidator):
+class WorkerJobResult(DataJobResultWithValidator):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="_id")
+    job_id: str | int = Field(alias="_id")
 
 
 ##################################### Client Data Type End ##############################################
@@ -169,7 +187,7 @@ class DataJobInputNoId(DataJobPayload):
     publisher: str
 
 
-class DataJobResultNoId(JobResultBaseWithValidator):
+class DataJobResultNoId(DataJobResultWithValidator):
     model_config = ConfigDict(populate_by_name=True)
 
     status: JobStatus
@@ -177,10 +195,13 @@ class DataJobResultNoId(JobResultBaseWithValidator):
     worker: str
 
 
-class DataJobQueryResult(JobResultBase):
+class DataJobQueryResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="_id")
+    job_id: str | int = Field(alias="_id")
+    job_type: JobType = Field(alias="jobType")
+    context: DataJobContext
+    result: DataJobResult | None = Field(default=None)
     status: JobStatus = Field(default=JobStatus.pending)
     finished_at: Optional[int] = Field(alias="finishedAt", default=None)
 
@@ -191,7 +212,7 @@ class DataJobQueryResult(JobResultBase):
 class RewardJobRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="_id")
+    job_id: str | int = Field(alias="_id")
     assigned_at: int = Field(alias="assignedAt")
     reward_ctx: RewardContext = Field(alias="rewardCtx")
 

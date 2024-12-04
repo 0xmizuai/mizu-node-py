@@ -23,7 +23,7 @@ class RegisterClassifierRequest(BaseModel):
 class RegisterClassifierResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    id: str
+    id: int
 
 
 class QueryClassifierResponse(BaseModel):

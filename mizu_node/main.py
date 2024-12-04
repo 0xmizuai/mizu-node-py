@@ -2,7 +2,6 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
-import sys
 from typing import List
 from bson import ObjectId
 import uvicorn
@@ -12,10 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from prometheus_client import Counter, Histogram, make_asgi_app
 
+from mizu_node.db.classifier import get_config, store_config
 from mizu_node.common import build_ok_response, epoch_ms, error_handler
 from mizu_node.constants import (
     API_KEY_COLLECTION,
-    CLASSIFIER_COLLECTION,
     JOBS_COLLECTION,
     LATENCY_BUCKETS,
 )
@@ -60,7 +59,7 @@ from mizu_node.types.service import (
     RegisterClassifierResponse,
     TakeJobResponse,
 )
-from mizu_node.types.job_queue import queue_clean, queue_clear
+from mizu_node.db.job_queue import clear_jobs, queue_clean
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -128,7 +127,7 @@ def get_publisher(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
-    return verify_api_key(conn.mdb[API_KEY_COLLECTION], token)
+    return verify_api_key(conn, token)
 
 
 @app.get("/")
@@ -143,22 +142,19 @@ def register_classifier(
     request: RegisterClassifierRequest, publisher: str = Depends(get_publisher)
 ):
     request.config.publisher = publisher
-    result = conn.mdb[CLASSIFIER_COLLECTION].insert_one(
-        request.config.model_dump(by_alias=True)
-    )
-    response = RegisterClassifierResponse(id=str(result.inserted_id))
-    return build_ok_response(response)
+    id = store_config(conn.postgres, request.config)
+    return build_ok_response(RegisterClassifierResponse(id=id))
 
 
 @app.get("/classifier_info")
 @error_handler
-def get_classifier(id: str):
-    doc = conn.mdb[CLASSIFIER_COLLECTION].find_one({"_id": ObjectId(id)})
-    if doc is None:
+def get_classifier(id: int):
+    config = get_config(conn.postgres, id)
+    if config is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="classifier not found"
         )
-    response = QueryClassifierResponse(classifier=ClassifierConfig(**doc))
+    response = QueryClassifierResponse(classifier=config)
     return build_ok_response(response)
 
 
@@ -166,7 +162,7 @@ def get_classifier(id: str):
 @error_handler
 def clear_queue(job_type: JobType, publisher: str = Depends(get_publisher)):
     validate_admin_job(publisher)
-    queue_clear(conn.postgres, job_type)
+    clear_jobs(conn.postgres, job_type)
     return build_ok_response()
 
 
@@ -197,7 +193,7 @@ def publish_reward_jobs(
 def publish_batch_classify_jobs(
     request: PublishBatchClassifyJobRequest, publisher: str = Depends(get_publisher)
 ):
-    validate_classifiers(conn.mdb, request.data)
+    validate_classifiers(conn, request.data)
     ids = handle_publish_jobs(conn, publisher, JobType.batch_classify, request.data)
     return build_ok_response(PublishJobResponse(job_ids=ids))
 
@@ -205,7 +201,7 @@ def publish_batch_classify_jobs(
 @app.get("/job_status")
 @error_handler
 def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publisher)):
-    jobs = handle_query_job(conn.mdb[JOBS_COLLECTION], ids)
+    jobs = handle_query_job(conn, ids)
     return build_ok_response(QueryJobResponse(jobs=jobs))
 
 
