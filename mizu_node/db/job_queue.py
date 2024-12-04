@@ -57,8 +57,8 @@ def lease_job(
         cur.execute(
             sql.SQL(
                 """SELECT id, retry, ctx 
-                FROM job_queue 
-                WHERE job_type = %s AND status = %s 
+                FROM job_queue
+                WHERE job_type = %s AND status = %s
                 ORDER BY published_at LIMIT 1 FOR UPDATE SKIP LOCKED"""
             ),
             (job_type, JobStatus.pending),
@@ -71,7 +71,7 @@ def lease_job(
         cur.execute(
             sql.SQL(
                 """UPDATE job_queue
-                SET status = %s, lease_expired_at = %s, worker = %s
+                SET status = %s, assigned_at = EXTRACT(EPOCH FROM NOW())::BIGINT, lease_expired_at = %s, worker = %s
                 WHERE id = %s"""
             ),
             (
