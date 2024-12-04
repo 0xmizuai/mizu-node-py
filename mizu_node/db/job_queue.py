@@ -49,7 +49,7 @@ def lease_job(
                     FROM job_queue
                     WHERE job_type = %s
                     AND status = %s
-                    AND published_at < EXTRACT(EPOCH FROM NOW())::BIGINT
+                    ORDER BY published_at
                     LIMIT 100  -- Get a batch of candidates
                 ),
                 selected_job AS (
