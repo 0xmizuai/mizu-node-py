@@ -59,7 +59,6 @@ def lease_job(
                 WHERE job_type = %s
                 AND status = %s
                 ORDER BY published_at
-                OFFSET %s
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
                 """
