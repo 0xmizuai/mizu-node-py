@@ -38,7 +38,7 @@ def load_sql_file(filename: str) -> str:
         return f.read()
 
 
-def initiate_db(conn: psycopg2.extensions.connection):
+def initiate_pg_db(conn: psycopg2.extensions.connection):
     with closing(conn.cursor()) as cur:
         cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
         # Check if tables exist before running SQL files

@@ -1,4 +1,4 @@
-from contextlib import closing
+from contextlib import closing, contextmanager
 import datetime
 import os
 from unittest import mock
@@ -13,7 +13,7 @@ from mizu_node.db.classifier import store_config
 from mizu_node.common import epoch
 
 from mizu_node.db.api_key import create_api_key
-from mizu_node.db.common import initiate_db
+from mizu_node.db.common import initiate_pg_db
 from mizu_node.db.job_queue import delete_one_job
 from mizu_node.db.job_queue import get_jobs_info
 from mizu_node.stats import get_valid_rewards
@@ -66,9 +66,13 @@ MIZU_ADMIN_USER_API_KEY = "admin_key"
 # Mock the Connections class
 class MockConnections:
     def __init__(self, mdb=None, postgres=None, redis=None):
-        self.mdb = mdb if mdb is not None else MagicMock()
-        self.postgres = postgres if postgres is not None else MagicMock()
-        self.redis = redis if redis is not None else RedisMock()
+        self.mdb = mdb
+        self.postgres = postgres
+        self.redis = redis
+
+    @contextmanager
+    def get_pg_connection(self):
+        yield self.postgres
 
 
 # Convert to PEM format
@@ -213,28 +217,24 @@ def mock_connections(monkeypatch, pg_conn, setenvvar):
     # Create mock connections
     mock_conn = MockConnections(mdb=mdb, postgres=pg_conn, redis=RedisMock())
 
-    # Mock the global conn instance in main.py
-    import mizu_node.main
-
-    monkeypatch.setattr("mizu_node.main.conn", mock_conn)
-
     from mizu_node.main import app
 
     app.state.conn = mock_conn
 
-    initiate_db(mock_conn.postgres)
-    create_api_key(pg_conn, "test_user1", TEST_API_KEY1)
-    create_api_key(pg_conn, "test_user2", TEST_API_KEY2)
-    classififer_id = store_config(
-        pg_conn,
-        ClassifierConfig(
-            name="test_classifier",
-            embedding_model="test_embedding_model",
-            labels=[DataLabel(label="t1", description="test_label1")],
-            publisher="test_user1",
-        ),
-    )
-    app.state.classifier_id = classififer_id
+    with mock_conn.get_pg_connection() as pg_conn:
+        initiate_pg_db(pg_conn)
+        create_api_key(pg_conn, "test_user1", TEST_API_KEY1)
+        create_api_key(pg_conn, "test_user2", TEST_API_KEY2)
+        classififer_id = store_config(
+            pg_conn,
+            ClassifierConfig(
+                name="test_classifier",
+                embedding_model="test_embedding_model",
+                labels=[DataLabel(label="t1", description="test_label1")],
+                publisher="test_user1",
+            ),
+        )
+        app.state.classifier_id = classififer_id
     return app
 
 
