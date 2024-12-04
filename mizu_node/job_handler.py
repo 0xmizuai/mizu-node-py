@@ -11,10 +11,9 @@ from fastapi import HTTPException, status
 import requests
 
 
-from mizu_node.classifier import list_configs
+from mizu_node.db.classifier import list_configs
 from mizu_node.common import epoch, epoch_ms
 from mizu_node.constants import (
-    CLASSIFIER_COLLECTION,
     DEFAULT_POW_DIFFICULTY,
     JOBS_COLLECTION,
     LATENCY_BUCKETS,
@@ -48,9 +47,10 @@ from mizu_node.types.data_job import (
     WorkerJob,
     WorkerJobResult,
 )
-from mizu_node.job_queue import (
+from mizu_node.db.job_queue import (
     add_jobs,
     complete_job,
+    get_job_info_raw,
     get_jobs_info,
     get_job_lease,
     lease_job,
@@ -84,19 +84,20 @@ def handle_publish_jobs(
         )
     return add_jobs(
         conn.postgres,
+        job_type,
         publisher,
         [build_data_job_context(job_type, ctx) for ctx in contexts],
     )
 
 
 def handle_query_job(
-    conn: Connections, job_ids: list[str]
+    conn: Connections, job_ids: list[int]
 ) -> list[DataJobQueryResult] | None:
-    job_ids = [ObjectId(id) for id in job_ids]
     if not job_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
         )
+    job_ids = [int(id) for id in job_ids]
     return get_jobs_info(conn.postgres, job_ids)
 
 
@@ -143,7 +144,7 @@ def handle_take_job(
         job = WorkerJob(
             job_id=item_id,
             job_type=job_type,
-            context=DataJobContext.model_validate_json(ctx),
+            **ctx.model_dump(exclude_none=True),
         )
         if job_type == JobType.reward:
             record_reward_event(conn.redis, worker, job)
@@ -170,12 +171,13 @@ def handle_finish_job(
     start_time = epoch_ms()
     job_type = job_result.job_type
     try:
-        ctx, assigner = get_job_lease(conn.postgres, job_type, job_result.job_id)
-        if assigner is None:  # check legacy leaser
-            if epoch() - 3600 * 12 > int(os.environ.get("MIGRATION_START_TIME", 0)):
-                HANDLE_FINISH_JOB_LEGACY_COUNTER.inc()
-                return handle_finish_job_legacy(conn, worker, job_result)
-        elif assigner != worker:
+        if ObjectId.is_valid(str(job_result.job_id)):
+            HANDLE_FINISH_JOB_LEGACY_COUNTER.inc()
+            return handle_finish_job_legacy(conn, worker, job_result)
+
+        job_id = int(job_result.job_id)
+        ctx, assigner = get_job_lease(conn.postgres, job_id, job_type)
+        if assigner != worker:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
@@ -205,7 +207,7 @@ def handle_finish_job(
 
         after_settle_reward = epoch_ms()
         if job_type == JobType.reward:
-            record_claim_event(conn.redis, worker, job_result.job_id, ctx.reward_ctx)
+            record_claim_event(conn.redis, worker, job_id, ctx.reward_ctx)
         elif reward_points > 0:
             record_mined_points(conn.redis, worker, reward_points)
         HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
@@ -214,7 +216,7 @@ def handle_finish_job(
 
         after_record = epoch_ms()
         job_result_to_save = DataJobResult.model_validate(
-            **job_result.model_dump(exclude_unset=True)
+            job_result.model_dump(exclude_none=True, exclude={"job_id", "job_type"})
         )
         complete_job(conn.postgres, job_result.job_id, job_status, job_result_to_save)
         HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(

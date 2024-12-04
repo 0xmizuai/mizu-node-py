@@ -1,11 +1,10 @@
 import logging
 from typing import Tuple
-from prometheus_client import Gauge
 from pydantic import BaseModel, Field
 from redis import Redis
 
 from mizu_node.types.data_job import JobType
-from mizu_node.job_queue import ALL_JOB_TYPES
+from mizu_node.db.job_queue import ALL_JOB_TYPES
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 

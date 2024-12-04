@@ -53,7 +53,7 @@ class PublishBatchClassifyJobRequest(BaseModel):
 class PublishJobResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_ids: list[str] = Field(alias="jobIds")
+    job_ids: list[int] = Field(alias="jobIds")
 
 
 class QueryJobResponse(BaseModel):
@@ -95,7 +95,7 @@ class QueryMinedPointsResponse(BaseModel):
 class SettleRewardRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_id: str = Field(alias="jobId")
+    job_id: str | int = Field(alias="jobId")
     job_type: JobType = Field(alias="jobType")
     worker: str
     # only for reward job

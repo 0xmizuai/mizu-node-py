@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from typing import Tuple
+from typing import Any, Optional, Tuple
 from prometheus_client import Gauge
 from psycopg2 import sql
 from pydantic import BaseModel
@@ -17,7 +17,6 @@ from mizu_node.types.data_job import (
 )
 
 from psycopg2.extensions import connection
-from typing import TypeVar, Callable, ParamSpec
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -53,7 +52,7 @@ def add_jobs(
 @with_transaction
 def lease_job(
     db: connection, job_type: JobType, ttl_secs: int, worker: str
-) -> Tuple[int, int, str] | None:
+) -> Tuple[int, int, DataJobContext] | None:
     with db.cursor() as cur:
         cur.execute(
             sql.SQL(
@@ -82,7 +81,7 @@ def lease_job(
                 item_id,
             ),
         )
-        return (item_id, retry, ctx)
+        return (item_id, retry, DataJobContext.model_validate(ctx))
 
 
 @with_transaction
@@ -135,6 +134,12 @@ def clear_jobs(db: connection, job_type: JobType) -> None:
 
 
 @with_transaction
+def delete_one_job(db: connection, item_id: int) -> None:
+    with db.cursor() as cur:
+        cur.execute(sql.SQL("DELETE FROM job_queue WHERE id = %s"), (item_id,))
+
+
+@with_transaction
 def queue_len(db: connection, job_type: JobType) -> int:
     with db.cursor() as cur:
         cur.execute(
@@ -165,11 +170,7 @@ def get_job_lease(
             (item_id, job_type, JobStatus.processing),
         )
         row = cur.fetchone()
-        return (
-            (DataJobContext.model_validate_json(row[0]), row[1])
-            if row
-            else (None, None)
-        )
+        return (DataJobContext.model_validate(row[0]), row[1]) if row else (None, None)
 
 
 @with_transaction
@@ -181,26 +182,33 @@ def get_jobs_info(db: connection, item_ids: list[int]) -> list[DataJobQueryResul
         cur.execute(
             sql.SQL(
                 """
-                SELECT id, job_type, status, ctx, result, finished_at
+                SELECT id, job_type, status, ctx, result, worker, finished_at
                 FROM job_queue 
                 WHERE id = ANY(%s)
                 """
             ),
-            (item_ids),
+            (item_ids,),
         )
         rows = cur.fetchall()
 
         return [
             DataJobQueryResult(
-                id=row[0],
+                job_id=row[0],
                 job_type=row[1],
                 status=row[2],
-                context=DataJobContext.model_validate_json(row[3]),
-                result=(DataJobResult.model_validate_json(row[4]) if row[5] else None),
-                finished_at=row[5],
+                context=DataJobContext.model_validate(row[3]),
+                result=(DataJobResult.model_validate(row[4]) if row[4] else None),
+                worker=row[5],
+                finished_at=row[6],
             )
             for row in rows
         ]
+
+
+def get_job_info_raw(db: connection, id: int) -> list[Tuple[Any, ...]]:
+    with db.cursor() as cur:
+        cur.execute(sql.SQL("SELECT * FROM job_queue WHERE id = %s"), (id,))
+        return cur.fetchone()
 
 
 ALL_JOB_TYPES = [JobType.pow, JobType.classify, JobType.batch_classify, JobType.reward]

@@ -1,9 +1,8 @@
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 import logging
 import os
 from typing import List
-from bson import ObjectId
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -14,10 +13,9 @@ from prometheus_client import Counter, Histogram, make_asgi_app
 from mizu_node.db.classifier import get_config, store_config
 from mizu_node.common import build_ok_response, epoch_ms, error_handler
 from mizu_node.constants import (
-    API_KEY_COLLECTION,
-    JOBS_COLLECTION,
     LATENCY_BUCKETS,
 )
+from mizu_node.db.common import initiate_db
 from mizu_node.job_handler import (
     handle_query_job,
     handle_take_job,
@@ -70,6 +68,7 @@ conn = Connections()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    initiate_db(conn.postgres)
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, queue_clean, conn.postgres)
     yield

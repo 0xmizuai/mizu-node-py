@@ -4,7 +4,7 @@ from fastapi import HTTPException
 import pytest
 
 from mizu_node.security import validate_worker
-from mizu_node.stats import record_claim_event, record_reward_event
+from mizu_node.stats import record_reward_event
 from mizu_node.types.data_job import JobType, RewardContext, WorkerJob
 from tests.redis_mock import RedisMock
 from tests.worker_utils import (
