@@ -79,8 +79,11 @@ def lease_job(
         )
 
         row = cur.fetchone()
+        if row is None:
+            return None
+
         item_id, retry, ctx = row
-        return (item_id, retry, DataJobContext.model_validate(ctx)) if row else None
+        return (item_id, retry, DataJobContext.model_validate(ctx))
 
 
 @with_transaction
