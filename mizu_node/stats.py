@@ -65,7 +65,7 @@ def record_reward_event(rclient: Redis, worker: str, job: WorkerJob):
     rewards = get_valid_rewards(rclient, worker)
     rewards.jobs.append(
         RewardJobRecord(
-            job_id=job.job_id, reward_ctx=job.reward_ctx, assigned_at=epoch()
+            job_id=job.job_id, reward_ctx=job.context.reward_ctx, assigned_at=epoch()
         )
     )
     rclient.hmset(

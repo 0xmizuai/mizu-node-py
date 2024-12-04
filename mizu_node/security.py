@@ -15,6 +15,7 @@ from mizu_node.constants import (
 )
 import jwt
 
+from mizu_node.db.api_key import get_user_id
 from mizu_node.stats import (
     LAST_REWARDED_AT_FIELD,
     REWARD_FIELD,
@@ -22,6 +23,7 @@ from mizu_node.stats import (
     mined_per_day_field,
     rate_limit_field,
 )
+from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     JobType,
     RewardJobRecords,
@@ -53,20 +55,16 @@ def verify_jwt(token: str, public_key: str) -> str:
         )
 
 
-def verify_api_key(mdb: Collection, token: str) -> str:
+def verify_api_key(conn: Connections, token: str) -> str:
     if token == os.environ["MIZU_ADMIN_USER_API_KEY"]:
         return MIZU_ADMIN_USER
 
-    doc = mdb.find_one({"api_key": token})
-    if doc is None:
+    user_id = get_user_id(conn.postgres, token)
+    if user_id is None or user_id == MIZU_ADMIN_USER:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="API key is invalid"
         )
-    if doc["user"] == MIZU_ADMIN_USER:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="API key is invalid"
-        )
-    return doc["user"]
+    return user_id
 
 
 def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
