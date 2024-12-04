@@ -54,6 +54,7 @@ def lease_job(
     db: connection, job_type: JobType, ttl_secs: int, worker: str
 ) -> Tuple[int, int, DataJobContext] | None:
     with db.cursor() as cur:
+        select_start = time.time()
         cur.execute(
             sql.SQL(
                 """SELECT id, retry, ctx 
@@ -63,11 +64,14 @@ def lease_job(
             ),
             (job_type, JobStatus.pending),
         )
+        logging.info(f"SELECT query took {time.time() - select_start:.2f} seconds")
+
         row = cur.fetchone()
         if row is None:
             return None
 
         item_id, retry, ctx = row
+        update_start = time.time()
         cur.execute(
             sql.SQL(
                 """UPDATE job_queue
@@ -81,6 +85,9 @@ def lease_job(
                 item_id,
             ),
         )
+        logging.info(f"UPDATE query took {time.time() - update_start:.2f} seconds")
+        logging.info(f"Total lease_job took {time.time() - select_start:.2f} seconds")
+
         return (item_id, retry, DataJobContext.model_validate(ctx))
 
 
