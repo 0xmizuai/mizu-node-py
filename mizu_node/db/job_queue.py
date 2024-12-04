@@ -46,7 +46,7 @@ def try_to_lease_job(
                     FROM job_queue
                     WHERE job_type = %s
                     AND status = %s
-                    ORDER BY published_atq
+                    ORDER BY published_at
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
                     """
