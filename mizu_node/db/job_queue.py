@@ -2,9 +2,14 @@ import logging
 import os
 import time
 from typing import Any, Tuple
+from enum import Enum
+from typing import Tuple
+
 from prometheus_client import Gauge
-from psycopg2 import sql
+from psycopg2 import sql, errors
 from pydantic import BaseModel
+from enum import Enum
+from psycopg2.extensions import connection
 
 from mizu_node.common import epoch
 from mizu_node.db.common import with_transaction
@@ -16,9 +21,130 @@ from mizu_node.types.data_job import (
     JobType,
 )
 
-from psycopg2.extensions import connection
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
+
+
+class LeaseJobResult(Enum):
+    SUCCESS = "success"
+    NO_JOBS = "no_jobs"
+    LOCKED = "locked"
+    ERROR = "error"
+
+
+def try_to_lease_job(
+    db: connection, job_type: JobType, ttl_secs: int, worker: str
+) -> Tuple[LeaseJobResult, Tuple[int, int, DataJobContext] | None]:
+    with db.cursor() as cur:
+        try:
+            # First check if we have any jobs without starting a transaction
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT id, retry, ctx
+                    FROM job_queue
+                    WHERE job_type = %s
+                    AND status = %s
+                    ORDER BY published_at
+                    LIMIT 1
+                    """
+                ),
+                (job_type, JobStatus.pending),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return LeaseJobResult.NO_JOBS, None
+
+            # Now start transaction and try to lock the row
+            cur.execute("BEGIN")
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT id, retry, ctx
+                    FROM job_queue
+                    WHERE id = %s
+                    FOR UPDATE NOWAIT
+                    """
+                ),
+                (row[0],),
+            )
+
+            item_id, retry, ctx = row
+            cur.execute(
+                sql.SQL(
+                    """
+                    UPDATE job_queue
+                    SET status = %s,
+                        assigned_at = EXTRACT(EPOCH FROM NOW())::BIGINT,
+                        lease_expired_at = %s,
+                        worker = %s
+                    WHERE id = %s
+                    AND status = %s;
+
+                    COMMIT;
+                    """
+                ),
+                (
+                    JobStatus.processing,
+                    epoch() + ttl_secs,
+                    worker,
+                    item_id,
+                    JobStatus.pending,
+                ),
+            )
+            return LeaseJobResult.SUCCESS, (
+                item_id,
+                retry,
+                DataJobContext.model_validate(ctx),
+            )
+
+        except errors.LockNotAvailable:
+            cur.execute("ROLLBACK;")
+            return LeaseJobResult.LOCKED, None
+        except Exception as e:
+            cur.execute("ROLLBACK;")
+            logging.error(f"Failed to lease job: {e}")
+            return LeaseJobResult.ERROR, None
+
+
+def lease_job(
+    db: connection,
+    job_type: JobType,
+    ttl_secs: int,
+    worker: str,
+    max_retries: int = 3,
+    retry_delay: float = 0.1,
+) -> Tuple[int, int, DataJobContext] | None:
+    """
+    Attempt to lease a job with retries.
+
+    Args:
+        db: Database connection
+        job_type: Type of job to lease
+        ttl_secs: Time-to-live in seconds for the lease
+        worker: Worker ID
+        max_retries: Maximum number of retry attempts (default: 3)
+        retry_delay: Delay between retries in seconds (default: 0.1)
+
+    Returns:
+        Tuple of (job_id, retry_count, context) if successful, None otherwise
+    """
+    for attempt in range(max_retries):
+        result, job_data = try_to_lease_job(db, job_type, ttl_secs, worker)
+
+        match result:
+            case LeaseJobResult.SUCCESS:
+                return job_data
+            case LeaseJobResult.NO_JOBS:
+                return None  # No point retrying if there are no jobs
+            case LeaseJobResult.LOCKED:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+            case LeaseJobResult.ERROR:
+                return None  # Fail fast on errors
+
+    return None  # Return None if all retries failed
 
 
 @with_transaction
@@ -47,41 +173,6 @@ def add_jobs(
             )
             inserted_ids.append(cur.fetchone()[0])
         return inserted_ids
-
-
-@with_transaction
-def lease_job(
-    db: connection, job_type: JobType, ttl_secs: int, worker: str
-) -> Tuple[int, int, DataJobContext] | None:
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                """SELECT id, retry, ctx 
-                FROM job_queue
-                WHERE job_type = %s AND status = %s
-                ORDER BY published_at LIMIT 1 FOR UPDATE SKIP LOCKED"""
-            ),
-            (job_type, JobStatus.pending),
-        )
-        row = cur.fetchone()
-        if row is None:
-            return None
-
-        item_id, retry, ctx = row
-        cur.execute(
-            sql.SQL(
-                """UPDATE job_queue
-                SET status = %s, assigned_at = EXTRACT(EPOCH FROM NOW())::BIGINT, lease_expired_at = %s, worker = %s
-                WHERE id = %s"""
-            ),
-            (
-                JobStatus.processing,
-                epoch() + ttl_secs,
-                worker,
-                item_id,
-            ),
-        )
-        return (item_id, retry, DataJobContext.model_validate(ctx))
 
 
 @with_transaction
