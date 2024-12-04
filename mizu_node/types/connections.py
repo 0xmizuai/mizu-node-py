@@ -1,7 +1,6 @@
 from contextlib import contextmanager
 import logging
 import os
-import psycopg2
 import redis
 from pymongo import MongoClient
 from psycopg2 import pool
@@ -14,7 +13,7 @@ class Connections:
 
         # Create a connection pool
         self.pg_pool = pool.SimpleConnectionPool(
-            minconn=1, maxconn=20, dsn=self.postgres_url
+            minconn=1, maxconn=5, dsn=self.postgres_url
         )
         logging.info("Postgres connection pool created")
 
