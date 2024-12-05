@@ -13,9 +13,8 @@ from mizu_node.stats import (
 from mizu_node.types.data_job import (
     JobType,
     RewardContext,
-    RewardJobRecord,
-    RewardJobRecords,
 )
+from mizu_node.types.service import RewardJobRecord, RewardJobRecords
 from tests.redis_mock import RedisMock
 
 

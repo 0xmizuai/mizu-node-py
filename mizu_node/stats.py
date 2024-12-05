@@ -7,10 +7,9 @@ from mizu_node.constants import (
 from mizu_node.types.data_job import (
     JobType,
     RewardContext,
-    RewardJobRecord,
-    RewardJobRecords,
     WorkerJob,
 )
+from mizu_node.types.service import RewardJobRecord, RewardJobRecords
 
 REWARD_FIELD = "reward"
 LAST_REWARDED_AT_FIELD = "last_rewarded_at"

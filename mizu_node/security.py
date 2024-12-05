@@ -24,9 +24,8 @@ from mizu_node.stats import (
 )
 from mizu_node.types.data_job import (
     JobType,
-    RewardJobRecords,
 )
-from mizu_node.types.service import CooldownConfig
+from mizu_node.types.service import CooldownConfig, RewardJobRecords
 from psycopg2.extensions import connection
 
 ALGORITHM = "EdDSA"

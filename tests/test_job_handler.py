@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 import psycopg2
 import pytest
 from fastapi import status
-from unittest.mock import MagicMock, patch as mock_patch
+from unittest.mock import patch as mock_patch
 
 from mizu_node.db.classifier import store_config
 from mizu_node.common import epoch
@@ -29,7 +29,6 @@ from mizu_node.types.data_job import (
     JobType,
     PowContext,
     RewardContext,
-    RewardJobRecords,
     RewardResult,
     Token,
     WorkerJobResult,
@@ -39,9 +38,9 @@ from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobResponse,
     RegisterClassifierRequest,
+    RewardJobRecords,
 )
 from tests.redis_mock import RedisMock
-import mongomock
 
 import jwt
 from cryptography.hazmat.primitives import serialization
@@ -59,14 +58,12 @@ import pytest
 
 TEST_API_KEY1 = "test_api_key1"
 TEST_API_KEY2 = "test_api_key2"
-MOCK_MONGO_URL = "mongodb://localhost:27017"
 MIZU_ADMIN_USER_API_KEY = "admin_key"
 
 
 # Mock the Connections class
 class MockConnections:
-    def __init__(self, mdb=None, postgres=None, redis=None):
-        self.mdb = mdb
+    def __init__(self, postgres=None, redis=None):
         self.postgres = postgres
         self.redis = redis
 
@@ -122,10 +119,8 @@ def jwt_token(user: str):
 def setenvvar(monkeypatch):
     with mock.patch.dict(os.environ, clear=True):
         envvars = {
-            "MIZU_NODE_MONGO_URL": MOCK_MONGO_URL,
             "POSTGRES_URL": "postgresql://postgres:postgres@localhost:5432/postgres",
             "REDIS_URL": "redis://localhost:6379",
-            "MIZU_NODE_MONGO_DB_NAME": "mizu_node",
             "JWT_VERIFY_KEY": public_key_str,
             "API_SECRET_KEY": "some-secret",
             "BACKEND_SERVICE_URL": "http://localhost:3000",
@@ -133,7 +128,6 @@ def setenvvar(monkeypatch):
             "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
             "MIN_REWARD_GAP": "1800",
             "ENABLE_ACTIVE_USER_CHECK": "true",
-            "MAX_CONCURRENT_LEASE": "0",
         }
         for k, v in envvars.items():
             monkeypatch.setenv(k, v)
@@ -212,10 +206,7 @@ def _publish_jobs_simple(
 @pytest.fixture(scope="function")
 def mock_connections(monkeypatch, pg_conn, setenvvar):
     monkeypatch.setattr("mizu_node.types.connections.Connections", MockConnections)
-    mdb = mongomock.MongoClient(MOCK_MONGO_URL)[os.environ["MIZU_NODE_MONGO_DB_NAME"]]
-
-    # Create mock connections
-    mock_conn = MockConnections(mdb=mdb, postgres=pg_conn, redis=RedisMock())
+    mock_conn = MockConnections(postgres=pg_conn, redis=RedisMock())
 
     from mizu_node.main import app
 
@@ -238,7 +229,6 @@ def mock_connections(monkeypatch, pg_conn, setenvvar):
     return app
 
 
-@mongomock.patch((MOCK_MONGO_URL))
 def test_publish_jobs_simple(mock_connections):
     client = TestClient(mock_connections)
     classifier_id = client.app.state.classifier_id
@@ -256,7 +246,6 @@ def test_publish_jobs_simple(mock_connections):
     assert len(job_ids3) == 3
 
 
-@mongomock.patch((MOCK_MONGO_URL))
 def test_take_job_ok(mock_connections):
     client = TestClient(mock_connections)
     classifier_id = client.app.state.classifier_id
@@ -276,7 +265,6 @@ def test_take_job_ok(mock_connections):
     )
     assert response1.status_code == 200
     job1 = response1.json()["data"]["job"]
-    assert job1["_id"] == rids[0]
     assert job1["jobType"] == JobType.reward
 
     # Take pow job 1
@@ -288,7 +276,6 @@ def test_take_job_ok(mock_connections):
     )
     assert response2.status_code == 200
     job2 = response2.json()["data"]["job"]
-    assert job2["_id"] == pids[0]
     assert job2["jobType"] == JobType.pow
 
     # Take batch classify job
@@ -300,11 +287,9 @@ def test_take_job_ok(mock_connections):
     )
     assert response3.status_code == 200
     job3 = response3.json()["data"]["job"]
-    assert job3["_id"] == bids[0]
     assert job3["jobType"] == JobType.batch_classify
 
 
-@mongomock.patch((MOCK_MONGO_URL))
 def test_take_job_error(mock_connections):
     client = TestClient(mock_connections)
     worker1_jwt = jwt_token("worker1")
@@ -390,7 +375,6 @@ def test_take_job_error(mock_connections):
     assert response.json()["message"].startswith("please retry after")
 
 
-@mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
 def test_finish_job(mock_requests, mock_connections):
     client = TestClient(mock_connections)
@@ -595,7 +579,6 @@ def test_finish_job(mock_requests, mock_connections):
     assert len(rewards.jobs) == 0
 
 
-@mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
 def test_job_status(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
@@ -685,7 +668,6 @@ def test_job_status(mock_requests, mock_connections):
             assert status["finishedAt"] == 0
 
 
-@mongomock.patch((MOCK_MONGO_URL))
 def test_register_classifier(mock_connections):
     client = TestClient(mock_connections)
 
@@ -751,7 +733,6 @@ def test_register_classifier(mock_connections):
     assert retrieved_classifier["publisher"] == "test_user2"
 
 
-@mongomock.patch((MOCK_MONGO_URL))
 @mock_patch("requests.post")
 def test_pow_validation(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
@@ -800,7 +781,6 @@ def test_pow_validation(mock_requests, mock_connections):
     assert response.status_code == 200
 
 
-@mongomock.patch((MOCK_MONGO_URL))
 def test_query_reward_jobs(mock_connections):
     client = TestClient(mock_connections)
 

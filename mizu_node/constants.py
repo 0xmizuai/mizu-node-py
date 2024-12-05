@@ -5,11 +5,6 @@ COOLDOWN_WORKER_EXPIRE_TTL_SECONDS = int(
     os.environ.get("COOLDOWN_WORKER_EXPIRE_TTL_SECONDS", 5)
 )
 
-# mongodb for finished jobs
-API_KEY_COLLECTION = "api_keys"
-JOBS_COLLECTION = "jobs"
-CLASSIFIER_COLLECTION = "classifiers"
-
 R2_DATA_PREFIX = "https://rawdata.mizu.technology"
 
 DEFAULT_POW_DIFFICULTY = int(os.environ.get("DEFAULT_POW_DIFFICULTY", 4))

@@ -25,12 +25,6 @@ class JobStatus(int, Enum):
     error = 3
 
 
-class JobStatusLegacy(int, Enum):
-    pending = 0
-    finished = 1
-    error = 2
-
-
 class ErrorCode(int, Enum):
     reserved = 0
     max_retry_exceeded = 1
@@ -168,54 +162,3 @@ class WorkerJobResult(DataJobResultWithValidator):
     model_config = ConfigDict(populate_by_name=True)
 
     job_id: str | int = Field(alias="_id")
-
-
-##################################### Client Data Type End ##############################################
-
-
-##################################### MONGODB Data Type Start ###########################################
-
-
-class DataJobInputNoId(DataJobContextWithValidator):
-    model_config = ConfigDict(populate_by_name=True)
-
-    status: JobStatus = Field(default=JobStatus.pending)
-    published_at: int = Field(alias="publishedAt")
-    publisher: str
-
-
-class DataJobResultNoId(DataJobResultWithValidator):
-    model_config = ConfigDict(populate_by_name=True)
-
-    status: JobStatus
-    finished_at: int = Field(alias="finishedAt")
-    worker: str
-
-
-class DataJobQueryResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    job_id: str | int = Field(alias="_id")
-    job_type: JobType = Field(alias="jobType")
-    context: DataJobContext
-    result: DataJobResult | None = Field(default=None)
-    status: JobStatus = Field(default=JobStatus.pending)
-    worker: Optional[str] = Field(default=None)
-    finished_at: Optional[int] = Field(alias="finishedAt", default=None)
-
-
-##################################### MONGODB Data Type End ############################################
-
-
-class RewardJobRecord(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    job_id: str | int = Field(alias="_id")
-    assigned_at: int = Field(alias="assignedAt")
-    reward_ctx: RewardContext = Field(alias="rewardCtx")
-
-
-class RewardJobRecords(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    jobs: list[RewardJobRecord] = Field(default=[])

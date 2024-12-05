@@ -2,7 +2,6 @@ from hashlib import sha512
 import logging
 import os
 
-from bson import ObjectId
 from prometheus_client import Counter, Histogram
 from pydantic import BaseModel
 from redis import Redis
@@ -11,10 +10,9 @@ import requests
 
 
 from mizu_node.db.classifier import list_configs
-from mizu_node.common import epoch, epoch_ms
+from mizu_node.common import epoch_ms
 from mizu_node.constants import (
     DEFAULT_POW_DIFFICULTY,
-    JOBS_COLLECTION,
     LATENCY_BUCKETS,
     MAX_RETRY_ALLOWED,
     MIZU_ADMIN_USER,
@@ -30,15 +28,11 @@ from mizu_node.stats import (
     total_mined_points_in_past_n_hour_per_worker,
     try_remove_reward_record,
 )
-from mizu_node.types.job_queue_legacy import job_queue_legacy
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     BatchClassifyContext,
     DataJobContext,
-    DataJobInputNoId,
-    DataJobQueryResult,
     DataJobResult,
-    DataJobResultNoId,
     ErrorCode,
     ErrorResult,
     JobStatus,
@@ -54,7 +48,7 @@ from mizu_node.db.job_queue import (
     lease_job,
     queue_len,
 )
-from mizu_node.types.service import SettleRewardRequest
+from mizu_node.types.service import DataJobQueryResult, SettleRewardRequest
 from psycopg2.extensions import connection
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
@@ -158,11 +152,6 @@ HANDLE_FINISH_JOB_LATENCY = Histogram(
     buckets=LATENCY_BUCKETS,
 )
 
-HANDLE_FINISH_JOB_LEGACY_COUNTER = Counter(
-    "handle_finish_job_legacy",
-    "total requests of handle_finish_job_legacy function",
-)
-
 HANDLE_FINISH_JOB_404_COUNTER = Counter(
     "handle_finish_job_404",
     "total requests of handle_finish_job 404 cases",
@@ -176,10 +165,6 @@ def handle_finish_job(
     start_time = epoch_ms()
     job_type = job_result.job_type
     try:
-        if job_result.job_type == JobType.reward and len(str(job_result.job_id)) == 24:
-            HANDLE_FINISH_JOB_LEGACY_COUNTER.inc()
-            return handle_finish_job_legacy(conn, worker, job_result)
-
         with conn.get_pg_connection() as pg_conn:
             job_id = int(job_result.job_id)
             ctx, assigner = get_job_lease(pg_conn, job_id, job_type)
@@ -233,67 +218,6 @@ def handle_finish_job(
             HANDLE_FINISH_JOB_404_COUNTER.inc()
             if job_type == JobType.reward:
                 try_remove_reward_record(conn.redis, worker, job_result.job_id)
-        raise e
-
-
-# TODO: remove this after migration
-def handle_finish_job_legacy(
-    conn: Connections, worker: str, job_result: WorkerJobResult
-) -> float:
-    reward_points = 0
-    job_type = job_result.job_type
-    try:
-        doc = conn.mdb[JOBS_COLLECTION].find_one({"_id": ObjectId(job_result.job_id)})
-        if doc is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="job not found"
-            )
-
-        if (
-            job_queue_legacy(job_type).get_lease(conn.redis, job_result.job_id)
-            != worker
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
-            )
-        parsed = DataJobInputNoId.model_validate(doc)
-        job_status = _validate_job_result(parsed, job_result)
-        if job_status == JobStatus.finished:
-            settle_reward = _calculate_reward(conn.redis, worker, parsed, job_result)
-            response = requests.post(
-                os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
-                json=settle_reward.model_dump(exclude_none=True),
-                headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
-            )
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"failed to settle reward",
-                )
-            if settle_reward.token is None:
-                reward_points = float(settle_reward.amount)
-
-        if job_type == JobType.reward:
-            record_claim_event(conn.redis, worker, job_result.job_id, parsed.reward_ctx)
-        elif reward_points > 0:
-            record_mined_points(conn.redis, worker, reward_points)
-
-        conn.mdb[JOBS_COLLECTION].update_one(
-            {"_id": ObjectId(job_result.job_id)},
-            {
-                "$set": DataJobResultNoId(
-                    worker=worker,
-                    finished_at=epoch(),
-                    status=job_status,
-                    **job_result.model_dump(by_alias=True, exclude=set(["job_id"])),
-                ).model_dump(by_alias=True),
-            },
-        )
-        job_queue_legacy(job_type).complete(conn.redis, job_result.job_id)
-        return reward_points
-    except HTTPException as e:
-        if job_type == JobType.reward and e.status_code == status.HTTP_404_NOT_FOUND:
-            try_remove_reward_record(conn.redis, worker, job_result.job_id)
         raise e
 
 

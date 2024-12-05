@@ -15,11 +15,11 @@ from mizu_node.db.common import with_transaction
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     DataJobContext,
-    DataJobQueryResult,
     DataJobResult,
     JobStatus,
     JobType,
 )
+from mizu_node.types.service import DataJobQueryResult
 
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level

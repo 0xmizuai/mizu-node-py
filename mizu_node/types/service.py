@@ -4,7 +4,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from mizu_node.types.classifier import ClassifierConfig
 from mizu_node.types.data_job import (
     BatchClassifyContext,
-    DataJobQueryResult,
+    DataJobContext,
+    DataJobResult,
+    JobStatus,
     JobType,
     PowContext,
     RewardContext,
@@ -54,6 +56,18 @@ class PublishJobResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     job_ids: list[int] = Field(alias="jobIds")
+
+
+class DataJobQueryResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str | int = Field(alias="_id")
+    job_type: JobType = Field(alias="jobType")
+    context: DataJobContext
+    result: DataJobResult | None = Field(default=None)
+    status: JobStatus = Field(default=JobStatus.pending)
+    worker: Optional[str] = Field(default=None)
+    finished_at: Optional[int] = Field(alias="finishedAt", default=None)
 
 
 class QueryJobResponse(BaseModel):
@@ -108,3 +122,17 @@ class CooldownConfig:
     def __init__(self, interval: int, limit: int):
         self.interval = interval
         self.limit = limit
+
+
+class RewardJobRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_id: str | int = Field(alias="_id")
+    assigned_at: int = Field(alias="assignedAt")
+    reward_ctx: RewardContext = Field(alias="rewardCtx")
+
+
+class RewardJobRecords(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    jobs: list[RewardJobRecord] = Field(default=[])
