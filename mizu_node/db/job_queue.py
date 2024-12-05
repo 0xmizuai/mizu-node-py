@@ -19,7 +19,7 @@ from mizu_node.types.data_job import (
     JobStatus,
     JobType,
 )
-from mizu_node.types.service import DataJobQueryResult
+from mizu_node.types.service import DataJobQueryResult, RewardJobRecord
 
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
@@ -230,6 +230,59 @@ def get_jobs_info(db: connection, item_ids: list[int]) -> list[DataJobQueryResul
         ]
 
 
+@with_transaction
+def get_reward_jobs_stats(db: connection, worker: str) -> Tuple[int, int | None]:
+    """Get count and last assigned time of rewarding jobs for a worker.
+
+    Returns:
+        Tuple of (count, last_assigned_at)
+        last_assigned_at will be None if no jobs exist
+    """
+    with db.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    COUNT(*) as job_count,
+                    MAX(assigned_at) as last_assigned_at
+                FROM job_queue
+                WHERE job_type = %s
+                AND status = %s
+                AND worker = %s
+                """
+            ),
+            (JobType.reward, JobStatus.processing, worker),
+        )
+        count, last_assigned = cur.fetchone()
+        return count, last_assigned
+
+
+@with_transaction
+def get_assigned_reward_jobs(db: connection, worker: str) -> list[RewardJobRecord]:
+    with db.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT id, assigned_at, reward_ctx
+                FROM job_queue
+                WHERE job_type = %s
+                AND status = %s
+                AND worker = %s
+                """
+            ),
+            (JobType.reward, JobStatus.processing, worker),
+        )
+        return [
+            RewardJobRecord(
+                job_id=row[0],
+                assigned_at=row[1],
+                reward_ctx=DataJobContext.model_validate(row[2]).reward_ctx,
+            )
+            for row in cur.fetchall()
+        ]
+
+
+@with_transaction
 def get_job_info_raw(db: connection, id: int) -> list[Tuple[Any, ...]]:
     with db.cursor() as cur:
         cur.execute(sql.SQL("SELECT * FROM job_queue WHERE id = %s"), (id,))

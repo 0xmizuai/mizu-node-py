@@ -11,11 +11,13 @@ from mizu_node.stats import (
     rate_limit_field,
 )
 from mizu_node.types.data_job import (
+    JobStatus,
     JobType,
     RewardContext,
 )
-from mizu_node.types.service import RewardJobRecord, RewardJobRecords
+from mizu_node.types.service import RewardJobRecord, QueryRewardJobsResponse
 from tests.redis_mock import RedisMock
+from psycopg2.extensions import connection
 
 
 def block_worker(rclient: RedisMock, worker: str):
@@ -43,16 +45,37 @@ def set_reward_stats(rclient: RedisMock, worker: str):
     rclient.hmset(event_name(worker), {k: "200" for k in keys})
 
 
-def set_unclaimed_reward(r_client, worker: str, total: int = 5):
-    jobs = [
-        RewardJobRecord(
-            job_id="0x123", reward_ctx=RewardContext(amount=100), assigned_at=epoch()
+def set_unclaimed_reward(pg_conn: connection, worker: str, total: int = 5):
+    """Insert reward jobs into job_queue table."""
+    with pg_conn.cursor() as cur:
+        # Prepare batch insert values
+        current_time = epoch()
+        values = [
+            (
+                JobType.reward,
+                JobStatus.processing,  # or 'pending' based on your needs
+                worker,
+                current_time,  # assigned_at
+                current_time + 3600,  # lease_expired_at (1 hour TTL)
+                current_time,  # published_at
+                0,  # retry count
+                RewardContext(amount=100).model_dump_json(),  # ctx as JSON
+            )
+            for _ in range(total)
+        ]
+
+        # Batch insert
+        cur.executemany(
+            """
+            INSERT INTO job_queue (
+                job_type, status, worker,
+                assigned_at, lease_expired_at, published_at,
+                retry, ctx
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            values,
         )
-        for _ in range(total)
-    ]
-    r_client.hset(
-        event_name(worker), REWARD_FIELD, RewardJobRecords(jobs=jobs).model_dump_json()
-    )
+        pg_conn.commit()
 
 
 def set_cooldown(rclient: RedisMock, worker: str, job_type: JobType):

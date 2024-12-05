@@ -38,7 +38,7 @@ from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobResponse,
     RegisterClassifierRequest,
-    RewardJobRecords,
+    QueryRewardJobsResponse,
 )
 from tests.redis_mock import RedisMock
 
@@ -821,7 +821,7 @@ def test_query_reward_jobs(mock_connections):
         headers={"Authorization": f"Bearer {worker1_jwt}"},
     )
     assert response.status_code == 200
-    records = RewardJobRecords.model_validate(response.json()["data"])
+    records = QueryRewardJobsResponse.model_validate(response.json()["data"])
     assert len(records.jobs) == 2
     for job in records.jobs:
         assert job.job_id in job_ids

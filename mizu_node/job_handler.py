@@ -24,9 +24,7 @@ from mizu_node.security import (
 from mizu_node.stats import (
     record_claim_event,
     record_mined_points,
-    record_reward_event,
     total_mined_points_in_past_n_hour_per_worker,
-    try_remove_reward_record,
 )
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
@@ -106,12 +104,12 @@ def handle_take_job(
     conn: Connections, worker: str, job_type: JobType
 ) -> WorkerJob | None:
     start_time = epoch_ms()
-    validate_worker(conn.redis, worker, job_type)
-    HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "validate").observe(
-        epoch_ms() - start_time
-    )
-    after_validation = epoch_ms()
     with conn.get_pg_connection() as pg_conn:
+        validate_worker(conn.redis, pg_conn, worker, job_type)
+        HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "validate").observe(
+            epoch_ms() - start_time
+        )
+        after_validation = epoch_ms()
         result = lease_job(pg_conn, job_type, get_lease_ttl(job_type), worker)
         HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
             epoch_ms() - after_validation
@@ -140,8 +138,6 @@ def handle_take_job(
                 job_type=job_type,
                 **ctx.model_dump(exclude_none=True),
             )
-            if job_type == JobType.reward:
-                record_reward_event(conn.redis, worker, job)
             return job
 
 
@@ -164,61 +160,54 @@ def handle_finish_job(
     reward_points = 0
     start_time = epoch_ms()
     job_type = job_result.job_type
-    try:
-        with conn.get_pg_connection() as pg_conn:
-            job_id = int(job_result.job_id)
-            ctx, assigner = get_job_lease(pg_conn, job_id, job_type)
-            if assigner != worker:
+    with conn.get_pg_connection() as pg_conn:
+        job_id = int(job_result.job_id)
+        ctx, assigner = get_job_lease(pg_conn, job_id, job_type)
+        if assigner != worker:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
+            )
+        job_status = _validate_job_result(ctx, job_result)
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "validate").observe(
+            epoch_ms() - start_time
+        )
+        after_validation = epoch_ms()
+        if job_status == JobStatus.finished:
+            settle_reward = _calculate_reward(conn.redis, worker, ctx, job_result)
+            response = requests.post(
+                os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
+                json=settle_reward.model_dump(exclude_none=True),
+                headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
+            )
+            if response.status_code != 200:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"failed to settle reward",
                 )
-            job_status = _validate_job_result(ctx, job_result)
-            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "validate").observe(
-                epoch_ms() - start_time
-            )
-            after_validation = epoch_ms()
-            if job_status == JobStatus.finished:
-                settle_reward = _calculate_reward(conn.redis, worker, ctx, job_result)
-                response = requests.post(
-                    os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
-                    json=settle_reward.model_dump(exclude_none=True),
-                    headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
-                )
-                if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"failed to settle reward",
-                    )
-                if settle_reward.token is None:
-                    reward_points = float(settle_reward.amount)
-                HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "settle").observe(
-                    epoch_ms() - after_validation
-                )
-
-            after_settle_reward = epoch_ms()
-            if job_type == JobType.reward:
-                record_claim_event(conn.redis, worker, job_id, ctx.reward_ctx)
-            elif reward_points > 0:
-                record_mined_points(conn.redis, worker, reward_points)
-            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
-                epoch_ms() - after_settle_reward
+            if settle_reward.token is None:
+                reward_points = float(settle_reward.amount)
+            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "settle").observe(
+                epoch_ms() - after_validation
             )
 
-            after_record = epoch_ms()
-            job_result_to_save = DataJobResult.model_validate(
-                job_result.model_dump(exclude_none=True, exclude={"job_id", "job_type"})
-            )
-            complete_job(pg_conn, job_result.job_id, job_status, job_result_to_save)
-            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
-                epoch_ms() - after_record
-            )
-            return reward_points
-    except HTTPException as e:
-        if e.status_code == status.HTTP_404_NOT_FOUND:
-            HANDLE_FINISH_JOB_404_COUNTER.inc()
-            if job_type == JobType.reward:
-                try_remove_reward_record(conn.redis, worker, job_result.job_id)
-        raise e
+        after_settle_reward = epoch_ms()
+        if job_type == JobType.reward:
+            record_claim_event(conn.redis, worker, job_id, ctx.reward_ctx)
+        elif reward_points > 0:
+            record_mined_points(conn.redis, worker, reward_points)
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
+            epoch_ms() - after_settle_reward
+        )
+
+        after_record = epoch_ms()
+        job_result_to_save = DataJobResult.model_validate(
+            job_result.model_dump(exclude_none=True, exclude={"job_id", "job_type"})
+        )
+        complete_job(pg_conn, job_result.job_id, job_status, job_result_to_save)
+        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
+            epoch_ms() - after_record
+        )
+        return reward_points
 
 
 def handle_queue_len(pg_conn: connection, job_type: JobType) -> int:

@@ -132,7 +132,7 @@ class RewardJobRecord(BaseModel):
     reward_ctx: RewardContext = Field(alias="rewardCtx")
 
 
-class RewardJobRecords(BaseModel):
+class QueryRewardJobsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     jobs: list[RewardJobRecord] = Field(default=[])

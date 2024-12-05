@@ -15,9 +15,8 @@ from mizu_node.constants import (
 import jwt
 
 from mizu_node.db.api_key import get_user_id
+from mizu_node.db.job_queue import get_reward_jobs_stats
 from mizu_node.stats import (
-    LAST_REWARDED_AT_FIELD,
-    REWARD_FIELD,
     event_name,
     mined_per_day_field,
     rate_limit_field,
@@ -25,7 +24,7 @@ from mizu_node.stats import (
 from mizu_node.types.data_job import (
     JobType,
 )
-from mizu_node.types.service import CooldownConfig, RewardJobRecords
+from mizu_node.types.service import CooldownConfig
 from psycopg2.extensions import connection
 
 ALGORITHM = "EdDSA"
@@ -65,14 +64,15 @@ def verify_api_key(pg_conn: connection, token: str) -> str:
     return user_id
 
 
-def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
+def validate_worker(
+    redis: Redis, pg_conn: connection, worker: str, job_type: JobType
+) -> bool:
     rate_limit_key = rate_limit_field(job_type)
     fields = [BLOCKED_FIELD, rate_limit_key]
     day = epoch() // 86400
     if job_type == JobType.reward:
-        fields.extend([REWARD_FIELD, LAST_REWARDED_AT_FIELD])
         fields.extend([mined_per_day_field(day - i) for i in range(0, 7)])
-    values = r_client.hmget(event_name(worker), fields)
+    values = redis.hmget(event_name(worker), fields)
 
     # check if worker is blocked
     if values[0] is not None:
@@ -92,33 +92,19 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             detail=f"please retry after {config.interval} seconds",
         )
     request_ts.append(str(now))
-    r_client.hset(event_name(worker), rate_limit_key, ",".join(request_ts))
+    redis.hset(event_name(worker), rate_limit_key, ",".join(request_ts))
 
     if job_type == JobType.reward:
-        parsed_rewards = (
-            RewardJobRecords.model_validate_json(values[2])
-            if values[2]
-            else RewardJobRecords()
-        )
-        valid_jobs = [
-            r for r in parsed_rewards.jobs if r.assigned_at + REWARD_TTL > epoch()
-        ]
-        if len(valid_jobs) != len(parsed_rewards.jobs):
-            parsed_rewards.jobs = valid_jobs
-            r_client.hset(
-                event_name(worker), REWARD_FIELD, parsed_rewards.model_dump_json()
-            )
-
         # check total unclaimed rewards
-        if len(valid_jobs) >= MAX_UNCLAIMED_REWARD:
+        count, last_assigned = get_reward_jobs_stats(pg_conn, worker)
+        if count >= MAX_UNCLAIMED_REWARD:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="unclaimed reward limit reached",
             )
 
         # check last rewarded time
-        last_reward_ts = int(values[3] or "0")
-        if last_reward_ts + MIN_REWARD_GAP > epoch():
+        if last_assigned and last_assigned + MIN_REWARD_GAP > epoch():
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"please retry after {MIN_REWARD_GAP} seconds",
@@ -129,7 +115,7 @@ def validate_worker(r_client: Redis, worker: str, job_type: JobType) -> bool:
             "ENABLE_ACTIVE_USER_CHECK", "false"
         ).lower()
         if enable_active_user_check == "true" and all(
-            [float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[4:]]
+            [float(v or 0) < ACTIVE_USER_PAST_7D_THRESHOLD for v in values[2:]]
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

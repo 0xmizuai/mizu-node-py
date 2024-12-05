@@ -30,7 +30,6 @@ from mizu_node.security import (
     verify_api_key,
 )
 from mizu_node.stats import (
-    get_valid_rewards,
     total_mined_points_in_past_n_days,
     total_mined_points_in_past_n_days_per_worker,
     total_mined_points_in_past_n_hour,
@@ -55,7 +54,7 @@ from mizu_node.types.service import (
     RegisterClassifierResponse,
     TakeJobResponse,
 )
-from mizu_node.db.job_queue import clear_jobs, queue_clean
+from mizu_node.db.job_queue import clear_jobs, get_assigned_reward_jobs, queue_clean
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -212,8 +211,9 @@ def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publishe
 @app.get("/reward_jobs")
 @error_handler
 def query_reward_jobs(user: str = Depends(get_user)):
-    rewards = get_valid_rewards(app.state.conn.redis, user)
-    return build_ok_response(rewards)
+    with app.state.conn.get_pg_connection() as db:
+        jobs = get_assigned_reward_jobs(db, user)
+        return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
 
 
 TAKE_JOB = Counter("take_job", "# of take_job requests per job_type", ["job_type"])
