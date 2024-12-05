@@ -207,7 +207,7 @@ def handle_finish_job(
         HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
             epoch_ms() - after_record
         )
-        return reward_points
+    return reward_points
 
 
 def handle_queue_len(pg_conn: connection, job_type: JobType) -> int:
