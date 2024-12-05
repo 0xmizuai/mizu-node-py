@@ -236,14 +236,15 @@ def _validate_job_result(ctx: DataJobContext, result: WorkerJobResult) -> JobSta
         return JobStatus.error
 
     if result.job_type == JobType.pow:
-        hash_output = sha512(
-            (ctx.pow_ctx.seed + result.pow_result).encode("utf-8")
-        ).hexdigest()
-        if not all(b == "0" for b in hash_output[:DEFAULT_POW_DIFFICULTY]):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="invalid pow_result: hash does not meet difficulty requirement",
-            )
+        if os.environ.get("POW_VALIDATION_ENABLED", "true") == "true":
+            hash_output = sha512(
+                (ctx.pow_ctx.seed + result.pow_result).encode("utf-8")
+            ).hexdigest()
+            if not all(b == "0" for b in hash_output[:DEFAULT_POW_DIFFICULTY]):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="invalid pow_result: hash does not meet difficulty requirement",
+                )
     elif result.job_type == JobType.batch_classify:
         result.batch_classify_result = [
             result for result in result.batch_classify_result if len(result.labels) > 0
