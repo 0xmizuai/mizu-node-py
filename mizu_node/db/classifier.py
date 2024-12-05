@@ -79,6 +79,31 @@ def list_configs(db: connection, ids: list[int]) -> list[ClassifierConfig]:
 
 
 @with_transaction
+def list_owned_configs(db: connection, publisher: str) -> list[ClassifierConfig]:
+    with db.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT name, embedding_model, labels, publisher
+                FROM classifier_config
+                WHERE publisher = %s
+                ORDER BY created_at DESC
+                """
+            ),
+            (publisher,),
+        )
+        return [
+            ClassifierConfig(
+                name=row[0],
+                embeddingModel=row[1],
+                labels=row[2]["labels"],
+                publisher=row[3],
+            )
+            for row in cur.fetchall()
+        ]
+
+
+@with_transaction
 def delete_config(db: connection, id: int) -> bool:
     with db.cursor() as cur:
         cur.execute(

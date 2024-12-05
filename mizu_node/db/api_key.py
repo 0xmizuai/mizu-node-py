@@ -45,7 +45,7 @@ def get_user_id(db: connection, token: str) -> Optional[str]:
 
 
 @with_transaction
-def list_keys(
+def list_owned_keys(
     db: connection,
     user_id: str,
     include_inactive: bool = False,

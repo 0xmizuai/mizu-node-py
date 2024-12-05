@@ -6,14 +6,15 @@ from typing import Iterator
 import zlib
 
 import boto3
+import psycopg2
 from pymongo import MongoClient
 import requests
 
 from mizu_node.common import epoch
 from mizu_node.constants import (
-    API_KEY_COLLECTION,
     R2_DATA_PREFIX,
 )
+from mizu_node.db.api_key import list_owned_keys
 from mizu_node.types.data_job import (
     BatchClassifyContext,
     JobType,
@@ -35,16 +36,13 @@ from scripts.models import ClientJobRecord, WetMetadata
 CC_MONGO_URL = os.environ["CC_MONGO_URL"]
 CC_MONGO_DB_NAME = "commoncrawl"
 
-MIZU_NODE_MONGO_URL = os.environ["MIZU_NODE_MONGO_URL"]
-
 
 def get_api_key(user: str):
-    mclient = MongoClient(MIZU_NODE_MONGO_URL)
-    api_keys = mclient[MIZU_NODE_MONGO_DB_NAME][API_KEY_COLLECTION]
-    doc = api_keys.find_one({"user": user})
-    if doc is None:
-        raise ValueError(f"User {user} not found")
-    return doc["api_key"]
+    with psycopg2.connect(os.environ["POSTGRES_URL"]) as pg_conn:
+        api_keys = list_owned_keys(pg_conn, user)
+        if len(api_keys) == 0:
+            raise ValueError(f"User {user} not found")
+        return api_keys[0]["token"]
 
 
 class CommonCrawlDataJobPublisher(threading.Thread):
@@ -66,7 +64,7 @@ class CommonCrawlDataJobPublisher(threading.Thread):
         self.max_processed_jobs = max_processed_jobs
         self.classifier_id = classifier_id
         self.cool_down = cool_down
-        self.mclient = MongoClient(MIZU_NODE_MONGO_URL)
+        self.mclient = MongoClient(os.environ["MIZU_NODE_MONGO_URL"])
         self.jobs_coll = self.mclient[MIZU_NODE_MONGO_DB_NAME][
             PUBLISHED_JOBS_COLLECTION
         ]

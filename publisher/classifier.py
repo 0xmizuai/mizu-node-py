@@ -1,9 +1,9 @@
 import os
-from mongomock import MongoClient
+import psycopg2
 import requests
-from mizu_node.constants import CLASSIFIER_COLLECTION, MIZU_NODE_MONGO_DB_NAME
+from mizu_node.db.classifier import list_owned_configs
 from mizu_node.types.classifier import ClassifierConfig, DataLabel
-from publisher.batch_classify import MIZU_NODE_MONGO_URL, get_api_key
+from publisher.batch_classify import get_api_key
 
 
 def register_classifier(user: str):
@@ -44,15 +44,12 @@ def register_classifier(user: str):
 
 
 def list_classifiers(user: str):
-    mclient = MongoClient(MIZU_NODE_MONGO_URL)
-    classifiers = mclient[MIZU_NODE_MONGO_DB_NAME][CLASSIFIER_COLLECTION]
-    docs = list(classifiers.find({"publisher": user}))
-    for doc in docs:
-        config = ClassifierConfig(**doc)
-        print(f"\nClassifier ID: {doc['_id']}")
-        print(f"Name: {config.name}")
-        print(f"Embedding Model: {config.embedding_model}")
-        print("\nLabels:")
-        for label in config.labels:
-            print(f"  • {label.label}: {label.description}")
+    with psycopg2.connect(os.environ["POSTGRES_URL"]) as conn:
+        configs = list_owned_configs(conn, user)
+        for config in configs:
+            print(f"Name: {config.name}")
+            print(f"Embedding Model: {config.embedding_model}")
+            print("\nLabels:")
+            for label in config.labels:
+                print(f"  • {label.label}: {label.description}")
         print("-" * 80)
