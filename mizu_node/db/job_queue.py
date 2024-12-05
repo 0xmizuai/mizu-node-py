@@ -264,7 +264,7 @@ def get_assigned_reward_jobs(db: connection, worker: str) -> list[RewardJobRecor
         cur.execute(
             sql.SQL(
                 """
-                SELECT id, assigned_at, ctx
+                SELECT id, assigned_at, lease_expired_at, ctx
                 FROM job_queue
                 WHERE job_type = %s
                 AND status = %s
@@ -279,7 +279,8 @@ def get_assigned_reward_jobs(db: connection, worker: str) -> list[RewardJobRecor
             RewardJobRecord(
                 job_id=row[0],
                 assigned_at=row[1],
-                reward_ctx=DataJobContext.model_validate(row[2]).reward_ctx,
+                lease_expired_at=row[2],
+                reward_ctx=DataJobContext.model_validate(row[3]).reward_ctx,
             )
             for row in cur.fetchall()
         ]

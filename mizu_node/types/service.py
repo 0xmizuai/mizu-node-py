@@ -129,6 +129,7 @@ class RewardJobRecord(BaseModel):
 
     job_id: str | int = Field(alias="_id")
     assigned_at: int = Field(alias="assignedAt")
+    lease_expired_at: int = Field(alias="leaseExpiredAt")
     reward_ctx: RewardContext = Field(alias="rewardCtx")
 
 
