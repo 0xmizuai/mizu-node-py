@@ -192,7 +192,7 @@ def handle_finish_job(
 
         after_settle_reward = epoch_ms()
         if job_type == JobType.reward:
-            record_claim_event(conn.redis, worker, job_id, ctx.reward_ctx)
+            record_claim_event(conn.redis, ctx.reward_ctx)
         elif reward_points > 0:
             record_mined_points(conn.redis, worker, reward_points)
         HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
