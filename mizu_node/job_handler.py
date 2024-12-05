@@ -154,6 +154,18 @@ HANDLE_FINISH_JOB_404_COUNTER = Counter(
 )
 
 
+def build_data_job_result(job_result: WorkerJobResult) -> DataJobResult:
+    if job_result.error_result is not None:
+        return DataJobResult(error_result=job_result.error_result)
+    if job_result.job_type == JobType.reward:
+        return DataJobResult(reward_result=job_result.reward_result)
+    elif job_result.job_type == JobType.pow:
+        return DataJobResult(pow_result=job_result.pow_result)
+    elif job_result.job_type == JobType.batch_classify:
+        return DataJobResult(batch_classify_result=job_result.batch_classify_result)
+    raise ValueError(f"unsupported job type: {job_result.job_type}")
+
+
 def handle_finish_job(
     conn: Connections, worker: str, job_result: WorkerJobResult
 ) -> float:
@@ -200,10 +212,9 @@ def handle_finish_job(
         )
 
         after_record = epoch_ms()
-        job_result_to_save = DataJobResult.model_validate(
-            job_result.model_dump(exclude_none=True, exclude={"job_id", "job_type"})
+        complete_job(
+            pg_conn, job_result.job_id, job_status, build_data_job_result(job_result)
         )
-        complete_job(pg_conn, job_result.job_id, job_status, job_result_to_save)
         HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
             epoch_ms() - after_record
         )
