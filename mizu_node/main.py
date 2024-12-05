@@ -50,6 +50,7 @@ from mizu_node.types.service import (
     QueryJobResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
+    QueryRewardJobsResponse,
     RegisterClassifierRequest,
     RegisterClassifierResponse,
     TakeJobResponse,

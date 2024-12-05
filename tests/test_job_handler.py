@@ -14,9 +14,8 @@ from mizu_node.common import epoch
 
 from mizu_node.db.api_key import create_api_key
 from mizu_node.db.common import initiate_pg_db
-from mizu_node.db.job_queue import delete_one_job
+from mizu_node.db.job_queue import delete_one_job, get_assigned_reward_jobs
 from mizu_node.db.job_queue import get_jobs_info
-from mizu_node.stats import get_valid_rewards
 from mizu_node.types.classifier import (
     ClassifierConfig,
     ClassifyResult,
@@ -549,8 +548,8 @@ def test_finish_job(mock_requests, mock_connections):
     )
     assert response.status_code == 200
     job_id = response.json()["data"]["job"]["_id"]
-    rewards = get_valid_rewards(mock_connections.state.conn.redis, "worker4")
-    assert len(rewards.jobs) == 1
+    rewards = get_assigned_reward_jobs(mock_connections.state.conn.postgres, "worker4")
+    assert len(rewards) == 1
 
     # Manually expire the job in postgres by setting expired_at to a past time
     with closing(mock_connections.state.conn.postgres.cursor()) as cur:
@@ -575,8 +574,8 @@ def test_finish_job(mock_requests, mock_connections):
     assert response.status_code == 404
     assert response.json()["message"] == "lease not exists"
 
-    rewards = get_valid_rewards(mock_connections.state.conn.redis, "worker4")
-    assert len(rewards.jobs) == 0
+    rewards = get_assigned_reward_jobs(mock_connections.state.conn.postgres, "worker4")
+    assert len(rewards) == 0
 
 
 @mock_patch("requests.post")

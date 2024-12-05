@@ -4,18 +4,17 @@ from mizu_node.security import (
     BLOCKED_FIELD,
 )
 from mizu_node.stats import (
-    REWARD_FIELD,
     event_name,
     mined_per_day_field,
     mined_per_hour_field,
     rate_limit_field,
 )
 from mizu_node.types.data_job import (
+    DataJobContext,
     JobStatus,
     JobType,
     RewardContext,
 )
-from mizu_node.types.service import RewardJobRecord, QueryRewardJobsResponse
 from tests.redis_mock import RedisMock
 from psycopg2.extensions import connection
 
@@ -59,7 +58,9 @@ def set_unclaimed_reward(pg_conn: connection, worker: str, total: int = 5):
                 current_time + 3600,  # lease_expired_at (1 hour TTL)
                 current_time,  # published_at
                 0,  # retry count
-                RewardContext(amount=100).model_dump_json(),  # ctx as JSON
+                DataJobContext(
+                    reward_ctx=RewardContext(amount=100)
+                ).model_dump_json(),  # ctx as JSON
             )
             for _ in range(total)
         ]
@@ -76,6 +77,10 @@ def set_unclaimed_reward(pg_conn: connection, worker: str, total: int = 5):
             values,
         )
         pg_conn.commit()
+
+
+def set_one_unclaimed_reward(pg_conn: connection, worker: str):
+    set_unclaimed_reward(pg_conn, worker, 1)
 
 
 def set_cooldown(rclient: RedisMock, worker: str, job_type: JobType):

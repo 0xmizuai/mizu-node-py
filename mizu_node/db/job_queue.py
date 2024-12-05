@@ -249,6 +249,7 @@ def get_reward_jobs_stats(db: connection, worker: str) -> Tuple[int, int | None]
                 WHERE job_type = %s
                 AND status = %s
                 AND worker = %s
+                AND lease_expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
                 """
             ),
             (JobType.reward, JobStatus.processing, worker),
@@ -263,11 +264,12 @@ def get_assigned_reward_jobs(db: connection, worker: str) -> list[RewardJobRecor
         cur.execute(
             sql.SQL(
                 """
-                SELECT id, assigned_at, reward_ctx
+                SELECT id, assigned_at, ctx
                 FROM job_queue
                 WHERE job_type = %s
                 AND status = %s
                 AND worker = %s
+                AND lease_expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
                 """
             ),
             (JobType.reward, JobStatus.processing, worker),
