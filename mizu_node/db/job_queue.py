@@ -49,7 +49,6 @@ def lease_job(
                     FROM job_queue
                     WHERE job_type = %s
                     AND status = %s
-                    ORDER BY published_at ASC
                     LIMIT 100  -- Get a batch of candidates
                 ),
                 selected_job AS (
