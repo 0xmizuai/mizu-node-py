@@ -270,6 +270,7 @@ def get_assigned_reward_jobs(db: connection, worker: str) -> list[RewardJobRecor
                 AND status = %s
                 AND worker = %s
                 AND lease_expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
+                ORDER BY lease_expired_at ASC
                 """
             ),
             (JobType.reward, JobStatus.processing, worker),
