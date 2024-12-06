@@ -75,33 +75,6 @@ USDT_REWARD_CONFIGS = [
         ctx=usdt_ctx(0.03),
         budget=BudgetSetting(unit=3600, unit_name="hour", budget=10),  # 7.2u per day
     ),
-    RewardJobConfig(
-        key="0.1usdt",
-        ctx=usdt_ctx(0.1),
-        budget=BudgetSetting(unit=86400, unit_name="day", budget=20),  # 2u per day
-    ),
-    RewardJobConfig(
-        key="1usdt",
-        ctx=usdt_ctx(1),
-        budget=BudgetSetting(unit=604800, unit_name="week", budget=5),  # 5u per week
-    ),
-    RewardJobConfig(
-        key="5usdt",
-        ctx=usdt_ctx(5),
-        budget=BudgetSetting(unit=604800, unit_name="week", budget=1),  # 5u per week
-    ),
-    RewardJobConfig(
-        key="10usdt",
-        ctx=usdt_ctx(10),
-        budget=BudgetSetting(unit=604800, unit_name="week", budget=1),  # 10u per week
-    ),
-    RewardJobConfig(
-        key="100usdt",
-        ctx=usdt_ctx(100),
-        budget=BudgetSetting(
-            unit=2419200, unit_name="month", budget=1
-        ),  # 100u per month
-    ),
 ]
 
 POINTS_REWARD_CONFIGS = [
