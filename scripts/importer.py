@@ -97,7 +97,7 @@ async def worker(queue: asyncio.Queue, worker_id: int):
             try:
                 response = await asyncio.wait_for(
                     call_http(
-                        f"{WORKER_URL}?filepath={result}&dataset=CC-MAIN-2024-46&enforce=true",
+                        f"{WORKER_URL}?filepath={result}&dataset=CC-MAIN-2024-46",
                     ),
                     timeout=1000,
                 )
@@ -140,7 +140,7 @@ async def worker(queue: asyncio.Queue, worker_id: int):
             queue.task_done()
 
 
-async def run():
+async def run(offset: int = 0):
     url = "https://data.commoncrawl.org/crawl-data/CC-MAIN-2024-46/wet.paths.gz"
     results = await load_filepaths(url)
     print(f"Loaded {len(results)} records")
@@ -153,7 +153,7 @@ async def run():
     workers = [asyncio.create_task(worker(queue, i)) for i in range(num_workers)]
 
     # Add tasks to queue
-    for result in results[1220:]:
+    for result in results[offset:]:
         await queue.put(result)
 
     # Add poison pills to stop workers
@@ -166,8 +166,9 @@ async def run():
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--offset", type=int, default=0)
 args = parser.parse_args()
 
 
 def main():
-    asyncio.run(run())
+    asyncio.run(run(args.offset))
