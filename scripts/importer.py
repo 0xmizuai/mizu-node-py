@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import datetime
 import os
 import gzip
 import io
@@ -14,46 +15,48 @@ R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 CF_KV_NAMESPACE_ID = os.environ["CF_KV_NAMESPACE_ID"]
 CF_KV_API_TOKEN = os.environ["CF_KV_API_TOKEN"]
 
-MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "50"))
-LIMIT_PER_BATCH = 100
-
 WORKER_URL = "https://mizu-importer-0.shu-ecf.workers.dev"
 
 
 async def call_http(
-    url: str, token: str | None = None, max_retries: int = 3, base_delay: float = 1.0
-) -> Optional[dict]:
-    for attempt in range(max_retries):
-        try:
-            if attempt > 0:
-                print(f"Retrying {url}")
-            connector = aiohttp.TCPConnector(limit=50)
-            async with aiohttp.ClientSession(connector=connector) as session:
-                if token:
-                    session.headers["Authorization"] = f"Bearer {token}"
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=1800)
-                ) as response:
-                    response.raise_for_status()  # Raise exception for bad status codes
-                    if response.content_type == "application/json":
-                        return await response.json()
-                    else:
-                        return await response.read()
-        except aiohttp.ClientError as e:
-            if attempt == max_retries - 1:  # Last attempt
-                print(f"Failed to process {url} after {max_retries} attempts:")
-                print(f"Error type: {type(e).__name__}")
-                print(f"Error details: {str(e)}")
-                if isinstance(e, aiohttp.ClientResponseError):
-                    print(f"Status: {e.status}")
-                    print(f"Message: {e.message}")
-                raise e
-            # Calculate exponential backoff with jitter
-            delay = base_delay * (2**attempt) + random.uniform(0, 0.1)
-            print(
-                f"Attempt {attempt + 1} failed for {url} with error code {str(e)}. Retrying in {delay:.2f} seconds..."
-            )
-            await asyncio.sleep(delay)
+    url: str, max_retries: int = 1, base_delay: float = 1.0
+) -> Optional[dict | bytes]:
+    connector = aiohttp.TCPConnector(
+        limit=500, ttl_dns_cache=300, keepalive_timeout=1000
+    )
+    try:
+        async with aiohttp.ClientSession(connector=connector) as session:
+            for attempt in range(max_retries):
+                try:
+                    if attempt > 0:
+                        print(f"Retrying {url}")
+                    async with session.get(
+                        url,
+                        timeout=aiohttp.ClientTimeout(
+                            total=1000, connect=120, sock_connect=60, sock_read=1800
+                        ),
+                    ) as response:
+                        response.raise_for_status()
+                        if response.content_type == "application/json":
+                            return await response.json()
+                        else:
+                            return await response.read()
+                except aiohttp.ClientError as e:
+                    if attempt == max_retries - 1:  # Last attempt
+                        print(f"Failed to process {url} after {max_retries} attempts:")
+                        print(f"Error type: {type(e).__name__}")
+                        print(f"Error details: {str(e)}")
+                        if isinstance(e, aiohttp.ClientResponseError):
+                            print(f"Status: {e.status}")
+                            print(f"Message: {e.message}")
+                        raise e
+                    delay = base_delay * (2**attempt) + random.uniform(0, 0.1)
+                    print(
+                        f"Attempt {attempt + 1} failed for {url}. Retrying in {delay:.2f} seconds..."
+                    )
+                    await asyncio.sleep(delay)
+    finally:
+        await connector.close()
 
 
 async def load_filepaths(url: str) -> list[dict]:
@@ -88,41 +91,50 @@ async def worker(queue: asyncio.Queue, worker_id: int):
             if result is None:  # Poison pill to stop worker
                 break
 
-            print(f"Worker {worker_id} processing {result}")
-            while True:
-                response = await call_http(
-                    f"{WORKER_URL}?filepath={result}&dataset=CC-MAIN-2024-46"
+            print(
+                f"Worker {worker_id} processing {result} at {datetime.datetime.now()}"
+            )
+            try:
+                response = await asyncio.wait_for(
+                    call_http(
+                        f"{WORKER_URL}?filepath={result}&dataset=CC-MAIN-2024-46&enforce=true",
+                    ),
+                    timeout=1000,
                 )
+
                 if not response:
                     print(f"Worker {worker_id}: No response received for {result}")
-                    break
+                    continue
 
                 status = response.get("status")
                 if status == "processed":
                     print(f"Worker {worker_id}: Already processed {result}")
-                    break
+                    continue
                 elif status == "processing":
                     print(
                         f"Worker {worker_id}: File {result} is already being processed, skipping"
                     )
-                    break
-                elif status == "pending":
-                    print(
-                        f"Worker {worker_id}: Status is pending for {result}, waiting 5 minutes before retry"
-                    )
-                    await asyncio.sleep(300)  # Wait 5 minutes
+                    continue
                 elif status == "ok":
                     print(f"Worker {worker_id}: Successfully processed {result}")
-                    break
+                    continue
                 elif status == "error":
                     print(f"Worker {worker_id}: Error processing {result}")
-                    break
+                    continue
                 else:
                     print(f"Worker {worker_id}: Unknown status {status} for {result}")
-                    break
+                    continue
 
-            queue.task_done()
-            print(f"Worker {worker_id} completed task. Queue size: {queue.qsize()}")
+            except asyncio.TimeoutError:
+                print(f"Worker {worker_id}: Request timed out for {result}")
+            except Exception as e:
+                print(f"Worker {worker_id}: Error processing {result}: {str(e)}")
+            finally:
+                queue.task_done()
+                print(
+                    f"Worker {worker_id} completed task at {datetime.datetime.now()}. Queue size: {queue.qsize()}"
+                )
+
         except Exception as e:
             print(f"Worker {worker_id} error processing {result}: {str(e)}")
             queue.task_done()
@@ -134,15 +146,14 @@ async def run():
     print(f"Loaded {len(results)} records")
 
     # Create 10 queues and workers
-    num_workers = 10
+    num_workers = 1000
     queue = asyncio.Queue()
 
     # Start workers
     workers = [asyncio.create_task(worker(queue, i)) for i in range(num_workers)]
 
     # Add tasks to queue
-    for result in results[0:11]:
-        await asyncio.sleep(random.uniform(0, 1))  # Random delay between 0-5 seconds
+    for result in results[1220:]:
         await queue.put(result)
 
     # Add poison pills to stop workers
