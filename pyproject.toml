@@ -43,4 +43,4 @@ publish_reward = "publisher.reward:start"
 backup = "scripts.backup:main"
 
 client = "scripts.client:main"
-import = "scripts.importer_v2:main"
+import = "scripts.importer:main"
