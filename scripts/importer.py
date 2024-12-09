@@ -15,11 +15,11 @@ R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 CF_KV_NAMESPACE_ID = os.environ["CF_KV_NAMESPACE_ID"]
 CF_KV_API_TOKEN = os.environ["CF_KV_API_TOKEN"]
 
-WORKER_URL = "https://mizu-importer-0.shu-ecf.workers.dev"
+WORKER_URL = "https://cf-worker.mizu.global"
 
 
 async def call_http(
-    url: str, max_retries: int = 1, base_delay: float = 1.0
+    url: str, max_retries: int = 3, base_delay: float = 1.0
 ) -> Optional[dict | bytes]:
     connector = aiohttp.TCPConnector(
         limit=500, ttl_dns_cache=300, keepalive_timeout=1000
@@ -41,20 +41,21 @@ async def call_http(
                             return await response.json()
                         else:
                             return await response.read()
-                except aiohttp.ClientError as e:
-                    if attempt == max_retries - 1:  # Last attempt
-                        print(f"Failed to process {url} after {max_retries} attempts:")
-                        print(f"Error type: {type(e).__name__}")
+                except aiohttp.ClientConnectorError as e:
+                    if attempt == max_retries - 1:
+                        print(
+                            f"Failed to resolve DNS for {url} after {max_retries} attempts:"
+                        )
                         print(f"Error details: {str(e)}")
-                        if isinstance(e, aiohttp.ClientResponseError):
-                            print(f"Status: {e.status}")
-                            print(f"Message: {e.message}")
-                        raise e
-                    delay = base_delay * (2**attempt) + random.uniform(0, 0.1)
+                        raise
+                    delay = base_delay * (2**attempt) + random.uniform(
+                        1, 3
+                    )  # Longer delay for DNS issues
                     print(
-                        f"Attempt {attempt + 1} failed for {url}. Retrying in {delay:.2f} seconds..."
+                        f"DNS resolution failed for {url}. Retrying in {delay:.2f} seconds..."
                     )
                     await asyncio.sleep(delay)
+                    continue
     finally:
         await connector.close()
 
@@ -84,15 +85,15 @@ async def load_filepaths(url: str) -> list[dict]:
         return []
 
 
-async def worker(queue: asyncio.Queue, worker_id: int):
+async def importer(queues: dict[str, asyncio.Queue], worker_id: int):
     while True:
         try:
-            result = await queue.get()
+            result = await queues["unprocessed"].get()
             if result is None:  # Poison pill to stop worker
                 break
 
             print(
-                f"Worker {worker_id} processing {result} at {datetime.datetime.now()}"
+                f"Importer {worker_id} processing {result} at {datetime.datetime.now()}"
             )
             try:
                 response = await asyncio.wait_for(
@@ -103,41 +104,49 @@ async def worker(queue: asyncio.Queue, worker_id: int):
                 )
 
                 if not response:
-                    print(f"Worker {worker_id}: No response received for {result}")
+                    print(f"Importer {worker_id}: No response received for {result}")
                     continue
 
                 status = response.get("status")
                 if status == "processed":
-                    print(f"Worker {worker_id}: Already processed {result}")
+                    print(f"Importer {worker_id}: Already processed {result}")
+                    await queues["processed"].put(result)
                     continue
                 elif status == "processing":
                     print(
-                        f"Worker {worker_id}: File {result} is already being processed, skipping"
+                        f"Importer {worker_id}: File {result} is already being processed"
                     )
+                    await queues["processing"].put(result)
                     continue
                 elif status == "ok":
-                    print(f"Worker {worker_id}: Successfully processed {result}")
+                    print(f"Importer {worker_id}: Successfully processed {result}")
+                    await queues["processed"].put(result)
                     continue
                 elif status == "error":
-                    print(f"Worker {worker_id}: Error processing {result}")
+                    print(f"Importer {worker_id}: Error processing {result}")
+                    await queues["error"].put(result)
                     continue
                 else:
-                    print(f"Worker {worker_id}: Unknown status {status} for {result}")
+                    print(f"Importer {worker_id}: Unknown status {status} for {result}")
+                    await queues["error"].put(result)
                     continue
 
             except asyncio.TimeoutError:
-                print(f"Worker {worker_id}: Request timed out for {result}")
+                await queues["error"].put(result)
+                print(f"Importer {worker_id}: Request timed out for {result}")
             except Exception as e:
-                print(f"Worker {worker_id}: Error processing {result}: {str(e)}")
+                await queues["error"].put(result)
+                print(f"Importer {worker_id}: Error processing {result}: {str(e)}")
             finally:
-                queue.task_done()
+                queues["unprocessed"].task_done()
                 print(
-                    f"Worker {worker_id} completed task at {datetime.datetime.now()}. Queue size: {queue.qsize()}"
+                    f"Importer {worker_id} completed task at {datetime.datetime.now()}. Queue size: {queues['unprocessed'].qsize()}"
                 )
 
         except Exception as e:
-            print(f"Worker {worker_id} error processing {result}: {str(e)}")
-            queue.task_done()
+            await queues["error"].put(result)
+            print(f"Importer {worker_id} error processing {result}: {str(e)}")
+            queues["unprocessed"].task_done()
 
 
 async def run(offset: int = 0):
@@ -147,21 +156,32 @@ async def run(offset: int = 0):
 
     # Create 10 queues and workers
     num_workers = 1000
-    queue = asyncio.Queue()
+    queues = {
+        "unprocessed": asyncio.Queue(),
+        "processing": asyncio.Queue(),
+        "processed": asyncio.Queue(),
+        "error": asyncio.Queue(),
+    }
 
     # Start workers
-    workers = [asyncio.create_task(worker(queue, i)) for i in range(num_workers)]
+    workers = [asyncio.create_task(importer(queues, i)) for i in range(num_workers)]
 
     # Add tasks to queue
     for result in results[offset:]:
-        await queue.put(result)
+        await queues["unprocessed"].put(result)
 
     # Add poison pills to stop workers
     for _ in range(num_workers):
-        await queue.put(None)
+        await queues["unprocessed"].put(None)
 
     # Wait for all tasks to complete
     await asyncio.gather(*workers)
+
+    print(f"Unprocessed {queues['unprocessed'].qsize()} records")
+    print(f"Processed {queues['processed'].qsize()} records")
+    print(f"Error {queues['error'].qsize()} records")
+    print(f"Processing {queues['processing'].qsize()} records")
+
     print("All tasks completed")
 
 
