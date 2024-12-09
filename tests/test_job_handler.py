@@ -9,7 +9,6 @@ import pytest
 from fastapi import status
 from unittest.mock import patch as mock_patch
 
-from mizu_node.db.classifier import store_config
 from mizu_node.common import epoch
 
 from mizu_node.db.api_key import create_api_key
@@ -17,9 +16,7 @@ from mizu_node.db.common import initiate_pg_db
 from mizu_node.db.job_queue import delete_one_job, get_assigned_reward_jobs
 from mizu_node.db.job_queue import get_jobs_info
 from mizu_node.types.classifier import (
-    ClassifierConfig,
     ClassifyResult,
-    DataLabel,
     WetContext,
 )
 from mizu_node.types.data_job import (
@@ -36,7 +33,6 @@ from mizu_node.types.data_job import (
 from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobResponse,
-    RegisterClassifierRequest,
     QueryRewardJobsResponse,
 )
 from tests.redis_mock import RedisMock
@@ -140,14 +136,14 @@ def _build_pow_ctx():
     )
 
 
-def _build_batch_classify_ctx(config_id: int):
+def _build_batch_classify_ctx():
     return BatchClassifyContext(
         data_url="https://example.com/data",
         batch_size=1000,
         bytesize=5000000,
         decompressed_byte_size=20000000,
         checksum_md5="0x",
-        classifier_id=config_id,
+        classifier_id=1,
     )
 
 
@@ -157,14 +153,13 @@ def _build_reward_ctx(token: Token | None = None):
 
 def _new_data_job_payload(
     job_type: str,
-    config_id: int | None = None,
 ) -> RewardContext | PowContext | BatchClassifyContext:
     if job_type == JobType.reward:
         return _build_reward_ctx()
     elif job_type == JobType.pow:
         return _build_pow_ctx()
     elif job_type == JobType.batch_classify:
-        return _build_batch_classify_ctx(config_id)
+        return _build_batch_classify_ctx()
     else:
         raise ValueError(f"Invalid job type: {job_type}")
 
@@ -179,7 +174,7 @@ def _publish_jobs(
         token = MIZU_ADMIN_USER_API_KEY
     elif job_type == JobType.batch_classify:
         endpoint = "/publish_batch_classify_jobs"
-        token = TEST_API_KEY1
+        token = MIZU_ADMIN_USER_API_KEY
     elif job_type == JobType.reward:
         endpoint = "/publish_reward_jobs"
         token = MIZU_ADMIN_USER_API_KEY
@@ -195,10 +190,8 @@ def _publish_jobs(
     return response.json()["data"]["jobIds"]
 
 
-def _publish_jobs_simple(
-    client: TestClient, job_type: JobType, num_jobs=3, config_id: int | None = None
-):
-    payloads = [_new_data_job_payload(job_type, config_id) for i in range(num_jobs)]
+def _publish_jobs_simple(client: TestClient, job_type: JobType, num_jobs=3):
+    payloads = [_new_data_job_payload(job_type) for i in range(num_jobs)]
     return _publish_jobs(client, job_type, payloads)
 
 
@@ -215,22 +208,11 @@ def mock_connections(monkeypatch, pg_conn, setenvvar):
         initiate_pg_db(pg_conn)
         create_api_key(pg_conn, "test_user1", TEST_API_KEY1)
         create_api_key(pg_conn, "test_user2", TEST_API_KEY2)
-        classififer_id = store_config(
-            pg_conn,
-            ClassifierConfig(
-                name="test_classifier",
-                embedding_model="test_embedding_model",
-                labels=[DataLabel(label="t1", description="test_label1")],
-                publisher="test_user1",
-            ),
-        )
-        app.state.classifier_id = classififer_id
     return app
 
 
 def test_publish_jobs_simple(mock_connections):
     client = TestClient(mock_connections)
-    classifier_id = client.app.state.classifier_id
 
     # Test publishing classify jobs
     job_ids1 = _publish_jobs_simple(client, JobType.reward, 3)
@@ -241,18 +223,17 @@ def test_publish_jobs_simple(mock_connections):
     assert len(job_ids2) == 3
 
     # Test publishing batch classify jobs
-    job_ids3 = _publish_jobs_simple(client, JobType.batch_classify, 3, classifier_id)
+    job_ids3 = _publish_jobs_simple(client, JobType.batch_classify, 3)
     assert len(job_ids3) == 3
 
 
 def test_take_job_ok(mock_connections):
     client = TestClient(mock_connections)
-    classifier_id = client.app.state.classifier_id
 
     # Publish jobs first
     pids = _publish_jobs_simple(client, JobType.pow, 3)
     rids = _publish_jobs_simple(client, JobType.reward, 3)
-    bids = _publish_jobs_simple(client, JobType.batch_classify, 3, classifier_id)
+    bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
 
     # Take reward job 1
     worker1_jwt = jwt_token("worker1")
@@ -377,7 +358,6 @@ def test_take_job_error(mock_connections):
 @mock_patch("requests.post")
 def test_finish_job(mock_requests, mock_connections):
     client = TestClient(mock_connections)
-    classifier_id = client.app.state.classifier_id
 
     mock_requests.return_value = MockedHttpResponse(200)
 
@@ -388,7 +368,7 @@ def test_finish_job(mock_requests, mock_connections):
 
     # Publish jobs
     _publish_jobs_simple(client, JobType.reward, 3)
-    _publish_jobs_simple(client, JobType.batch_classify, 3, classifier_id)
+    _publish_jobs_simple(client, JobType.batch_classify, 3)
     _publish_jobs_simple(client, JobType.pow, 3)
 
     response1 = client.get(
@@ -582,10 +562,9 @@ def test_finish_job(mock_requests, mock_connections):
 def test_job_status(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
     client = TestClient(mock_connections)
-    classifier_id = client.app.state.classifier_id
 
     # Publish jobs
-    bids = _publish_jobs_simple(client, JobType.batch_classify, 3, classifier_id)
+    bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
     pids = _publish_jobs_simple(client, JobType.pow, 2)
     all_job_ids = bids + pids
 
@@ -665,71 +644,6 @@ def test_job_status(mock_requests, mock_connections):
             assert status["finishedAt"] != 0
         else:
             assert status["finishedAt"] == 0
-
-
-def test_register_classifier(mock_connections):
-    client = TestClient(mock_connections)
-
-    classifier_config = ClassifierConfig(
-        name="test_classifier",
-        embedding_model="model1",
-        labels=[
-            DataLabel(label="0", description="0"),
-            DataLabel(label="1", description="1"),
-            DataLabel(label="2", description="2"),
-        ],
-    )
-    request = RegisterClassifierRequest(config=classifier_config)
-
-    # Try with wrong API key first
-    response = client.post(
-        "/register_classifier",
-        json=request.model_dump(),
-        headers={"Authorization": "Bearer wrong_key"},
-    )
-    assert response.status_code == 401
-
-    # Try to get non-existent classifier
-    response = client.get("/classifier_info", params={"id": 1000})
-    assert response.status_code == 404
-
-    # Register with correct API key
-    response = client.post(
-        "/register_classifier",
-        json=request.model_dump(),
-        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
-    )
-    assert response.status_code == 200
-    classifier_id = response.json()["data"]["id"]
-    assert classifier_id is not None
-
-    # Get the classifier by id
-    response = client.get("/classifier_info", params={"id": classifier_id})
-    assert response.status_code == 200
-    retrieved_classifier = response.json()["data"]["classifier"]
-    assert retrieved_classifier["embeddingModel"] == classifier_config.embedding_model
-    assert len(retrieved_classifier["labels"]) == len(classifier_config.labels)
-    assert retrieved_classifier["publisher"] == "test_user1"
-
-    # Try to register with mismatched publisher
-    bad_config = classifier_config.model_dump()
-    bad_config["name"] = "test_classifier2"
-    bad_config["publisher"] = "wrong_publisher"
-    response = client.post(
-        "/register_classifier",
-        json=RegisterClassifierRequest(config=bad_config).model_dump(),
-        headers={"Authorization": f"Bearer {TEST_API_KEY2}"},
-    )
-    assert response.status_code == 200
-    classifier_id = response.json()["data"]["id"]
-
-    # Get the classifier by id
-    response = client.get("/classifier_info", params={"id": classifier_id})
-    assert response.status_code == 200
-    retrieved_classifier = response.json()["data"]["classifier"]
-    assert retrieved_classifier["embeddingModel"] == classifier_config.embedding_model
-    assert len(retrieved_classifier["labels"]) == len(classifier_config.labels)
-    assert retrieved_classifier["publisher"] == "test_user2"
 
 
 @mock_patch("requests.post")

@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from prometheus_client import Counter, Histogram, make_asgi_app
 
-from mizu_node.db.classifier import get_config, store_config
 from mizu_node.common import build_ok_response, epoch_ms, error_handler
 from mizu_node.constants import (
     LATENCY_BUCKETS,
@@ -22,7 +21,6 @@ from mizu_node.job_handler import (
     handle_finish_job,
     handle_queue_len,
     validate_admin_job,
-    validate_classifiers,
 )
 from mizu_node.security import (
     get_allowed_origins,
@@ -46,13 +44,10 @@ from mizu_node.types.service import (
     PublishJobResponse,
     PublishPowJobRequest,
     PublishRewardJobRequest,
-    QueryClassifierResponse,
     QueryJobResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
     QueryRewardJobsResponse,
-    RegisterClassifierRequest,
-    RegisterClassifierResponse,
     TakeJobResponse,
 )
 from mizu_node.db.job_queue import clear_jobs, get_assigned_reward_jobs, queue_clean
@@ -133,30 +128,6 @@ def default():
     return {"status": "ok"}
 
 
-@app.post("/register_classifier")
-@error_handler
-def register_classifier(
-    request: RegisterClassifierRequest, publisher: str = Depends(get_publisher)
-):
-    request.config.publisher = publisher
-    with app.state.conn.get_pg_connection() as db:
-        id = store_config(db, request.config)
-        return build_ok_response(RegisterClassifierResponse(id=id))
-
-
-@app.get("/classifier_info")
-@error_handler
-def get_classifier(id: int):
-    with app.state.conn.get_pg_connection() as db:
-        config = get_config(db, id)
-        if config is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="classifier not found"
-            )
-        response = QueryClassifierResponse(classifier=config)
-        return build_ok_response(response)
-
-
 @app.post("/clear_queue")
 @error_handler
 def clear_queue(job_type: JobType, publisher: str = Depends(get_publisher)):
@@ -195,8 +166,8 @@ def publish_reward_jobs(
 def publish_batch_classify_jobs(
     request: PublishBatchClassifyJobRequest, publisher: str = Depends(get_publisher)
 ):
+    validate_admin_job(publisher)
     with app.state.conn.get_pg_connection() as db:
-        validate_classifiers(db, request.data)
         ids = handle_publish_jobs(db, publisher, JobType.batch_classify, request.data)
         return build_ok_response(PublishJobResponse(job_ids=ids))
 

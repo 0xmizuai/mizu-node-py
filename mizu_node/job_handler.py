@@ -9,7 +9,6 @@ from fastapi import HTTPException, status
 import requests
 
 
-from mizu_node.db.classifier import list_configs
 from mizu_node.common import epoch_ms
 from mizu_node.constants import (
     DEFAULT_POW_DIFFICULTY,
@@ -28,7 +27,6 @@ from mizu_node.stats import (
 )
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
-    BatchClassifyContext,
     DataJobContext,
     DataJobResult,
     ErrorCode,
@@ -229,16 +227,6 @@ def validate_admin_job(publisher: str):
     if publisher != MIZU_ADMIN_USER:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
-        )
-
-
-def validate_classifiers(pg_conn: connection, contexts: list[BatchClassifyContext]):
-    cids = list(set([ctx.classifier_id for ctx in contexts]))
-    configs = list_configs(pg_conn, cids)
-    if len(configs) != len(cids):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"got invalid classifier ids",
         )
 
 

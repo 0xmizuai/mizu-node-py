@@ -1,7 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from mizu_node.types.classifier import ClassifierConfig
 from mizu_node.types.data_job import (
     BatchClassifyContext,
     DataJobContext,
@@ -14,24 +13,6 @@ from mizu_node.types.data_job import (
     WorkerJob,
     WorkerJobResult,
 )
-
-
-class RegisterClassifierRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    config: ClassifierConfig
-
-
-class RegisterClassifierResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: int
-
-
-class QueryClassifierResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    classifier: ClassifierConfig
 
 
 class PublishPowJobRequest(BaseModel):
