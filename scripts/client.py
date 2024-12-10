@@ -4,13 +4,7 @@ import os
 import requests
 
 from mizu_node.security import verify_jwt
-from publisher.classifier import list_classifiers, register_classifier
 from scripts.auth import get_api_keys, issue_api_key, sign_jwt
-from scripts.importer import (
-    CommonCrawlWetMetadataUploader,
-    import_to_r2,
-    migrate_metadata,
-)
 
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="command", required=True)
@@ -46,34 +40,6 @@ verify_jwt_parser.add_argument(
     "--token", action="store", type=str, help="the token to verify"
 )
 
-import_parser = subparsers.add_parser(
-    "import", add_help=False, description="import data to r2"
-)
-import_parser.add_argument("--range", type=str, action="store", help="e.g 10,20")
-import_parser.add_argument(
-    "--source", type=str, action="store", default="s3", help="data source"
-)
-import_parser.add_argument(
-    "--pathfile", type=str, action="store", help="paths file to download"
-)
-
-metadata_parser = subparsers.add_parser(
-    "metadata", add_help=False, description="backup metadata to r2"
-)
-metadata_parser.add_argument(
-    "--backup", type=str, action="store", help="the batch to backup"
-)
-metadata_parser.add_argument(
-    "--restore", type=str, action="store", help="the batch to restore"
-)
-
-publish_parser = subparsers.add_parser(
-    "publish", add_help=False, description="publish jobs"
-)
-publish_parser.add_argument("--user", type=str, action="store")
-publish_parser.add_argument("--batch", type=str, action="store")
-publish_parser.add_argument("--classifier", type=str, action="store")
-
 queue_clear_parser = subparsers.add_parser(
     "clear_queue", add_help=False, description="publish jobs"
 )
@@ -83,13 +49,6 @@ process_parser = subparsers.add_parser(
     "process", add_help=False, description="process jobs"
 )
 process_parser.add_argument("--user", type=str, action="store")
-
-classifier_parser = subparsers.add_parser(
-    "classifier", add_help=False, description="import data to r2"
-)
-classifier_parser.add_argument("--register", action="store_true")
-classifier_parser.add_argument("--list", action="store_true")
-classifier_parser.add_argument("--user", type=str, action="store")
 
 migrate_parser = subparsers.add_parser(
     "migrate", add_help=False, description="migrate metadata to mongodb"
@@ -112,25 +71,6 @@ def main():
     elif args.command == "verify_jwt":
         user = verify_jwt(args.token, os.environ["JWT_VERIFY_KEY"])
         print("User: " + user)
-    elif args.command == "import":
-        [start, end] = [int(i) for i in args.range.split(",")]
-        import_to_r2(args.source, args.pathfile, start, end)
-    elif args.command == "metadata":
-        if args.backup:
-            CommonCrawlWetMetadataUploader(args.backup).iterate_and_upload()
-        elif args.restore:
-            raise ValueError("command not implemented yet")
-        else:
-            raise ValueError("either backup or restore must be presented")
-    elif args.command == "migrate":
-        migrate_metadata()
-    elif args.command == "classifier":
-        if args.register:
-            register_classifier(args.user)
-        elif args.list:
-            list_classifiers(args.user)
-        else:
-            raise ValueError("Invalid arguments")
     elif args.command == "clear_queue":
         service_url = os.environ["NODE_SERVICE_URL"]
         response = requests.post(
