@@ -233,6 +233,13 @@ def handle_finish_job_v2(
         complete_job(
             pg_conn, job_result.job_id, job_status, build_data_job_result(job_result)
         )
+        if job_result.job_type == JobType.batch_classify:
+            api_key = os.environ["API_SECRET_KEY"]
+            requests.post(
+                os.environ["WORKFLOW_SERVER_URL"] + "/save_query_result",
+                json=job_result.model_dump(exclude_none=True, by_alias=True),
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
         return (
             _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished
