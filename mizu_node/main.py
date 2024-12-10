@@ -15,6 +15,7 @@ from mizu_node.constants import (
     LATENCY_BUCKETS,
 )
 from mizu_node.job_handler import (
+    handle_finish_job_v2,
     handle_query_job,
     handle_take_job,
     handle_publish_jobs,
@@ -40,6 +41,7 @@ from mizu_node.types.data_job import JobType
 from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobResponse,
+    FinishJobV2Response,
     PublishBatchClassifyJobRequest,
     PublishJobResponse,
     PublishPowJobRequest,
@@ -114,7 +116,7 @@ def get_user(
     return verify_jwt(token, os.environ["JWT_VERIFY_KEY"])
 
 
-def get_publisher(
+def get_caller(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
     token = credentials.credentials
@@ -130,8 +132,8 @@ def default():
 
 @app.post("/clear_queue")
 @error_handler
-def clear_queue(job_type: JobType, publisher: str = Depends(get_publisher)):
-    validate_admin_job(publisher)
+def clear_queue(job_type: JobType, caller: str = Depends(get_caller)):
+    validate_admin_job(caller)
     with app.state.conn.get_pg_connection() as db:
         clear_jobs(db, job_type)
     return build_ok_response()
@@ -141,11 +143,11 @@ def clear_queue(job_type: JobType, publisher: str = Depends(get_publisher)):
 @error_handler
 def publish_pow_jobs(
     request: PublishPowJobRequest,
-    publisher: str = Depends(get_publisher),
+    caller: str = Depends(get_caller),
 ):
-    validate_admin_job(publisher)
+    validate_admin_job(caller)
     with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, publisher, JobType.pow, request.data)
+        ids = handle_publish_jobs(db, caller, JobType.pow, request.data)
         return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
@@ -153,28 +155,28 @@ def publish_pow_jobs(
 @error_handler
 def publish_reward_jobs(
     request: PublishRewardJobRequest,
-    publisher: str = Depends(get_publisher),
+    caller: str = Depends(get_caller),
 ):
-    validate_admin_job(publisher)
+    validate_admin_job(caller)
     with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, publisher, JobType.reward, request.data)
+        ids = handle_publish_jobs(db, caller, JobType.reward, request.data)
         return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
 @app.post("/publish_batch_classify_jobs")
 @error_handler
 def publish_batch_classify_jobs(
-    request: PublishBatchClassifyJobRequest, publisher: str = Depends(get_publisher)
+    request: PublishBatchClassifyJobRequest, caller: str = Depends(get_caller)
 ):
-    validate_admin_job(publisher)
+    validate_admin_job(caller)
     with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, publisher, JobType.batch_classify, request.data)
+        ids = handle_publish_jobs(db, caller, JobType.batch_classify, request.data)
         return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
 @app.get("/job_status")
 @error_handler
-def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_publisher)):
+def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_caller)):
     with app.state.conn.get_pg_connection() as db:
         jobs = handle_query_job(db, ids)
         return build_ok_response(QueryJobResponse(jobs=jobs))
@@ -214,6 +216,55 @@ def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
     job_type = request.job_result.job_type
     FINISH_JOB.labels(job_type.name).inc()
     return build_ok_response(FinishJobResponse(rewarded_points=points))
+
+
+@app.get("/reward_jobs_v2")
+@error_handler
+def query_reward_jobs(user: str, caller=Depends(get_caller)):
+    validate_admin_job(caller)
+    with app.state.conn.get_pg_connection() as db:
+        jobs = get_assigned_reward_jobs(db, user)
+        return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
+
+
+TAKE_JOB_V2 = Counter(
+    "take_job_V2", "# of take_job requests per job_type", ["job_type"]
+)
+
+
+@app.get("/take_job_v2")
+@error_handler
+def take_job(
+    job_type: JobType,
+    user: str,
+    caller: str = Depends(get_caller),
+):
+    validate_admin_job(caller)
+    job = handle_take_job(app.state.conn, user, job_type)
+    TAKE_JOB_V2.labels(job_type.name).inc()
+    return build_ok_response(TakeJobResponse(job=job))
+
+
+FINISH_JOB_V2 = Counter(
+    "finish_job_v2", "# of finish_job requests per job_type", ["job_type"]
+)
+
+
+@app.post("/finish_job_v2")
+@error_handler
+def finish_job(request: FinishJobRequest, caller: str = Depends(get_caller)):
+    validate_admin_job(caller)
+    if request.user is None or request.user == "":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user must be provided",
+        )
+    settle_reward = handle_finish_job_v2(
+        app.state.conn, request.user, request.job_result
+    )
+    job_type = request.job_result.job_type
+    FINISH_JOB_V2.labels(job_type.name).inc()
+    return build_ok_response(FinishJobV2Response(settle_reward=settle_reward))
 
 
 @app.get("/stats/queue_len")
@@ -277,6 +328,35 @@ def get_mined_points(
     """
     Return the mined points in the last `hours` hours or last `days` days.
     """
+    if hours is None and days is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="either hours or days must be provided",
+        )
+    if hours is not None:
+        points = total_mined_points_in_past_n_hour_per_worker(
+            app.state.conn.redis, user, max(hours, 24)
+        )
+    if days is not None:
+        points = total_mined_points_in_past_n_days_per_worker(
+            app.state.conn.redis, user, max(days, 7)
+        )
+    return build_ok_response(QueryMinedPointsResponse(points=points))
+
+
+@app.get("/stats/mined_points_v2")
+@app.get("/worker_stats/mined_points_v2")
+@error_handler
+def get_mined_points(
+    user: str,
+    hours: int | None = None,
+    days: int | None = None,
+    caller=Depends(get_caller),
+):
+    """
+    Return the mined points in the last `hours` hours or last `days` days.
+    """
+    validate_admin_job(caller)
     if hours is None and days is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

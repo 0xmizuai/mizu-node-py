@@ -219,12 +219,33 @@ def handle_finish_job(
     return reward_points
 
 
+def handle_finish_job_v2(
+    conn: Connections, worker: str, job_result: WorkerJobResult
+) -> SettleRewardRequest | None:
+    with conn.get_pg_connection() as pg_conn:
+        job_id = int(job_result.job_id)
+        ctx, assigner = get_job_lease(pg_conn, job_id, job_result.job_type)
+        if assigner != worker:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
+            )
+        job_status = _validate_job_result(ctx, job_result)
+        complete_job(
+            pg_conn, job_result.job_id, job_status, build_data_job_result(job_result)
+        )
+        return (
+            _calculate_reward_v2(conn.redis, worker, ctx, job_result)
+            if job_status == JobStatus.finished
+            else None
+        )
+
+
 def handle_queue_len(pg_conn: connection, job_type: JobType) -> int:
     return queue_len(pg_conn, job_type)
 
 
-def validate_admin_job(publisher: str):
-    if publisher != MIZU_ADMIN_USER:
+def validate_admin_job(caller: str):
+    if caller != MIZU_ADMIN_USER:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         )
@@ -276,4 +297,35 @@ def _calculate_reward(
         job_type=result.job_type,
         worker=worker,
         amount=str(0.5 * factor),
+    )
+
+
+def _calculate_reward_v2(
+    rclient: Redis, worker: str, ctx: DataJobContext, result: WorkerJobResult
+) -> SettleRewardRequest:
+    if result.job_type == JobType.reward:
+        record_claim_event(rclient, ctx.reward_ctx)
+        return SettleRewardRequest(
+            job_id=result.job_id,
+            job_type=result.job_type,
+            worker=worker,
+            token=ctx.reward_ctx.token,
+            amount=str(ctx.reward_ctx.amount),
+            recipient=result.reward_result.recipient,
+        )
+
+    past_24h_points = total_mined_points_in_past_n_hour_per_worker(rclient, worker, 24)
+    if past_24h_points < 2500:
+        factor = 1
+    elif past_24h_points < 5000:
+        factor = (5000 - past_24h_points) / 5000
+    else:
+        factor = 0
+    rewarded = 0.5 * factor
+    record_mined_points(rclient, worker, rewarded)
+    return SettleRewardRequest(
+        job_id=result.job_id,
+        job_type=result.job_type,
+        worker=worker,
+        amount=str(rewarded),
     )

@@ -73,6 +73,7 @@ class FinishJobRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     job_result: WorkerJobResult = Field(alias="jobResult")
+    user: Optional[str] = Field(default=None)
 
 
 class FinishJobResponse(BaseModel):
@@ -97,6 +98,12 @@ class SettleRewardRequest(BaseModel):
     token: Optional[Token] = Field(default=None)
     amount: Optional[str] = Field(default=None)
     recipient: Optional[str] = Field(default=None)
+
+
+class FinishJobV2Response(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    settle_reward: Optional[SettleRewardRequest] = Field(alias="settleReward")
 
 
 class CooldownConfig:
