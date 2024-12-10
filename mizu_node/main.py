@@ -234,7 +234,7 @@ TAKE_JOB_V2 = Counter(
 
 @app.get("/take_job_v2")
 @error_handler
-def take_job(
+def take_job_v2(
     job_type: JobType,
     user: str,
     caller: str = Depends(get_caller),
@@ -252,7 +252,7 @@ FINISH_JOB_V2 = Counter(
 
 @app.post("/finish_job_v2")
 @error_handler
-def finish_job(request: FinishJobRequest, caller: str = Depends(get_caller)):
+def finish_job_v2(request: FinishJobRequest, caller: str = Depends(get_caller)):
     validate_admin_job(caller)
     if request.user is None or request.user == "":
         raise HTTPException(
@@ -347,7 +347,7 @@ def get_mined_points(
 @app.get("/stats/mined_points_v2")
 @app.get("/worker_stats/mined_points_v2")
 @error_handler
-def get_mined_points(
+def get_mined_points_v2(
     user: str,
     hours: int | None = None,
     days: int | None = None,
