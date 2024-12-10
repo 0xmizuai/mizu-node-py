@@ -15,12 +15,9 @@ from mizu_node.db.api_key import create_api_key
 from mizu_node.db.common import initiate_pg_db
 from mizu_node.db.job_queue import delete_one_job, get_assigned_reward_jobs
 from mizu_node.db.job_queue import get_jobs_info
-from mizu_node.types.classifier import (
-    ClassifyResult,
-    WetContext,
-)
 from mizu_node.types.data_job import (
     BatchClassifyContext,
+    ClassifyResult,
     JobStatus,
     JobType,
     PowContext,
@@ -445,14 +442,8 @@ def test_finish_job(mock_requests, mock_connections):
         job_id=bid,
         job_type=JobType.batch_classify,
         batch_classify_result=[
-            ClassifyResult(
-                labels=["t1"],
-                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
-            ),
-            ClassifyResult(
-                labels=[],
-                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
-            ),
+            ClassifyResult(uri="123", text="123"),
+            ClassifyResult(uri="234", text="234"),
         ],
     )
     response = client.post(
@@ -469,7 +460,7 @@ def test_finish_job(mock_requests, mock_connections):
     j1 = get_jobs_info(mock_connections.state.conn.postgres, [bid])[0]
     assert j1.job_type == JobType.batch_classify
     # the empty labels are filtered out
-    assert len(j1.result.batch_classify_result) == 1
+    assert len(j1.result.batch_classify_result) == 2
     assert j1.worker == "worker3"
     assert j1.finished_at is not None
 
@@ -478,10 +469,7 @@ def test_finish_job(mock_requests, mock_connections):
         job_id=bid,
         job_type=JobType.batch_classify,
         batch_classify_result=[
-            ClassifyResult(
-                labels=["t1"],
-                wet_context=WetContext(warc_id="", uri="", languages=[], crawled_at=0),
-            ),
+            ClassifyResult(uri="", text=""),
         ],
     )
     response = client.post(
@@ -588,11 +576,7 @@ def test_job_status(mock_requests, mock_connections):
     assert response.status_code == 200
     classify_job = response.json()["data"]["job"]
 
-    wet_context = WetContext(warc_id="", uri="", languages=[], crawled_at=0)
-    classify_result = ClassifyResult(
-        labels=["t1"],
-        wet_context=wet_context,
-    )
+    classify_result = ClassifyResult(uri="", text="")
     result1 = WorkerJobResult(
         job_id=classify_job["_id"],
         job_type=JobType.batch_classify,

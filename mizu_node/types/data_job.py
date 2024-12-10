@@ -2,8 +2,6 @@ from enum import Enum
 from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from mizu_node.types.classifier import ClassifyResult
-
 
 class VerificationMode(str, Enum):
     none = "none"
@@ -13,7 +11,7 @@ class VerificationMode(str, Enum):
 
 class JobType(int, Enum):
     pow = 0
-    classify = 1
+    classify = 1  # deprecated
     batch_classify = 2
     reward = 3
 
@@ -111,6 +109,13 @@ class ErrorResult(BaseModel):
 
     code: ErrorCode
     message: Optional[str] = Field(default=None)
+
+
+class ClassifyResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    uri: str
+    text: str
 
 
 class DataJobResult(BaseModel):

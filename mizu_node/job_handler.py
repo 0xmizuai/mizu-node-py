@@ -267,7 +267,9 @@ def _validate_job_result(ctx: DataJobContext, result: WorkerJobResult) -> JobSta
                 )
     elif result.job_type == JobType.batch_classify:
         result.batch_classify_result = [
-            result for result in result.batch_classify_result if len(result.labels) > 0
+            result
+            for result in result.batch_classify_result
+            if result.uri and result.text
         ]
     return JobStatus.finished
 
