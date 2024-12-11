@@ -20,7 +20,7 @@ class PowDataJobPublisher(object):
         cooldown: int,
         threshold: int,
     ):
-        self.api_key = os.environ["MIZU_ADMIN_USER_API_KEY"]
+        self.api_key = os.environ["API_SECRET_KEY"]
         self.batch_size = batch_size
         self.threshold = threshold
         self.cooldown = cooldown

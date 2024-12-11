@@ -143,7 +143,7 @@ class RewardJobPublisher(object):
         cron_gap: int = 60,  # run every 60 seconds
     ):
         self.reward_configs = build_reward_configs(types)
-        self.api_key = os.environ["MIZU_ADMIN_USER_API_KEY"]
+        self.api_key = os.environ["API_SECRET_KEY"]
         self.rclient = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
         self.cron_gap = cron_gap
 

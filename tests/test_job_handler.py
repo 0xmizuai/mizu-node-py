@@ -50,7 +50,7 @@ import pytest
 
 TEST_API_KEY1 = "test_api_key1"
 TEST_API_KEY2 = "test_api_key2"
-MIZU_ADMIN_USER_API_KEY = "admin_key"
+API_SECRET_KEY = "some-secret"
 
 
 # Mock the Connections class
@@ -114,9 +114,8 @@ def setenvvar(monkeypatch):
             "POSTGRES_URL": "postgresql://postgres:postgres@localhost:5432/postgres",
             "REDIS_URL": "redis://localhost:6379",
             "JWT_VERIFY_KEY": public_key_str,
-            "API_SECRET_KEY": "some-secret",
+            "API_SECRET_KEY": API_SECRET_KEY,
             "BACKEND_SERVICE_URL": "http://localhost:3000",
-            "MIZU_ADMIN_USER_API_KEY": MIZU_ADMIN_USER_API_KEY,
             "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
             "MIN_REWARD_GAP": "1800",
             "ENABLE_ACTIVE_USER_CHECK": "true",
@@ -168,13 +167,13 @@ def _publish_jobs(
 ):
     if job_type == JobType.pow:
         endpoint = "/publish_pow_jobs"
-        token = MIZU_ADMIN_USER_API_KEY
+        token = API_SECRET_KEY
     elif job_type == JobType.batch_classify:
         endpoint = "/publish_batch_classify_jobs"
-        token = MIZU_ADMIN_USER_API_KEY
+        token = API_SECRET_KEY
     elif job_type == JobType.reward:
         endpoint = "/publish_reward_jobs"
-        token = MIZU_ADMIN_USER_API_KEY
+        token = API_SECRET_KEY
     else:
         raise ValueError(f"Invalid job type: {job_type}")
 

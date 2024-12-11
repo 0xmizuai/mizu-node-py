@@ -76,7 +76,7 @@ def main():
         response = requests.post(
             f"{service_url}/clear_queue?job_type={args.job_type}",
             headers={
-                "Authorization": f"Bearer {os.environ['MIZU_ADMIN_USER_API_KEY']}"
+                "Authorization": f"Bearer {os.environ['API_SECRET_KEY']}",
             },
         )
         response.raise_for_status()

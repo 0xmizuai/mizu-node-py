@@ -53,7 +53,7 @@ def verify_jwt(token: str, public_key: str) -> str:
 
 
 def verify_api_key(pg_conn: connection, token: str) -> str:
-    if token == os.environ["MIZU_ADMIN_USER_API_KEY"]:
+    if token == os.environ["API_SECRET_KEY"]:
         return MIZU_ADMIN_USER
 
     user_id = get_user_id(pg_conn, token)
