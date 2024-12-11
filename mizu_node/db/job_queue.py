@@ -22,6 +22,8 @@ from mizu_node.types.data_job import (
 from mizu_node.types.service import DataJobQueryResult, RewardJobRecord
 
 
+JOB_TTL = int(os.environ.get("JOB_TTL", 7 * 24 * 60 * 60))  # 7 days in seconds
+
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
@@ -163,8 +165,8 @@ def light_clean(db: connection):
             (
                 JobStatus.finished,
                 JobStatus.error,
-                7 * 24 * 60 * 60,
-            ),  # 7 days in seconds
+                JOB_TTL,
+            ),
         )
 
         deleted_rows = cur.fetchall()
