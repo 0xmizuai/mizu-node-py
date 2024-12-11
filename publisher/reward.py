@@ -10,8 +10,6 @@ from mizu_node.common import epoch, is_prod
 from mizu_node.db.job_queue import add_jobs, queue_len
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, RewardContext, Token
-from mizu_node.types.service import PublishRewardJobRequest
-from publisher.common import publish
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 

@@ -7,8 +7,6 @@ import time
 from mizu_node.db.job_queue import queue_len, add_jobs
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, PowContext
-from mizu_node.types.service import PublishPowJobRequest
-from publisher.common import NODE_SERVICE_URL, publish
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
