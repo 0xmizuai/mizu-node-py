@@ -161,7 +161,7 @@ def light_clean(db: connection):
                 """
             ),
             (
-                JobStatus.completed,
+                JobStatus.finished,
                 JobStatus.error,
                 7 * 24 * 60 * 60,
             ),  # 7 days in seconds
