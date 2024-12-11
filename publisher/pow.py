@@ -4,8 +4,9 @@ import math
 import os
 import secrets
 import time
-import requests
-from mizu_node.types.data_job import PowContext
+from mizu_node.db.job_queue import queue_len, add_jobs
+from mizu_node.types.connections import Connections
+from mizu_node.types.data_job import DataJobContext, JobType, PowContext
 from mizu_node.types.service import PublishPowJobRequest
 from publisher.common import NODE_SERVICE_URL, publish
 
@@ -24,35 +25,41 @@ class PowDataJobPublisher(object):
         self.batch_size = batch_size
         self.threshold = threshold
         self.cooldown = cooldown
+        self.conn = Connections()
 
-    def check_queue_stats(self):
-        result = requests.get(
-            f"{NODE_SERVICE_URL}/stats/queue_len?job_type=0",
-        )
-        length = result.json()["data"]["length"]
-        if length > self.threshold:
-            return 0
-        return math.ceil(self.threshold * 2 - length)
+    def check_queue_stats(self) -> int:
+        with self.conn.get_pg_connection() as db:
+            current_len = queue_len(db, JobType.pow)
+            if current_len >= self.threshold:
+                return 0
+            return math.ceil(self.threshold * 2 - current_len)
 
     def run(self):
         while True:
             num_of_jobs = self.check_queue_stats()
             logging.info(f"will publish {num_of_jobs} pow jobs")
-            num_of_batches = math.ceil(num_of_jobs / self.batch_size)
-            for batch in range(num_of_batches):
-                contexts = [
-                    PowContext(difficulty=4, seed=secrets.token_hex(32))
-                    for _ in range(self.batch_size)
-                ]
-                logging.info(
-                    f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
-                )
-                publish(
-                    "/publish_pow_jobs",
-                    self.api_key,
-                    PublishPowJobRequest(data=contexts),
-                )
-            logging.info(f"all pow jobs published")
+
+            if num_of_jobs > 0:
+                num_of_batches = math.ceil(num_of_jobs / self.batch_size)
+                for batch in range(num_of_batches):
+                    contexts = [
+                        DataJobContext(
+                            pow_ctx=PowContext(difficulty=4, seed=secrets.token_hex(32))
+                        )
+                        for _ in range(self.batch_size)
+                    ]
+                    logging.info(
+                        f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
+                    )
+                    with self.conn.get_pg_connection() as db:
+                        add_jobs(
+                            db,
+                            JobType.pow,
+                            "mizu_admin",
+                            contexts,
+                        )
+                logging.info(f"all pow jobs published")
+
             time.sleep(self.cooldown)
 
 

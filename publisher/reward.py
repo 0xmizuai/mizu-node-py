@@ -7,7 +7,9 @@ import time
 from pydantic import BaseModel
 from redis import Redis
 from mizu_node.common import epoch, is_prod
-from mizu_node.types.data_job import RewardContext, Token
+from mizu_node.db.job_queue import add_jobs, queue_len
+from mizu_node.types.connections import Connections
+from mizu_node.types.data_job import DataJobContext, JobType, RewardContext, Token
 from mizu_node.types.service import PublishRewardJobRequest
 from publisher.common import publish
 
@@ -141,11 +143,14 @@ class RewardJobPublisher(object):
         self,
         types: list[str],
         cron_gap: int = 60,  # run every 60 seconds
+        queue_threshold: int = 10000,  # max number of pending jobs
     ):
         self.reward_configs = build_reward_configs(types)
         self.api_key = os.environ["API_SECRET_KEY"]
         self.rclient = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
         self.cron_gap = cron_gap
+        self.queue_threshold = queue_threshold
+        self.conn = Connections()
 
     def spent_key(self, config: RewardJobConfig):
         n = epoch() // config.budget.unit
@@ -173,27 +178,56 @@ class RewardJobPublisher(object):
 
     def run(self):
         while True:
+            # Check queue length before publishing
+            with self.conn.get_pg_connection() as db:
+                current_queue_len = queue_len(db, JobType.reward)
+                if current_queue_len >= self.queue_threshold:
+                    logging.info(
+                        f"Queue length ({current_queue_len}) exceeds threshold ({self.queue_threshold}), skipping reward publishing"
+                    )
+                    time.sleep(self.cron_gap)
+                    continue
+
             contexts = []
             logging.info("======= start to publish reward jobs ======")
             for config in self.reward_configs:
                 if self.lottery(config):
                     batch_size = self.get_batch_size(config)
+                    # Double check queue won't exceed threshold
+                    if (
+                        current_queue_len + len(contexts) + batch_size
+                        > self.queue_threshold
+                    ):
+                        logging.info(
+                            f"Adding {batch_size} jobs would exceed queue threshold, skipping"
+                        )
+                        break
+
                     logging.info(f"publishing {batch_size} reward jobs: {config.key}")
-                    contexts.extend([config.ctx for _ in range(batch_size)])
+                    contexts.extend(
+                        [
+                            DataJobContext(reward_ctx=config.ctx)
+                            for _ in range(batch_size)
+                        ]
+                    )
                     self.record_spent(config, batch_size)
                 else:
                     logging.info(f"no reward jobs for {config.key}")
+
             if len(contexts) > 0:
-                publish(
-                    "/publish_reward_jobs",
-                    self.api_key,
-                    PublishRewardJobRequest(data=contexts),
+                with self.conn.get_pg_connection() as db:
+                    add_jobs(
+                        db,
+                        JobType.reward,
+                        "mizu_admin",
+                        contexts,
+                    )
+                logging.info(
+                    f"Published {len(contexts)} reward jobs. Current queue length: {current_queue_len}"
                 )
-                logging.info("all reward jobs published")
             else:
                 logging.info("no reward job to publish")
 
-            # print stats every 10 runs (10 minutes)
             if random.uniform(0, 1) < 0.1:
                 self.print_stats()
             time.sleep(self.cron_gap)

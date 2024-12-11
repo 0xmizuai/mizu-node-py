@@ -18,8 +18,6 @@ from mizu_node.job_handler import (
     handle_finish_job_v2,
     handle_query_job,
     handle_take_job,
-    handle_publish_jobs,
-    handle_finish_job,
     handle_queue_len,
     validate_admin_job,
 )
@@ -40,12 +38,7 @@ from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import JobType
 from mizu_node.types.service import (
     FinishJobRequest,
-    FinishJobResponse,
     FinishJobV2Response,
-    PublishBatchClassifyJobRequest,
-    PublishJobResponse,
-    PublishPowJobRequest,
-    PublishRewardJobRequest,
     QueryJobResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
@@ -139,85 +132,12 @@ def clear_queue(job_type: JobType, caller: str = Depends(get_caller)):
     return build_ok_response()
 
 
-@app.post("/publish_pow_jobs")
-@error_handler
-def publish_pow_jobs(
-    request: PublishPowJobRequest,
-    caller: str = Depends(get_caller),
-):
-    validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, caller, JobType.pow, request.data)
-        return build_ok_response(PublishJobResponse(job_ids=ids))
-
-
-@app.post("/publish_reward_jobs")
-@error_handler
-def publish_reward_jobs(
-    request: PublishRewardJobRequest,
-    caller: str = Depends(get_caller),
-):
-    validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, caller, JobType.reward, request.data)
-        return build_ok_response(PublishJobResponse(job_ids=ids))
-
-
-@app.post("/publish_batch_classify_jobs")
-@error_handler
-def publish_batch_classify_jobs(
-    request: PublishBatchClassifyJobRequest, caller: str = Depends(get_caller)
-):
-    validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(
-            db, request.publisher, JobType.batch_classify, request.data
-        )
-        return build_ok_response(PublishJobResponse(job_ids=ids))
-
-
 @app.get("/job_status")
 @error_handler
 def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_caller)):
     with app.state.conn.get_pg_connection() as db:
         jobs = handle_query_job(db, ids)
         return build_ok_response(QueryJobResponse(jobs=jobs))
-
-
-@app.get("/reward_jobs")
-@error_handler
-def query_reward_jobs(user: str = Depends(get_user)):
-    with app.state.conn.get_pg_connection() as db:
-        jobs = get_assigned_reward_jobs(db, user)
-        return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
-
-
-TAKE_JOB = Counter("take_job", "# of take_job requests per job_type", ["job_type"])
-
-
-@app.get("/take_job")
-@error_handler
-def take_job(
-    job_type: JobType,
-    user: str = Depends(get_user),
-):
-    job = handle_take_job(app.state.conn, user, job_type)
-    TAKE_JOB.labels(job_type.name).inc()
-    return build_ok_response(TakeJobResponse(job=job))
-
-
-FINISH_JOB = Counter(
-    "finish_job", "# of finish_job requests per job_type", ["job_type"]
-)
-
-
-@app.post("/finish_job")
-@error_handler
-def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
-    points = handle_finish_job(app.state.conn, user, request.job_result)
-    job_type = request.job_result.job_type
-    FINISH_JOB.labels(job_type.name).inc()
-    return build_ok_response(FinishJobResponse(rewarded_points=points))
 
 
 @app.get("/reward_jobs_v2")
