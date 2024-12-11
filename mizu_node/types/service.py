@@ -31,6 +31,7 @@ class PublishBatchClassifyJobRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     data: list[BatchClassifyContext]
+    publisher: str
 
 
 class PublishJobResponse(BaseModel):

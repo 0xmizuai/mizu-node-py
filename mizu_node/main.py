@@ -170,7 +170,9 @@ def publish_batch_classify_jobs(
 ):
     validate_admin_job(caller)
     with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, caller, JobType.batch_classify, request.data)
+        ids = handle_publish_jobs(
+            db, request.publisher, JobType.batch_classify, request.data
+        )
         return build_ok_response(PublishJobResponse(job_ids=ids))
 
 
