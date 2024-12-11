@@ -1,7 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
 import logging
-import os
 from typing import List
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, Security, status, Depends
@@ -23,7 +22,6 @@ from mizu_node.job_handler import (
 )
 from mizu_node.security import (
     get_allowed_origins,
-    verify_jwt,
     verify_api_key,
 )
 from mizu_node.stats import (
@@ -35,17 +33,24 @@ from mizu_node.stats import (
     total_rewarded_in_past_n_hour,
 )
 from mizu_node.types.connections import Connections
-from mizu_node.types.data_job import JobType
+from mizu_node.types.data_job import DataJobContext, JobType
 from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobV2Response,
+    PublishBatchClassifyJobRequest,
+    PublishJobResponse,
     QueryJobResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
     QueryRewardJobsResponse,
     TakeJobResponse,
 )
-from mizu_node.db.job_queue import clear_jobs, get_assigned_reward_jobs, queue_clean
+from mizu_node.db.job_queue import (
+    add_jobs,
+    clear_jobs,
+    get_assigned_reward_jobs,
+    queue_clean,
+)
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -100,13 +105,6 @@ def tracing(request: Request, call_next):
 
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
-
-
-def get_user(
-    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
-) -> str:
-    token = credentials.credentials
-    return verify_jwt(token, os.environ["JWT_VERIFY_KEY"])
 
 
 def get_caller(
@@ -241,31 +239,6 @@ def get_rewards_stats(token: str, hours: int | None = None, days: int | None = N
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
-@app.get("/stats/mined_points")
-@app.get("/worker_stats/mined_points")
-@error_handler
-def get_mined_points(
-    hours: int | None = None, days: int | None = None, user=Depends(get_user)
-):
-    """
-    Return the mined points in the last `hours` hours or last `days` days.
-    """
-    if hours is None and days is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="either hours or days must be provided",
-        )
-    if hours is not None:
-        points = total_mined_points_in_past_n_hour_per_worker(
-            app.state.conn.redis, user, max(hours, 24)
-        )
-    if days is not None:
-        points = total_mined_points_in_past_n_days_per_worker(
-            app.state.conn.redis, user, max(days, 7)
-        )
-    return build_ok_response(QueryMinedPointsResponse(points=points))
-
-
 @app.get("/stats/mined_points_v2")
 @app.get("/worker_stats/mined_points_v2")
 @error_handler
@@ -293,6 +266,29 @@ def get_mined_points_v2(
             app.state.conn.redis, user, max(days, 7)
         )
     return build_ok_response(QueryMinedPointsResponse(points=points))
+
+
+@app.post("/publish_batch_classify_jobs")
+@error_handler
+def publish_reward_jobs(
+    request: PublishBatchClassifyJobRequest,
+    caller: str = Depends(get_caller),
+):
+    """
+    Manually publish batch_classify jobs
+    """
+    validate_admin_job(caller)
+    with app.state.conn.get_pg_connection() as db:
+        contexts = [
+            DataJobContext(batch_classify_ctx=ctx) for ctx in request.data[:1000]
+        ]
+        job_ids = add_jobs(
+            db,
+            JobType.batch_classify,
+            request.publisher,
+            contexts,
+        )
+        return build_ok_response(PublishJobResponse(job_ids=job_ids))
 
 
 class MyServer(uvicorn.Server):

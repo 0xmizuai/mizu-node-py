@@ -15,18 +15,6 @@ from mizu_node.types.data_job import (
 )
 
 
-class PublishPowJobRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    data: list[PowContext]
-
-
-class PublishRewardJobRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    data: list[RewardContext]
-
-
 class PublishBatchClassifyJobRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -75,12 +63,6 @@ class FinishJobRequest(BaseModel):
 
     job_result: WorkerJobResult = Field(alias="jobResult")
     user: Optional[str] = Field(default=None)
-
-
-class FinishJobResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    rewarded_points: float = Field(alias="rewardedPoints")
 
 
 class QueryMinedPointsResponse(BaseModel):

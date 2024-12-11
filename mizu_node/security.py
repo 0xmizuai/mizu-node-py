@@ -12,7 +12,6 @@ from mizu_node.constants import (
     MIZU_ADMIN_USER,
     REWARD_TTL,
 )
-import jwt
 
 from mizu_node.db.api_key import get_user_id
 from mizu_node.db.job_queue import get_reward_jobs_stats
@@ -29,27 +28,6 @@ from psycopg2.extensions import connection
 
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
-
-
-def verify_jwt(token: str, public_key: str) -> str:
-    """verify and return user is from token, raise otherwise"""
-    try:
-        # Decode and validate: expiration is automatically taken care of
-        payload = jwt.decode(jwt=token, key=public_key, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is invalid"
-            )
-        return str(user_id)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"
-        )
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token verification failed"
-        )
 
 
 def verify_api_key(pg_conn: connection, token: str) -> str:

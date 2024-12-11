@@ -9,15 +9,14 @@ import pytest
 from fastapi import status
 from unittest.mock import patch as mock_patch
 
-from mizu_node.common import epoch
-
 from mizu_node.db.api_key import create_api_key
 from mizu_node.db.common import initiate_pg_db
-from mizu_node.db.job_queue import delete_one_job, get_assigned_reward_jobs
+from mizu_node.db.job_queue import add_jobs, delete_one_job, get_assigned_reward_jobs
 from mizu_node.db.job_queue import get_jobs_info
 from mizu_node.types.data_job import (
     BatchClassifyContext,
     ClassifyResult,
+    DataJobContext,
     JobStatus,
     JobType,
     PowContext,
@@ -29,12 +28,11 @@ from mizu_node.types.data_job import (
 
 from mizu_node.types.service import (
     FinishJobRequest,
-    FinishJobResponse,
+    FinishJobV2Response,
     QueryRewardJobsResponse,
 )
 from tests.redis_mock import RedisMock
 
-import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -102,11 +100,6 @@ class MockedHttpResponse:
             raise Exception()
 
 
-def jwt_token(user: str):
-    exp = epoch() + 3600  # enough to not expire during this test
-    return jwt.encode({"sub": user, "exp": exp}, private_key, algorithm="EdDSA")
-
-
 @pytest.fixture()
 def setenvvar(monkeypatch):
     with mock.patch.dict(os.environ, clear=True):
@@ -116,6 +109,7 @@ def setenvvar(monkeypatch):
             "JWT_VERIFY_KEY": public_key_str,
             "API_SECRET_KEY": API_SECRET_KEY,
             "BACKEND_SERVICE_URL": "http://localhost:3000",
+            "WORKFLOW_SERVER_URL": "http://localhost:3000",
             "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
             "MIN_REWARD_GAP": "1800",
             "ENABLE_ACTIVE_USER_CHECK": "true",
@@ -162,33 +156,49 @@ def _new_data_job_payload(
 
 def _publish_jobs(
     client: TestClient,
+    mock_connections: MockConnections,
     job_type: JobType,
     payloads: list[RewardContext] | list[PowContext] | list[BatchClassifyContext],
 ):
     if job_type == JobType.pow:
-        endpoint = "/publish_pow_jobs"
-        token = API_SECRET_KEY
+        return add_jobs(
+            mock_connections.postgres,
+            JobType.pow,
+            "test_user1",
+            [DataJobContext(pow_ctx=ctx) for ctx in payloads],
+        )
     elif job_type == JobType.batch_classify:
         endpoint = "/publish_batch_classify_jobs"
         token = API_SECRET_KEY
+        response = client.post(
+            endpoint,
+            json={
+                "data": [p.model_dump() for p in payloads],
+                "publisher": "test_user1",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200
+        return response.json()["data"]["jobIds"]
     elif job_type == JobType.reward:
-        endpoint = "/publish_reward_jobs"
-        token = API_SECRET_KEY
+        return add_jobs(
+            mock_connections.postgres,
+            JobType.reward,
+            "test_user1",
+            [DataJobContext(reward_ctx=ctx) for ctx in payloads],
+        )
     else:
         raise ValueError(f"Invalid job type: {job_type}")
 
-    response = client.post(
-        endpoint,
-        json={"data": [p.model_dump() for p in payloads]},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 200
-    return response.json()["data"]["jobIds"]
 
-
-def _publish_jobs_simple(client: TestClient, job_type: JobType, num_jobs=3):
+def _publish_jobs_simple(
+    client: TestClient,
+    mock_connections: MockConnections,
+    job_type: JobType,
+    num_jobs=3,
+):
     payloads = [_new_data_job_payload(job_type) for i in range(num_jobs)]
-    return _publish_jobs(client, job_type, payloads)
+    return _publish_jobs(client, mock_connections, job_type, payloads)
 
 
 @pytest.fixture(scope="function")
@@ -211,15 +221,19 @@ def test_publish_jobs_simple(mock_connections):
     client = TestClient(mock_connections)
 
     # Test publishing classify jobs
-    job_ids1 = _publish_jobs_simple(client, JobType.reward, 3)
+    job_ids1 = _publish_jobs_simple(
+        client, mock_connections.state.conn, JobType.reward, 3
+    )
     assert len(job_ids1) == 3
 
     # Test publishing pow jobs
-    job_ids2 = _publish_jobs_simple(client, JobType.pow, 3)
+    job_ids2 = _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 3)
     assert len(job_ids2) == 3
 
     # Test publishing batch classify jobs
-    job_ids3 = _publish_jobs_simple(client, JobType.batch_classify, 3)
+    job_ids3 = _publish_jobs_simple(
+        client, mock_connections.state.conn, JobType.batch_classify, 3
+    )
     assert len(job_ids3) == 3
 
 
@@ -227,39 +241,38 @@ def test_take_job_ok(mock_connections):
     client = TestClient(mock_connections)
 
     # Publish jobs first
-    pids = _publish_jobs_simple(client, JobType.pow, 3)
-    rids = _publish_jobs_simple(client, JobType.reward, 3)
-    bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
+    pids = _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 3)
+    rids = _publish_jobs_simple(client, mock_connections.state.conn, JobType.reward, 3)
+    bids = _publish_jobs_simple(
+        client, mock_connections.state.conn, JobType.batch_classify, 3
+    )
 
     # Take reward job 1
-    worker1_jwt = jwt_token("worker1")
-    set_reward_stats(mock_connections.state.conn.redis, "worker1")
+    set_reward_stats(mock_connections.state.conn.redis, "test_worker1")
     response1 = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.reward)},
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.reward), "user": "test_worker1"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response1.status_code == 200
     job1 = response1.json()["data"]["job"]
     assert job1["jobType"] == JobType.reward
 
     # Take pow job 1
-    worker2_jwt = jwt_token("worker2")
     response2 = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.pow)},
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.pow), "user": "test_worker2"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response2.status_code == 200
     job2 = response2.json()["data"]["job"]
     assert job2["jobType"] == JobType.pow
 
     # Take batch classify job
-    worker3_jwt = jwt_token("worker3")
     response3 = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.batch_classify)},
-        headers={"Authorization": f"Bearer {worker3_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.batch_classify), "user": "test_worker3"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response3.status_code == 200
     job3 = response3.json()["data"]["job"]
@@ -268,84 +281,80 @@ def test_take_job_ok(mock_connections):
 
 def test_take_job_error(mock_connections):
     client = TestClient(mock_connections)
-    worker1_jwt = jwt_token("worker1")
 
     # No jobs published yet
     for _ in range(10):
         response = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.pow)},
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
+            "/take_job_v2",
+            params={"job_type": int(JobType.pow), "user": "test_worker1"},
+            headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
         )
         assert response.status_code == 200
         assert response.json()["data"].get("job", None) is None
 
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.pow)},
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.pow), "user": "test_worker1"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
     # Wrong job type (pow jobs published, trying to take batch classify job)
-    _publish_jobs_simple(client, JobType.pow, 3)
-    worker2_jwt = jwt_token("worker2")
+    _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 3)
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.batch_classify)},
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.batch_classify), "user": "test_worker2"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     assert response.json()["data"].get("job", None) is None
 
     # Blocked worker
-    worker3_jwt = jwt_token("worker3")
-    block_worker(mock_connections.state.conn.redis, "worker3")
+    block_worker(mock_connections.state.conn.redis, "test_worker3")
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.batch_classify)},
-        headers={"Authorization": f"Bearer {worker3_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.batch_classify), "user": "test_worker3"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert response.json()["message"] == "worker is blocked"
 
     # user not active for reward job
-    _publish_jobs_simple(client, JobType.reward, 3)
-    worker4_jwt = jwt_token("worker4")
+    _publish_jobs_simple(client, mock_connections.state.conn, JobType.reward, 3)
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.reward)},
-        headers={"Authorization": f"Bearer {worker4_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.reward), "user": "test_worker4"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert response.json()["message"] == "not active user"
 
     # cooling down
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.reward)},
-        headers={"Authorization": f"Bearer {worker4_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.reward), "user": "test_worker4"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
     assert response.json()["message"].startswith("please retry after")
 
     # take reward job
-    clear_cooldown(mock_connections.state.conn.redis, "worker4", JobType.reward)
-    set_reward_stats(mock_connections.state.conn.redis, "worker4")
+    clear_cooldown(mock_connections.state.conn.redis, "test_worker4", JobType.reward)
+    set_reward_stats(mock_connections.state.conn.redis, "test_worker4")
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.reward)},
-        headers={"Authorization": f"Bearer {worker4_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.reward), "user": "test_worker4"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["data"]["job"] is not None
 
     # should not be able to take another reward job
-    clear_cooldown(mock_connections.state.conn.redis, "worker4", JobType.reward)
+    clear_cooldown(mock_connections.state.conn.redis, "test_worker4", JobType.reward)
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.reward)},
-        headers={"Authorization": f"Bearer {worker4_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.reward), "user": "test_worker4"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
     assert response.json()["message"].startswith("please retry after")
@@ -357,20 +366,15 @@ def test_finish_job(mock_requests, mock_connections):
 
     mock_requests.return_value = MockedHttpResponse(200)
 
-    # Take jobs
-    worker1_jwt = jwt_token("worker1")
-    worker2_jwt = jwt_token("worker2")
-    worker3_jwt = jwt_token("worker3")
-
     # Publish jobs
-    _publish_jobs_simple(client, JobType.reward, 3)
-    _publish_jobs_simple(client, JobType.batch_classify, 3)
-    _publish_jobs_simple(client, JobType.pow, 3)
+    _publish_jobs_simple(client, mock_connections.state.conn, JobType.reward, 3)
+    _publish_jobs_simple(client, mock_connections.state.conn, JobType.batch_classify, 3)
+    _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 3)
 
     response1 = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.pow)},
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.pow), "user": "test_worker1"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response1.status_code == 200
     assert response1.json()["data"]["job"] is not None
@@ -385,24 +389,24 @@ def test_finish_job(mock_requests, mock_connections):
         pow_result="1234",
     )
     response2 = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=result).model_dump(),
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response2.status_code == status.HTTP_404_NOT_FOUND
     assert response2.json()["message"] == "lease not exists"
 
     response2 = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=result).model_dump(),
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response2.status_code == status.HTTP_404_NOT_FOUND
 
     response3 = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.batch_classify)},
-        headers={"Authorization": f"Bearer {worker3_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.batch_classify), "user": "test_worker3"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response3.status_code == 200
     assert response3.json()["data"]["job"] is not None
@@ -410,29 +414,31 @@ def test_finish_job(mock_requests, mock_connections):
 
     # Case 1.1: finishing batch classify job with classify result
     response = client.post(
-        "/finish_job",
+        "/finish_job_v2",
         json={
             "jobResult": {
                 "jobId": bid,
                 "jobType": JobType.batch_classify,
                 "classifyResult": ["t1"],
-            }
+            },
+            "user": "test_worker3",
         },
-        headers={"Authorization": f"Bearer {worker3_jwt}"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 422
 
     # Case 1.2: wrong job result
     response = client.post(
-        "/finish_job",
+        "/finish_job_v2",
         json={
             "job_result": {
                 "job_id": bid,
                 "job_type": JobType.batch_classify,
                 "classify_result": ["t1"],
-            }
+            },
+            "user": "test_worker3",
         },
-        headers={"Authorization": f"Bearer {worker3_jwt}"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 422
 
@@ -446,21 +452,23 @@ def test_finish_job(mock_requests, mock_connections):
         ],
     )
     response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=r13).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker3_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=r13, user="test_worker3").model_dump(
+            by_alias=True
+        ),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     assert response.json()["message"] == "ok"
-    resp = FinishJobResponse.model_validate(response.json()["data"])
-    assert resp.rewarded_points == 0.5
+    resp = FinishJobV2Response.model_validate(response.json()["data"])
+    assert resp.settle_reward.amount == "0.5"
 
     # Verify job 1 in database
     j1 = get_jobs_info(mock_connections.state.conn.postgres, [bid])[0]
     assert j1.job_type == JobType.batch_classify
     # the empty labels are filtered out
     assert len(j1.result.batch_classify_result) == 2
-    assert j1.worker == "worker3"
+    assert j1.worker == "test_worker3"
     assert j1.finished_at is not None
 
     # Case 1.4: finishing finished jobs
@@ -472,17 +480,19 @@ def test_finish_job(mock_requests, mock_connections):
         ],
     )
     response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=r14).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker3_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=r14, user="test_worker3").model_dump(
+            by_alias=True
+        ),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 404
 
     # Case 2: job 2 finished by worker2
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.pow)},
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.pow), "user": "test_worker2"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     assert response.json()["data"]["job"] is not None
@@ -490,32 +500,35 @@ def test_finish_job(mock_requests, mock_connections):
 
     r2 = WorkerJobResult(job_id=pid, job_type=JobType.pow, pow_result="166189")
     response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=r2).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=r2, user="test_worker2").model_dump(
+            by_alias=True
+        ),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
-    resp = FinishJobResponse.model_validate(response.json()["data"])
-    assert resp.rewarded_points == 0.5
+    resp = FinishJobV2Response.model_validate(response.json()["data"])
+    assert resp.settle_reward.amount == "0.5"
 
     # Verify job 2 in database
     j2 = get_jobs_info(mock_connections.state.conn.postgres, [pid])[0]
     assert j2.job_type == JobType.pow
     assert j2.result.pow_result == "166189"
-    assert j2.worker == "worker2"
+    assert j2.worker == "test_worker2"
     assert j2.finished_at is not None
 
     # Case 3: job expired
-    worker4_jwt = jwt_token("worker4")
-    set_reward_stats(mock_connections.state.conn.redis, "worker4")
+    set_reward_stats(mock_connections.state.conn.redis, "test_worker4")
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.reward)},
-        headers={"Authorization": f"Bearer {worker4_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.reward), "user": "test_worker4"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     job_id = response.json()["data"]["job"]["_id"]
-    rewards = get_assigned_reward_jobs(mock_connections.state.conn.postgres, "worker4")
+    rewards = get_assigned_reward_jobs(
+        mock_connections.state.conn.postgres, "test_worker4"
+    )
     assert len(rewards) == 1
 
     # Manually expire the job in postgres by setting expired_at to a past time
@@ -534,14 +547,18 @@ def test_finish_job(mock_requests, mock_connections):
         job_id=job_id, job_type=JobType.reward, reward_result=RewardResult()
     )
     response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=r3).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker4_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=r3, user="test_worker4").model_dump(
+            by_alias=True
+        ),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 404
     assert response.json()["message"] == "lease not exists"
 
-    rewards = get_assigned_reward_jobs(mock_connections.state.conn.postgres, "worker4")
+    rewards = get_assigned_reward_jobs(
+        mock_connections.state.conn.postgres, "test_worker4"
+    )
     assert len(rewards) == 0
 
 
@@ -551,8 +568,10 @@ def test_job_status(mock_requests, mock_connections):
     client = TestClient(mock_connections)
 
     # Publish jobs
-    bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
-    pids = _publish_jobs_simple(client, JobType.pow, 2)
+    bids = _publish_jobs_simple(
+        client, mock_connections.state.conn, JobType.batch_classify, 3
+    )
+    pids = _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 2)
     all_job_ids = bids + pids
 
     # Check initial status
@@ -566,11 +585,10 @@ def test_job_status(mock_requests, mock_connections):
     assert len(initial_statuses) == 5
 
     # Take and finish a batch classify job
-    worker1_jwt = jwt_token("worker1")
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.batch_classify)},
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.batch_classify), "user": "test_worker1"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     classify_job = response.json()["data"]["job"]
@@ -582,18 +600,19 @@ def test_job_status(mock_requests, mock_connections):
         batch_classify_result=[classify_result],
     )
     response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=result1).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=result1, user="test_worker1").model_dump(
+            by_alias=True
+        ),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
 
     # Take and finish a pow job
-    worker2_jwt = jwt_token("worker2")
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.pow)},
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.pow), "user": "test_worker2"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     pow_job = response.json()["data"]["job"]
@@ -602,9 +621,11 @@ def test_job_status(mock_requests, mock_connections):
         job_id=pow_job["_id"], job_type=JobType.pow, pow_result="166189"
     )
     response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=result2).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker2_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=result2, user="test_worker2").model_dump(
+            by_alias=True
+        ),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
 
@@ -634,14 +655,13 @@ def test_pow_validation(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
     client = TestClient(mock_connections)
     # Publish a PoW job
-    _publish_jobs_simple(client, JobType.pow, 1)
-    worker_jwt = jwt_token("worker1")
+    _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 1)
 
     # Take the job
     response = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.pow)},
-        headers={"Authorization": f"Bearer {worker_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.pow), "user": "test_worker1"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     job_id = response.json()["data"]["job"]["_id"]
@@ -653,9 +673,11 @@ def test_pow_validation(mock_requests, mock_connections):
         pow_result="invalid_nonce",
     )
     response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=result).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(
+            by_alias=True
+        ),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 422
     assert (
@@ -670,9 +692,11 @@ def test_pow_validation(mock_requests, mock_connections):
         pow_result="166189",
     )
     response = client.post(
-        "/finish_job",
-        json=FinishJobRequest(job_result=result).model_dump(by_alias=True),
-        headers={"Authorization": f"Bearer {worker_jwt}"},
+        "/finish_job_v2",
+        json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(
+            by_alias=True
+        ),
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
 
@@ -683,6 +707,7 @@ def test_query_reward_jobs(mock_connections):
     # Publish reward jobs
     job_ids = _publish_jobs(
         client,
+        mock_connections.state.conn,
         JobType.reward,
         [
             _build_reward_ctx(),
@@ -690,31 +715,31 @@ def test_query_reward_jobs(mock_connections):
         ],
     )
 
-    set_reward_stats(mock_connections.state.conn.redis, "worker1")
+    set_reward_stats(mock_connections.state.conn.redis, "test_worker1")
 
     # take reward jobs
     initial_time = datetime.datetime.now()
-    worker1_jwt = jwt_token("worker1")
     response1 = client.get(
-        "/take_job",
-        params={"job_type": int(JobType.reward)},
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        "/take_job_v2",
+        params={"job_type": int(JobType.reward), "user": "test_worker1"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response1.status_code == 200
 
     second_time = initial_time + datetime.timedelta(0, 2400)  # 45 minutes later
     with freeze_time(second_time):
         response2 = client.get(
-            "/take_job",
-            params={"job_type": int(JobType.reward)},
-            headers={"Authorization": f"Bearer {worker1_jwt}"},
+            "/take_job_v2",
+            params={"job_type": int(JobType.reward), "user": "test_worker1"},
+            headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
         )
         assert response2.status_code == 200
 
     # query reward jobs
     response = client.get(
-        "/reward_jobs",
-        headers={"Authorization": f"Bearer {worker1_jwt}"},
+        "/reward_jobs_v2",
+        params={"user": "test_worker1"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     records = QueryRewardJobsResponse.model_validate(response.json()["data"])
