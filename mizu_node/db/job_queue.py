@@ -141,14 +141,35 @@ def light_clean(db: connection):
         cur.execute(
             sql.SQL(
                 """
-                UPDATE job_queue 
+                UPDATE job_queue
                 SET status = %s
                 WHERE status = %s
                 AND lease_expired_at < EXTRACT(EPOCH FROM NOW())::BIGINT
-            """
+                """
             ),
             (JobStatus.pending, JobStatus.processing),
         )
+
+        # Delete completed jobs older than 7 days
+        cur.execute(
+            sql.SQL(
+                """
+                DELETE FROM job_queue 
+                WHERE status IN (%s, %s)
+                AND finished_at < EXTRACT(EPOCH FROM NOW())::BIGINT - %s
+                RETURNING id
+                """
+            ),
+            (
+                JobStatus.completed,
+                JobStatus.error,
+                7 * 24 * 60 * 60,
+            ),  # 7 days in seconds
+        )
+
+        deleted_rows = cur.fetchall()
+        if deleted_rows:
+            logging.info(f"Deleted {len(deleted_rows)} old completed jobs")
 
 
 @with_transaction
