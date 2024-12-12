@@ -1,13 +1,12 @@
+import argparse
 import logging
 import os
 import asyncio
 import aioboto3
 from botocore.config import Config
 from typing import AsyncGenerator
+from sqlalchemy.future import select
 
-from mizu_node.db.dataset import (
-    save_data_records,
-)
 from mizu_node.db.orm.data_record import DataRecord
 from mizu_node.db.orm.dataset import Dataset
 from mizu_node.types.connections import Connections
@@ -26,6 +25,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,
+    handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,6 @@ async def list_r2_objects(
     dataset_id: int, prefix: str, start_after: str = ""
 ) -> AsyncGenerator[list[dict], None]:
     """Lists objects from R2 bucket and gets their metadata in batches"""
-    logger.info(f"Starting to list objects with prefix: {prefix}, from: {start_after}")
     processed = 0
     errors = 0
 
@@ -72,7 +72,7 @@ async def list_r2_objects(
                 processed += len(records)
                 errors += len(records) - len(records)
 
-                last_md5 = records[-1]["md5"] if records else ""
+                last_md5 = records[-1].md5 if records else ""
                 logger.info(
                     f"Processed batch of {len(records)} objects for {prefix}. Total: {processed}, Errors: {errors}, Last md5: {last_md5}"
                 )
@@ -91,12 +91,12 @@ def get_last_processed_key(language: str) -> str:
     """Get the r2_key of the last processed item from the database"""
     try:
         with conn.get_query_db_session() as session:
-            last_dataset = (
-                session.query(DataRecord)
+            stmt = (
+                select(DataRecord)
                 .filter(DataRecord.language == language)
                 .order_by(DataRecord.id.desc())
-                .first()
             )
+            last_dataset = session.execute(stmt).scalar_one_or_none()
 
             if last_dataset:
                 last_key = f"{last_dataset.name}/{last_dataset.data_type}/{last_dataset.language}/{last_dataset.md5}.zz"
@@ -110,32 +110,33 @@ def get_last_processed_key(language: str) -> str:
         return ""
 
 
-async def load_dataset_for_language(name: str, data_type: int, language: str):
+async def load_dataset_for_language(
+    name: str, data_type: int, language: str, last_processed_md5: str
+):
     """Process a single language prefix"""
     try:
         total_processed = 0
         prefix = f"{name}/{data_type}/{language}"
         async with conn.get_query_db_session() as session:
-            dataset_id = (
-                session.query(Dataset)
-                .filter(
-                    Dataset.name == name,
-                    Dataset.data_type == data_type,
-                    Dataset.language == language,
-                )
-                .first()
-                .id
+            stmt = select(Dataset).filter(
+                Dataset.name == name,
+                Dataset.data_type == data_type,
+                Dataset.language == language,
             )
-        logger.info(f"Starting dataset load for {prefix}")
+            result = await session.execute(stmt)
+            dataset = result.scalar_one()
+            dataset_id = dataset.id
 
-        #        start_after = get_last_processed_key(language)
-        start_after = ""
+        start_after = f"{prefix}/{last_processed_md5}.zz"
+        logger.info(
+            f"Starting dataset load for {prefix} with dataset id {dataset_id} and start after {start_after}"
+        )
         async for batch_metadata in list_r2_objects(dataset_id, prefix, start_after):
-            if batch_metadata:
-                async with conn.get_query_db_session() as session:
-                    await save_data_records(session, batch_metadata)
-                    total_processed += len(batch_metadata)
-                    logger.info(f"Total processed for {language}: {total_processed}")
+            async with conn.get_query_db_session() as session:
+                for record in batch_metadata:
+                    await session.merge(record)
+                total_processed += len(batch_metadata)
+                logger.info(f"Total processed for {language}: {total_processed}")
 
         logger.info(
             f"Completed loading dataset {prefix}. Total processed: {total_processed}"
@@ -149,9 +150,11 @@ async def load_dataset(dataset: str, data_type: str):
     logger.info(f"Loading dataset {dataset} with data type {data_type}")
     try:
         tasks = [
-            load_dataset_for_language(dataset, data_type, lang)
+            load_dataset_for_language(
+                dataset, data_type, lang, LANGUAGES[lang].last_processed
+            )
             for lang in LANGUAGES
-            if not lang.is_finished()
+            if LANGUAGES[lang].last_processed is not None
         ]
 
         # Run all tasks concurrently
@@ -164,7 +167,18 @@ async def load_dataset(dataset: str, data_type: str):
         raise
 
 
-def start():
-    import asyncio
+parser = argparse.ArgumentParser(description="Add a new dataset to the database")
+parser.add_argument("--name", type=str, action="store", help="Name of the dataset")
+parser.add_argument(
+    "--data-type",
+    action="store",
+    type=str,
+    default="text",
+    help="Type of the dataset",
+)
 
-    asyncio.run(load_dataset("CC-MAIN-2024-46", "text"))
+args = parser.parse_args()
+
+
+def start():
+    asyncio.run(load_dataset(args.name, args.data_type))

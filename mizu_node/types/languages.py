@@ -4,7 +4,7 @@ class Lang:
         self.last_processed = last_processed
 
     def is_finished(self):
-        return self.last_processed is not None
+        return self.last_processed is None
 
 
 LANGUAGES = {

@@ -6,7 +6,6 @@ from mizu_node.db.orm.dataset import Dataset
 from mizu_node.db.orm.query import Query
 
 import logging
-from typing import List
 
 from mizu_node.types.languages import LANGUAGES
 
@@ -37,17 +36,3 @@ async def add_datasets(session: AsyncSession, dataset: str, data_type: str) -> N
 async def get_dataset(session: AsyncSession, dataset_id: int) -> Dataset:
     stmt = select(Dataset).where(Dataset.id == dataset_id)
     return (await session.execute(stmt)).scalar_one_or_none()
-
-
-async def save_data_records(session: AsyncSession, records: List[DataRecord]) -> None:
-    """Insert a batch of objects into the dataset table asynchronously
-
-    Args:
-        objects: List of dictionaries containing dataset metadata
-    """
-    try:
-        logger.info(f"Inserting batch of {len(records)} records to database")
-        session.merge(records)
-        logger.info("Successfully inserted batch to database")
-    except Exception as e:
-        logger.error(f"Error inserting batch into database: {str(e)}")
