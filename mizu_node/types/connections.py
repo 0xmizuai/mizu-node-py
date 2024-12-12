@@ -13,23 +13,34 @@ class Connections:
         query_db_url: str | None = None,
         redis: AsyncRedis | None = None,
     ):
-        self.redis = redis or AsyncRedis.from_url(
-            os.environ["REDIS_URL"], decode_responses=True
-        )
-        logging.info(f"Connected to redis at {os.environ['REDIS_URL']}")
+        if redis is not None:
+            self.redis = redis
+        else:
+            redis_url = os.environ.get("REDIS_URL", None)
+            if redis_url:
+                self.redis = AsyncRedis.from_url(redis_url, decode_responses=True)
+                logging.info(f"Connected to redis at {redis_url}")
+            else:
+                self.redis = None
 
         job_db_url = (
             job_db_url
             or os.environ.get("JOB_DB_URL", None)
             or os.environ["POSTGRES_URL"]
         )
-        self.job_db_url = job_db_url.replace("postgresql://", "postgresql+asyncpg://")
-        logging.info(f"Connecting to postgres at {self.job_db_url}")
+        if job_db_url:
+            self.job_db_url = job_db_url.replace(
+                "postgresql://", "postgresql+asyncpg://"
+            )
+            logging.info(f"Connecting to postgres at {self.job_db_url}")
 
-        self.job_db_engine = create_async_engine(self.job_db_url, echo=False)
-        self.job_db_session = sessionmaker(
-            self.job_db_engine, class_=AsyncSession, expire_on_commit=False
-        )
+            self.job_db_engine = create_async_engine(self.job_db_url, echo=False)
+            self.job_db_session = sessionmaker(
+                self.job_db_engine, class_=AsyncSession, expire_on_commit=False
+            )
+        else:
+            self.job_db_engine = None
+            self.job_db_session = None
 
         query_db_url = query_db_url or os.environ.get("QUERY_DB_URL", None)
         if query_db_url:
@@ -47,6 +58,9 @@ class Connections:
 
     @asynccontextmanager
     async def get_job_db_session(self):
+        if not self.job_db_session:
+            raise Exception("Job database is not initialized")
+
         async with self.job_db_session() as session:
             try:
                 yield session
@@ -69,7 +83,9 @@ class Connections:
                 raise
 
     async def close(self):
-        await self.job_db_engine.dispose()
+        if self.job_db_engine:
+            await self.job_db_engine.dispose()
         if self.query_db_engine:
             await self.query_db_engine.dispose()
-        await self.redis.aclose()
+        if self.redis:
+            await self.redis.aclose()

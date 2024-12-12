@@ -91,7 +91,6 @@ def setenvvar(monkeypatch, pg_db_url):
         envvars = {
             "JOB_DB_URL": pg_db_url,
             "QUERY_DB_URL": pg_db_url,
-            "REDIS_URL": "redis://localhost:6379",
             "API_SECRET_KEY": API_SECRET_KEY,
             "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
             "MIN_REWARD_GAP": "1800",
