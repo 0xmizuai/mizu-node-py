@@ -40,9 +40,8 @@ async def get_query_status(session: AsyncSession, query_id: int) -> dict:
     dataset_size = (await session.execute(stmt)).scalar_one()
 
     # Get query results count
-    stmt = select(QueryResult).where(QueryResult.query_id == query_id)
+    stmt = select(JobQueue).where(JobQueue.reference_id == query_id)
     query_results_count = len((await session.execute(stmt)).scalars().all())
-
     return {
         "query_id": query.id,
         "dataset_id": query.dataset_id,
