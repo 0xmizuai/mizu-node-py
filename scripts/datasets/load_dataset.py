@@ -6,6 +6,7 @@ import aioboto3
 from botocore.config import Config
 from typing import AsyncGenerator
 from sqlalchemy.future import select
+from sqlalchemy import insert, text
 
 from mizu_node.db.orm.data_record import DataRecord
 from mizu_node.db.orm.dataset import Dataset
@@ -133,8 +134,21 @@ async def load_dataset_for_language(
         )
         async for batch_metadata in list_r2_objects(dataset_id, prefix, start_after):
             async with conn.get_query_db_session() as session:
+                sql = """
+                    INSERT INTO data_records (dataset_id, md5, byte_size)
+                    VALUES (:dataset_id, :md5, :byte_size)
+                    ON CONFLICT (md5) DO UPDATE 
+                    SET byte_size = EXCLUDED.byte_size
+                """
                 for record in batch_metadata:
-                    await session.merge(record)
+                    await session.execute(
+                        text(sql),
+                        {
+                            "dataset_id": record.dataset_id,
+                            "md5": record.md5,
+                            "byte_size": record.byte_size,
+                        },
+                    )
                 total_processed += len(batch_metadata)
                 logger.info(f"Total processed for {language}: {total_processed}")
 
