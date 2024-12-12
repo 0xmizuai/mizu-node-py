@@ -4,8 +4,14 @@ from mizu_node.db.dataset import add_datasets
 from mizu_node.types.connections import Connections
 
 parser = argparse.ArgumentParser(description="Add a new dataset to the database")
-parser.add_argument("--name", required=True, help="Name of the dataset")
-parser.add_argument("--data-type", required=True, help="Type of the dataset")
+parser.add_argument("--name", type=str, action="store", help="Name of the dataset")
+parser.add_argument(
+    "--data-type",
+    action="store",
+    type=str,
+    default="text",
+    help="Type of the dataset",
+)
 
 args = parser.parse_args()
 

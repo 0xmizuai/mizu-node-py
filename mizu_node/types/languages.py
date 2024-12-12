@@ -71,7 +71,7 @@ LANGUAGES = {
     "ind": Lang("Indonesian"),
     "ipk": Lang("Inupiaq"),
     "isl": Lang("Icelandic"),
-    "ita": Lang("Italian", "5cc888580e57b0296a66165d0fa6c5e6"),
+    "ita": Lang("Italian", last_processed="5cc888580e57b0296a66165d0fa6c5e6"),
     "jav": Lang("Javanese"),
     "jpn": Lang("Japanese"),
     "kal": Lang("Kalaallisut"),

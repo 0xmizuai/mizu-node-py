@@ -25,13 +25,13 @@ async def get_unpublished_data_per_query(
 
 
 async def add_datasets(session: AsyncSession, dataset: str, data_type: str) -> None:
-    for lang in LANGUAGES:
+    for lang in LANGUAGES.keys():
         dataset_record = Dataset(
             name=dataset,
             data_type=data_type,
-            language=lang.name,
+            language=lang,
         )
-        session.merge(dataset_record)
+        await session.merge(dataset_record)
 
 
 async def get_dataset(session: AsyncSession, dataset_id: int) -> Dataset:

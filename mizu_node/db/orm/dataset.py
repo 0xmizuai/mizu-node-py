@@ -4,7 +4,7 @@ from mizu_node.db.orm.base import Base
 
 
 class Dataset(Base):
-    __tablename__ = "dataset"
+    __tablename__ = "datasets"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
