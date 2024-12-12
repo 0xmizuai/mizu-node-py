@@ -32,12 +32,10 @@ async def save_new_query(
 async def add_query_result(
     session: AsyncSession,
     query_id: int,
-    data_id: int,
     job_id: str,
 ) -> int:
     query_result = QueryResult(
         query_id=query_id,
-        data_id=data_id,
         job_id=job_id,
         status="pending",
     )
@@ -58,12 +56,6 @@ async def save_query_result(
         query_result.result = result.batch_classify_result or result.error_result
         query_result.finished_at = datetime.now(timezone.utc)
         query_result.status = "error" if result.error_result else "processed"
-
-        # Update the query's total_processed
-        stmt = select(Query).where(Query.id == query_result.query_id)
-        query = (await session.execute(stmt)).scalar_one_or_none()
-        if query:
-            query.total_processed = query.total_processed + 1
     else:
         raise HTTPException(status_code=404, detail="QueryResult not found")
 
@@ -145,7 +137,6 @@ async def get_unpublished_query(session: AsyncSession) -> Query:
 async def update_query_status(
     session: AsyncSession, query_id: int, status: str, last_data_id: int = None
 ):
-    """Update query status and last published data_id"""
     stmt = (
         update(Query)
         .where(Query.id == query_id)

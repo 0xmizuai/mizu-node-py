@@ -3,6 +3,7 @@ from functools import wraps
 import os
 import time
 import traceback
+import asyncio
 
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
@@ -11,7 +12,20 @@ from pydantic import BaseModel
 
 def error_handler(func):
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    async def async_wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except HTTPException as e:
+            return build_json_response(e.status_code, e.detail)
+        except Exception as e:
+            print(traceback.format_exc())
+            return build_json_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "unknown server error",
+            )
+
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except HTTPException as e:
@@ -23,7 +37,7 @@ def error_handler(func):
                 "unknown server error",
             )
 
-    return wrapper
+    return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
 
 
 def build_json_response(

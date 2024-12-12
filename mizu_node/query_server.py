@@ -10,7 +10,6 @@ from mizu_node.db.query import (
     get_query_detail,
     get_query_results,
     save_new_query,
-    save_query_result,
 )
 from mizu_node.types.connections import Connections
 from mizu_node.types.query_service import (

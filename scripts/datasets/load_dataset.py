@@ -6,7 +6,9 @@ from botocore.config import Config
 from typing import AsyncGenerator
 from sqlalchemy.sql import func
 
-from mizu_node.db.dataset import save_data_records
+from mizu_node.db.dataset import (
+    save_data_records,
+)
 from mizu_node.db.orm.data_record import DataRecord
 from mizu_node.db.orm.dataset import Dataset
 from mizu_node.types.connections import Connections
@@ -29,36 +31,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def get_object_metadata(s3_client, obj: dict) -> dict:
-    """Get metadata for a single object"""
-    try:
-        # Parse key components
-        key_parts = obj["Key"].split("/")
-        if len(key_parts) >= 4:
-            dataset = key_parts[0]
-            data_type = key_parts[1]
-            language = key_parts[2]
-            md5 = key_parts[3].replace(".zz", "")
-        else:
-            raise Exception(f"Invalid key format: {obj['Key']}")
-
-        return DataRecord(
-            name=dataset,
-            language=language,
-            data_type=data_type,
-            md5=md5,
-            num_of_records=0,
-            decompressed_byte_size=0,
-            byte_size=int(obj.get("Size", 0)),
-            source="",
-        )
-    except Exception as e:
-        logger.error(f"Error getting metadata for {obj['Key']}: {str(e)}")
-        return None
-
-
 async def list_r2_objects(
-    prefix: str = "", start_after: str = ""
+    dataset_id: int, prefix: str, start_after: str = ""
 ) -> AsyncGenerator[list[dict], None]:
     """Lists objects from R2 bucket and gets their metadata in batches"""
     logger.info(f"Starting to list objects with prefix: {prefix}, from: {start_after}")
@@ -85,21 +59,25 @@ async def list_r2_objects(
                     continue
 
                 # Process the entire page directly
-                tasks = [
-                    get_object_metadata(s3_client, obj) for obj in page["Contents"]
+                records = [
+                    DataRecord(
+                        dataset_id=dataset_id,
+                        md5=obj["Key"].split("/")[3].replace(".zz", ""),
+                        num_of_records=0,
+                        decompressed_byte_size=0,
+                        byte_size=int(obj.get("Size", 0)),
+                        source="",
+                    )
+                    for obj in page["Contents"]
                 ]
-                results = await asyncio.gather(*tasks)
+                processed += len(records)
+                errors += len(records) - len(records)
 
-                # Filter out None results (failed requests)
-                valid_results = [r for r in results if r is not None]
-                processed += len(valid_results)
-                errors += len(results) - len(valid_results)
-
-                last_md5 = valid_results[-1]["md5"] if valid_results else ""
+                last_md5 = records[-1]["md5"] if records else ""
                 logger.info(
-                    f"Processed batch of {len(valid_results)} objects for {prefix}. Total: {processed}, Errors: {errors}, Last md5: {last_md5}"
+                    f"Processed batch of {len(records)} objects for {prefix}. Total: {processed}, Errors: {errors}, Last md5: {last_md5}"
                 )
-                yield valid_results
+                yield records
 
             logger.info(
                 f"Completed listing objects for {prefix}. Total processed: {processed}, Errors: {errors}"
@@ -133,17 +111,27 @@ def get_last_processed_key(language: str) -> str:
         return ""
 
 
-async def load_dataset_for_language(dataset: str, data_type: str, language: str):
+async def load_dataset_for_language(name: str, data_type: int, language: str):
     """Process a single language prefix"""
     try:
-        prefix = f"{dataset}/{data_type}/{language}"
         total_processed = 0
-
+        prefix = f"{name}/{data_type}/{language}"
+        async with conn.get_query_db_session() as session:
+            dataset_id = (
+                session.query(Dataset)
+                .filter(
+                    Dataset.name == name,
+                    Dataset.data_type == data_type,
+                    Dataset.language == language,
+                )
+                .first()
+                .id
+            )
         logger.info(f"Starting dataset load for {prefix}")
 
         #        start_after = get_last_processed_key(language)
         start_after = ""
-        async for batch_metadata in list_r2_objects(prefix, start_after):
+        async for batch_metadata in list_r2_objects(dataset_id, prefix, start_after):
             if batch_metadata:
                 async with conn.get_query_db_session() as session:
                     await save_data_records(session, batch_metadata)
@@ -177,51 +165,7 @@ async def load_dataset(dataset: str, data_type: str):
         raise
 
 
-def update_dataset_stats():
-    """Calculate and store dataset statistics in the dataset_stats table"""
-    logger.info("Starting dataset statistics calculation")
-    try:
-        with conn.get_query_db_session() as session:
-            # Create a subquery with the stats
-            stats_subquery = (
-                session.query(
-                    DataRecord.dataset_id,
-                    func.count().label("total_objects"),
-                    func.sum(DataRecord.byte_size).label("total_bytes"),
-                )
-                .group_by(DataRecord.dataset_id)
-                .subquery()
-            )
-
-            # Update using the ORM
-            update_stmt = (
-                session.query(Dataset)
-                .filter(Dataset.id == stats_subquery.c.dataset_id)
-                .update(
-                    {
-                        Dataset.total_objects: stats_subquery.c.total_objects,
-                        Dataset.total_bytes: stats_subquery.c.total_bytes,
-                    },
-                    synchronize_session=False,
-                )
-            )
-        logger.info(f"Successfully updated statistics for {update_stmt} datasets")
-    except Exception as e:
-        logger.error(f"Error updating dataset statistics: {str(e)}")
-
-
 def start():
     import asyncio
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--stats", action="store_true", help="Update dataset statistics"
-    )
-    args = parser.parse_args()
-
-    if args.stats:
-        update_dataset_stats()
-        return
 
     asyncio.run(load_dataset("CC-MAIN-2024-46", "text"))

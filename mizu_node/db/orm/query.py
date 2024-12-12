@@ -1,6 +1,5 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Text
-from sqlalchemy.orm import relationship
 from mizu_node.db.orm.base import Base
 
 
@@ -16,11 +15,6 @@ class Query(Base):
     last_data_id_published = Column(Integer, default=0)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(datetime.UTC)
-    )
-
-    # Relationship to QueryResult
-    results = relationship(
-        "QueryResult", back_populates="query", cascade="all, delete-orphan"
     )
 
     def __repr__(self):

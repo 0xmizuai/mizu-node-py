@@ -66,11 +66,12 @@ async def handle_take_job(
                 pass
             return await handle_take_job(conn, worker, job_type)
         else:
-            return WorkerJob(
+            job = WorkerJob(
                 job_id=item_id,
                 job_type=job_type,
                 **ctx.model_dump(exclude_none=True),
             )
+            return job
 
 
 async def handle_finish_job_v2(

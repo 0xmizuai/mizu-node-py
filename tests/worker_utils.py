@@ -19,8 +19,8 @@ from tests.redis_mock import AsyncRedisMock
 from psycopg2.extensions import connection
 
 
-def block_worker(rclient: AsyncRedisMock, worker: str):
-    rclient.hset(
+async def block_worker(rclient: AsyncRedisMock, worker: str):
+    await rclient.hset(
         event_name(worker),
         BLOCKED_FIELD,
         json.dumps({"blocked": True, "updated_at": epoch()}),

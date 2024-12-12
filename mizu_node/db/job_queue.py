@@ -8,7 +8,7 @@ from typing import Tuple
 from prometheus_client import Gauge
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_, func
+from sqlalchemy import select, update, delete, and_, func, Integer
 
 from mizu_node.common import epoch
 from mizu_node.db.orm.job_queue import JobQueue
@@ -37,29 +37,41 @@ async def lease_job(
     ttl_secs: int,
     worker: str,
 ) -> Tuple[int | None, int | None, DataJobContext | None]:
-    # Single transaction that both finds and updates the job
-    stmt = (
-        update(JobQueue)
+    candidate_jobs = (
+        select(JobQueue.id, JobQueue.retry, JobQueue.ctx, func.random().label("r"))
         .where(
             and_(JobQueue.job_type == job_type, JobQueue.status == JobStatus.pending)
         )
+        .limit(100)
+        .cte("candidate_jobs")
+    )
+
+    selected_job = (
+        select(candidate_jobs.c.id, candidate_jobs.c.retry, candidate_jobs.c.ctx)
+        .order_by("r")
+        .limit(1)
+        .with_for_update(skip_locked=True)
+        .cte("selected_job")
+    )
+
+    stmt = (
+        update(JobQueue)
+        .where(JobQueue.id == selected_job.c.id)
         .values(
             status=JobStatus.processing,
-            assigned_at=epoch(),
+            assigned_at=func.extract("epoch", func.now()).cast(Integer),
             lease_expired_at=epoch() + ttl_secs,
             worker=worker,
         )
-        .returning(JobQueue)
-        .order_by(func.random())
-        .limit(1)
+        .returning(JobQueue.id, selected_job.c.retry, selected_job.c.ctx)
     )
 
     try:
         result = await session.execute(stmt)
-        job = result.scalar_one_or_none()
-        if job:
+        row = result.first()
+        if row:
             await session.commit()
-            return (job.id, job.retry, DataJobContext.model_validate(job.ctx))
+            return (row[0], row[1], DataJobContext.model_validate(row[2]))
     except Exception:
         await session.rollback()
 
@@ -276,9 +288,9 @@ QUEUE_LEN = Gauge(
 
 async def queue_clean(connections: Connections):
     while True:
-        async with connections.get_db_session() as session:
+        async with connections.get_job_db_session() as session:
             for job_type in ALL_JOB_TYPES:
-                length = await queue_len(session, job_type)
+                length = await get_queue_len(session, job_type)
                 QUEUE_LEN.labels(job_type.name).set(length)
             try:
                 logging.info("light clean start for queue")
