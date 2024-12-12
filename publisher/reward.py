@@ -3,12 +3,10 @@ import asyncio
 import logging
 import os
 import random
-import time
 
 from pydantic import BaseModel
-from redis.asyncio import AsyncRedis
 from mizu_node.common import epoch, is_prod
-from mizu_node.db.job_queue import add_jobs, queue_len
+from mizu_node.db.job_queue import add_jobs, get_queue_len
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, RewardContext, Token
 
@@ -146,9 +144,6 @@ class RewardJobPublisher(object):
     ):
         self.reward_configs = build_reward_configs(types)
         self.api_key = os.environ["API_SECRET_KEY"]
-        self.rclient = AsyncRedis.from_url(
-            os.environ["REDIS_URL"], decode_responses=True
-        )
         self.cron_gap = cron_gap
         self.queue_threshold = queue_threshold
         self.conn = Connections()
@@ -158,11 +153,11 @@ class RewardJobPublisher(object):
         return f"{config.key}:spent_per_{config.budget.unit_name}:{n}"
 
     async def spent(self, config: RewardJobConfig):
-        spent = await self.rclient.get(self.spent_key(config))
+        spent = await self.conn.redis.get(self.spent_key(config))
         return int(spent or 0)
 
     async def record_spent(self, config: RewardJobConfig, amount: float):
-        await self.rclient.incrbyfloat(self.spent_key(config), amount)
+        await self.conn.redis.incrbyfloat(self.spent_key(config), amount)
 
     async def lottery(self, config: RewardJobConfig):
         if await self.spent(config) > config.budget.budget:
@@ -181,7 +176,7 @@ class RewardJobPublisher(object):
         while True:
             # Check queue length before publishing
             async with self.conn.get_job_db_session() as db:
-                current_queue_len = await queue_len(db, JobType.reward)
+                current_queue_len = await get_queue_len(db, JobType.reward)
                 if current_queue_len >= self.queue_threshold:
                     logging.info(
                         f"Queue length ({current_queue_len}) exceeds threshold ({self.queue_threshold}), skipping reward publishing"
@@ -229,13 +224,14 @@ class RewardJobPublisher(object):
                 logging.info("no reward job to publish")
 
             if random.uniform(0, 1) < 0.1:
-                self.print_stats()
+                await self.print_stats()
             await asyncio.sleep(self.cron_gap)
 
-    def print_stats(self):
+    async def print_stats(self):
         for config in self.reward_configs:
+            spent = await self.spent(config)
             logging.info(
-                f">>>>>> {config.key} spent_per_{config.budget.unit_name}: {self.spent(config)}, budget_per_{config.budget.unit_name}: {config.budget.budget}"
+                f">>>>>> {config.key} spent_per_{config.budget.unit_name}: {spent}, budget_per_{config.budget.unit_name}: {config.budget.budget}"
             )
 
 

@@ -3,7 +3,7 @@ import logging
 import math
 import os
 import secrets
-from mizu_node.db.job_queue import queue_len, add_jobs
+from mizu_node.db.job_queue import get_queue_len, add_jobs
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, PowContext
 import asyncio
@@ -27,7 +27,7 @@ class PowDataJobPublisher(object):
 
     async def check_queue_stats(self) -> int:
         async with self.conn.get_job_db_session() as db:
-            current_len = await queue_len(db, JobType.pow)
+            current_len = await get_queue_len(db, JobType.pow)
             if current_len >= self.threshold:
                 return 0
             return math.ceil(self.threshold * 2 - current_len)
