@@ -8,8 +8,12 @@ import pytest
 from fastapi import status
 from unittest.mock import patch as mock_patch
 
-from mizu_node.db.job_queue import add_jobs, delete_one_job, get_assigned_reward_jobs
-from mizu_node.db.job_queue import get_jobs_info
+from mizu_node.db.job_queue import (
+    add_jobs,
+    delete_one_job,
+    get_assigned_reward_jobs,
+    get_job_info,
+)
 from mizu_node.db.query import add_query_result
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
@@ -451,12 +455,12 @@ async def test_finish_job(mock_requests, mock_connections):
 
         # Verify job 1 in database
         async with app.state.conn.get_job_db_session() as session:
-            j1 = (await get_jobs_info(session, [bid]))[0]
-        assert j1.job_type == JobType.batch_classify
+            j1 = await get_job_info(session, bid)
+        assert j1["job_type"] == JobType.batch_classify
         # the empty labels are filtered out
-        assert len(j1.result.batch_classify_result) == 2
-        assert j1.worker == "test_worker3"
-        assert j1.finished_at is not None
+        assert len(j1["result"]["batchClassifyResult"]) == 2
+        assert j1["worker"] == "test_worker3"
+        assert j1["finished_at"] is not None
 
         # Case 1.4: finishing finished jobs
         r14 = WorkerJobResult(
@@ -496,11 +500,11 @@ async def test_finish_job(mock_requests, mock_connections):
 
         # Verify job 2 in database
         async with app.state.conn.get_job_db_session() as session:
-            j2 = (await get_jobs_info(session, [pid]))[0]
-        assert j2.job_type == JobType.pow
-        assert j2.result.pow_result == "166189"
-        assert j2.worker == "test_worker2"
-        assert j2.finished_at is not None
+            j2 = await get_job_info(session, pid)
+        assert j2["job_type"] == JobType.pow
+        assert j2["result"]["powResult"] == "166189"
+        assert j2["worker"] == "test_worker2"
+        assert j2["finished_at"] is not None
 
         # Case 3: job expired
         await set_reward_stats(app.state.conn.redis, "test_worker4")

@@ -238,10 +238,11 @@ async def get_assigned_reward_jobs(
     ]
 
 
-async def get_job_info_raw(session: AsyncSession, id: int) -> Any:
+async def get_job_info(session: AsyncSession, id: int) -> dict:
     stmt = select(JobQueue).where(JobQueue.id == id)
     result = await session.execute(stmt)
-    return result.first()
+    row = result.first()
+    return row[0].__dict__ if row else None
 
 
 ALL_JOB_TYPES = [JobType.pow, JobType.classify, JobType.batch_classify, JobType.reward]
