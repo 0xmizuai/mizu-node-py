@@ -30,7 +30,7 @@ from mizu_node.stats import (
     total_rewarded_in_past_n_hour,
 )
 from mizu_node.types.connections import Connections
-from mizu_node.types.data_job import DataJobContext, JobType
+from mizu_node.types.data_job import JobType
 from mizu_node.types.node_service import (
     FinishJobRequest,
     FinishJobV2Response,

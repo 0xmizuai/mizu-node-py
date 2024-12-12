@@ -1,5 +1,5 @@
 -- Dataset metadata table
-CREATE TABLE IF NOT EXISTS dateset (
+CREATE TABLE IF NOT EXISTS datasets (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     language VARCHAR(10) NOT NULL,
@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS dateset (
 );
 
 -- Indexes for dataset_metadata
-CREATE INDEX idx_dataset_name ON dataset(name);
-CREATE INDEX idx_dataset_language ON dataset(language);
-CREATE INDEX idx_dataset_name_language ON dataset(name, language);
-CREATE INDEX idx_dataset_created_at ON dataset(created_at);
+CREATE INDEX idx_dataset_name ON datasets(name);
+CREATE INDEX idx_dataset_language ON datasets(language);
+CREATE INDEX idx_dataset_data_type ON datasets(data_type);
+CREATE INDEX idx_dataset_name_language_data_type ON datasets(name, language, data_type);
+CREATE INDEX idx_dataset_created_at ON datasets(created_at);

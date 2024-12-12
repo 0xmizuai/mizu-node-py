@@ -7,16 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from mizu_node.types.data_job import ClassifyResult, ErrorResult
 
 
-class QueryJobResult(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    job_id: str = Field(alias="jobId")
-    error_result: Optional[ErrorResult] = Field(alias="errorResult", default=None)
-    batch_classify_result: list[ClassifyResult] = Field(
-        alias="batchClassifyResult", default=[]
-    )
-
-
 class QueryResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

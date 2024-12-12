@@ -10,7 +10,7 @@ from mizu_node.db.dataset import save_data_records
 from mizu_node.db.orm.data_record import DataRecord
 from mizu_node.db.orm.dataset import Dataset
 from mizu_node.types.connections import Connections
-from scripts.languages import LANGUAGES
+from mizu_node.types.languages import LANGUAGES
 
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
@@ -42,16 +42,16 @@ async def get_object_metadata(s3_client, obj: dict) -> dict:
         else:
             raise Exception(f"Invalid key format: {obj['Key']}")
 
-        return {
-            "name": dataset,
-            "language": language,
-            "data_type": data_type,
-            "md5": md5,
-            "num_of_records": 0,
-            "decompressed_byte_size": 0,
-            "byte_size": int(obj.get("Size", 0)),
-            "source": "",
-        }
+        return DataRecord(
+            name=dataset,
+            language=language,
+            data_type=data_type,
+            md5=md5,
+            num_of_records=0,
+            decompressed_byte_size=0,
+            byte_size=int(obj.get("Size", 0)),
+            source="",
+        )
     except Exception as e:
         logger.error(f"Error getting metadata for {obj['Key']}: {str(e)}")
         return None

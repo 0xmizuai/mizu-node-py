@@ -20,7 +20,8 @@ class Dataset(Base):
         # Indexes
         {"index": True, "name": "idx_dataset_name"},
         {"index": True, "name": "idx_dataset_language"},
-        {"index": True, "name": "idx_dataset_name_language"},
+        {"index": True, "name": "idx_dataset_data_type"},
+        {"index": True, "name": "idx_dataset_name_language_data_type"},
         {"index": True, "name": "idx_dataset_created_at"},
     )
 

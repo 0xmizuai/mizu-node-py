@@ -4,13 +4,13 @@ import os
 
 from redis.asyncio import Redis
 from fastapi import HTTPException, status
-import requests
 
 
 from mizu_node.constants import (
     DEFAULT_POW_DIFFICULTY,
     MAX_RETRY_ALLOWED,
 )
+from mizu_node.db.query import save_query_result
 from mizu_node.security import (
     get_lease_ttl,
     validate_worker,
@@ -89,12 +89,8 @@ async def handle_finish_job_v2(
             session, job_result.job_id, job_status, build_data_job_result(job_result)
         )
         if job_result.job_type == JobType.batch_classify:
-            api_key = os.environ["API_SECRET_KEY"]
-            requests.post(
-                os.environ["WORKFLOW_SERVER_URL"] + "/save_query_result",
-                json=job_result.model_dump(exclude_none=True, by_alias=True),
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
+            async with conn.get_query_db_session() as query_db_session:
+                await save_query_result(query_db_session, job_result)
         return (
             await _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished

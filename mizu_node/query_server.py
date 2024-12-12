@@ -5,7 +5,7 @@ from typing import Annotated
 from mizu_node.common import build_ok_response, error_handler
 from contextlib import asynccontextmanager
 import uvicorn
-from mizu_node.db.queries import (
+from mizu_node.db.query import (
     get_owned_queries,
     get_query_detail,
     get_query_results,
@@ -19,7 +19,6 @@ from mizu_node.types.query_service import (
     QueryDetails,
     QueryList,
     QueryResult,
-    QueryJobResult,
     RegisterQueryRequest,
     RegisterQueryResponse,
 )
@@ -70,16 +69,6 @@ async def register_query(
             user=query.user,
         )
         return build_ok_response(RegisterQueryResponse(query_id=query_id))
-
-
-@app.post("/save_query_result")
-@error_handler
-async def save_query_result_callback(
-    result: QueryJobResult, _: Annotated[bool, Depends(verify_internal_service)]
-):
-    async with app.state.conn.get_query_db_session() as db:
-        await save_query_result(db, result)
-        return build_ok_response()
 
 
 @app.get("/queries/{query_id}/results", response_model=PaginatedQueryResults)
@@ -182,7 +171,3 @@ def start_dev():
         reload=True,
         reload_dirs=["app"],
     )
-
-
-if __name__ == "__main__":
-    start_dev()

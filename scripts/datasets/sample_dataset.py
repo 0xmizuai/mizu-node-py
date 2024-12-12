@@ -33,34 +33,17 @@ async def process_combination(session, combo, sample_size: int, batch_size: int 
         )
 
         if samples:
-            # Convert to dictionaries
-            records = [
-                {
-                    "name": s.name,
-                    "language": s.language,
-                    "data_type": s.data_type,
-                    "md5": s.md5,
-                    "num_of_records": s.num_of_records,
-                    "decompressed_byte_size": s.decompressed_byte_size,
-                    "byte_size": s.byte_size,
-                    "source": s.source,
-                }
-                for s in samples
-            ]
-
-            # Process in batches
             batches = [
-                records[i : i + batch_size] for i in range(0, len(records), batch_size)
+                samples[i : i + batch_size] for i in range(0, len(samples), batch_size)
             ]
             await asyncio.gather(
                 *[save_data_records(session, batch) for batch in batches]
             )
 
             logger.info(
-                f"Processed {len(records)} records for {combo.name}/{combo.language}/{combo.data_type}"
+                f"Processed {len(samples)} records for {combo.name}/{combo.language}/{combo.data_type}"
             )
-            return len(records)
-
+            return len(samples)
         return 0
 
     except Exception as e:
@@ -125,7 +108,7 @@ async def sample_datasets(source_db_url: str, sample_size: int = 100000):
         await source_engine.dispose()
 
 
-def main():
+def start():
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -141,7 +124,3 @@ def main():
     args = parser.parse_args()
 
     asyncio.run(sample_datasets(args.source_db, args.sample_size))
-
-
-if __name__ == "__main__":
-    main()
