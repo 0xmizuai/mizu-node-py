@@ -1,9 +1,8 @@
 import asyncio
 from contextlib import asynccontextmanager
 import logging
-from typing import List
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request, status, Depends
+from fastapi import FastAPI, HTTPException, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from prometheus_client import Counter, Histogram, make_asgi_app
@@ -33,7 +32,6 @@ from mizu_node.types.data_job import JobType
 from mizu_node.types.node_service import (
     FinishJobRequest,
     FinishJobV2Response,
-    QueryJobResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
     QueryRewardJobsResponse,
@@ -41,7 +39,6 @@ from mizu_node.types.node_service import (
 )
 from mizu_node.db.job_queue import (
     get_assigned_reward_jobs,
-    get_jobs_info,
     get_queue_len,
     queue_clean,
 )

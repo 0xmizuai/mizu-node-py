@@ -50,7 +50,6 @@ publish_reward = "publisher.reward:start"
 publish_batch_classify = "publisher.batch_classify:start"
 
 backup = "scripts.backup:main"
-client = "scripts.client:main"
 import = "scripts.importer:main"
 
 load_dataset = "scripts.datasets.load_dataset:start"

@@ -15,11 +15,10 @@ from mizu_node.db.orm.job_queue import JobQueue
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     DataJobContext,
-    DataJobResult,
     JobStatus,
     JobType,
 )
-from mizu_node.types.node_service import DataJobQueryResult, RewardJobRecord
+from mizu_node.types.node_service import RewardJobRecord
 
 logging.basicConfig(level=logging.INFO)
 
@@ -185,39 +184,6 @@ async def get_job_lease(
     result = await session.execute(stmt)
     row = result.first()
     return (DataJobContext.model_validate(row[0]), row[1]) if row else (None, None)
-
-
-async def get_jobs_info(
-    session: AsyncSession, item_ids: list[int]
-) -> list[DataJobQueryResult]:
-    if not item_ids:
-        return []
-
-    stmt = select(
-        JobQueue.id,
-        JobQueue.job_type,
-        JobQueue.status,
-        JobQueue.ctx,
-        JobQueue.result,
-        JobQueue.worker,
-        JobQueue.finished_at,
-    ).where(JobQueue.id.in_(item_ids))
-
-    result = await session.execute(stmt)
-    rows = result.all()
-
-    return [
-        DataJobQueryResult(
-            job_id=row[0],
-            job_type=row[1],
-            status=row[2],
-            context=DataJobContext.model_validate(row[3]),
-            result=(DataJobResult.model_validate(row[4]) if row[4] else None),
-            worker=row[5],
-            finished_at=row[6],
-        )
-        for row in rows
-    ]
 
 
 async def get_reward_jobs_stats(

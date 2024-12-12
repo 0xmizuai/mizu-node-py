@@ -180,10 +180,6 @@ parser.add_argument("--env", type=str, action="store", default="local")
 args = parser.parse_args()
 
 
-async def main():
+def main():
     env = os.environ.get("RAILWAY_ENVIRONMENT_NAME", "local")
-    await backup(args.env or env)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(backup(args.env or env))
