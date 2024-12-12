@@ -10,7 +10,6 @@ from fastapi import status
 from unittest.mock import patch as mock_patch
 
 from mizu_node.db.api_key import create_api_key
-from mizu_node.db.common import initiate_pg_db
 from mizu_node.db.job_queue import add_jobs, delete_one_job, get_assigned_reward_jobs
 from mizu_node.db.job_queue import get_jobs_info
 from mizu_node.types.data_job import (
@@ -26,7 +25,7 @@ from mizu_node.types.data_job import (
     WorkerJobResult,
 )
 
-from mizu_node.types.service import (
+from mizu_node.types.node_service import (
     FinishJobRequest,
     FinishJobV2Response,
     QueryRewardJobsResponse,
@@ -36,6 +35,7 @@ from tests.redis_mock import RedisMock
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from tests.utils import initiate_pg_db
 from tests.worker_utils import (
     block_worker,
     clear_cooldown,
@@ -155,7 +155,6 @@ def _new_data_job_payload(
 
 
 def _publish_jobs(
-    client: TestClient,
     mock_connections: MockConnections,
     job_type: JobType,
     payloads: list[RewardContext] | list[PowContext] | list[BatchClassifyContext],
@@ -168,18 +167,12 @@ def _publish_jobs(
             [DataJobContext(pow_ctx=ctx) for ctx in payloads],
         )
     elif job_type == JobType.batch_classify:
-        endpoint = "/publish_batch_classify_jobs"
-        token = API_SECRET_KEY
-        response = client.post(
-            endpoint,
-            json={
-                "data": [p.model_dump() for p in payloads],
-                "publisher": "test_user1",
-            },
-            headers={"Authorization": f"Bearer {token}"},
+        return add_jobs(
+            mock_connections.postgres,
+            JobType.batch_classify,
+            "test_user1",
+            [DataJobContext(reward_ctx=ctx) for ctx in payloads],
         )
-        assert response.status_code == 200
-        return response.json()["data"]["jobIds"]
     elif job_type == JobType.reward:
         return add_jobs(
             mock_connections.postgres,
@@ -192,13 +185,12 @@ def _publish_jobs(
 
 
 def _publish_jobs_simple(
-    client: TestClient,
     mock_connections: MockConnections,
     job_type: JobType,
     num_jobs=3,
 ):
     payloads = [_new_data_job_payload(job_type) for i in range(num_jobs)]
-    return _publish_jobs(client, mock_connections, job_type, payloads)
+    return _publish_jobs(mock_connections, job_type, payloads)
 
 
 @pytest.fixture(scope="function")
@@ -206,7 +198,7 @@ def mock_connections(monkeypatch, pg_conn, setenvvar):
     monkeypatch.setattr("mizu_node.types.connections.Connections", MockConnections)
     mock_conn = MockConnections(postgres=pg_conn, redis=RedisMock())
 
-    from mizu_node.main import app
+    from mizu_node.node_server import app
 
     app.state.conn = mock_conn
 
@@ -221,18 +213,16 @@ def test_publish_jobs_simple(mock_connections):
     client = TestClient(mock_connections)
 
     # Test publishing classify jobs
-    job_ids1 = _publish_jobs_simple(
-        client, mock_connections.state.conn, JobType.reward, 3
-    )
+    job_ids1 = _publish_jobs_simple(mock_connections.state.conn, JobType.reward, 3)
     assert len(job_ids1) == 3
 
     # Test publishing pow jobs
-    job_ids2 = _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 3)
+    job_ids2 = _publish_jobs_simple(mock_connections.state.conn, JobType.pow, 3)
     assert len(job_ids2) == 3
 
     # Test publishing batch classify jobs
     job_ids3 = _publish_jobs_simple(
-        client, mock_connections.state.conn, JobType.batch_classify, 3
+        mock_connections.state.conn, JobType.batch_classify, 3
     )
     assert len(job_ids3) == 3
 
@@ -241,11 +231,9 @@ def test_take_job_ok(mock_connections):
     client = TestClient(mock_connections)
 
     # Publish jobs first
-    pids = _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 3)
-    rids = _publish_jobs_simple(client, mock_connections.state.conn, JobType.reward, 3)
-    bids = _publish_jobs_simple(
-        client, mock_connections.state.conn, JobType.batch_classify, 3
-    )
+    _publish_jobs_simple(mock_connections.state.conn, JobType.pow, 3)
+    _publish_jobs_simple(mock_connections.state.conn, JobType.reward, 3)
+    _publish_jobs_simple(mock_connections.state.conn, JobType.batch_classify, 3)
 
     # Take reward job 1
     set_reward_stats(mock_connections.state.conn.redis, "test_worker1")
@@ -300,7 +288,7 @@ def test_take_job_error(mock_connections):
     assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
     # Wrong job type (pow jobs published, trying to take batch classify job)
-    _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 3)
+    _publish_jobs_simple(mock_connections.state.conn, JobType.pow, 3)
     response = client.get(
         "/take_job_v2",
         params={"job_type": int(JobType.batch_classify), "user": "test_worker2"},
@@ -320,7 +308,7 @@ def test_take_job_error(mock_connections):
     assert response.json()["message"] == "worker is blocked"
 
     # user not active for reward job
-    _publish_jobs_simple(client, mock_connections.state.conn, JobType.reward, 3)
+    _publish_jobs_simple(mock_connections.state.conn, JobType.reward, 3)
     response = client.get(
         "/take_job_v2",
         params={"job_type": int(JobType.reward), "user": "test_worker4"},
@@ -367,9 +355,9 @@ def test_finish_job(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
 
     # Publish jobs
-    _publish_jobs_simple(client, mock_connections.state.conn, JobType.reward, 3)
-    _publish_jobs_simple(client, mock_connections.state.conn, JobType.batch_classify, 3)
-    _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 3)
+    _publish_jobs_simple(mock_connections.state.conn, JobType.reward, 3)
+    _publish_jobs_simple(mock_connections.state.conn, JobType.batch_classify, 3)
+    _publish_jobs_simple(mock_connections.state.conn, JobType.pow, 3)
 
     response1 = client.get(
         "/take_job_v2",
@@ -568,10 +556,8 @@ def test_job_status(mock_requests, mock_connections):
     client = TestClient(mock_connections)
 
     # Publish jobs
-    bids = _publish_jobs_simple(
-        client, mock_connections.state.conn, JobType.batch_classify, 3
-    )
-    pids = _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 2)
+    bids = _publish_jobs_simple(mock_connections.state.conn, JobType.batch_classify, 3)
+    pids = _publish_jobs_simple(mock_connections.state.conn, JobType.pow, 2)
     all_job_ids = bids + pids
 
     # Check initial status
@@ -655,7 +641,7 @@ def test_pow_validation(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
     client = TestClient(mock_connections)
     # Publish a PoW job
-    _publish_jobs_simple(client, mock_connections.state.conn, JobType.pow, 1)
+    _publish_jobs_simple(mock_connections.state.conn, JobType.pow, 1)
 
     # Take the job
     response = client.get(
@@ -706,7 +692,6 @@ def test_query_reward_jobs(mock_connections):
 
     # Publish reward jobs
     job_ids = _publish_jobs(
-        client,
         mock_connections.state.conn,
         JobType.reward,
         [

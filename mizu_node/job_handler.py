@@ -2,10 +2,11 @@ from hashlib import sha512
 import logging
 import os
 
-from redis import Redis
+from redis.asyncio import Redis
 from fastapi import HTTPException, status
 import requests
 
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from mizu_node.constants import (
     DEFAULT_POW_DIFFICULTY,
@@ -37,39 +38,37 @@ from mizu_node.db.job_queue import (
     get_jobs_info,
     get_job_lease,
     lease_job,
-    queue_len,
 )
-from mizu_node.types.service import DataJobQueryResult, SettleRewardRequest
-from psycopg2.extensions import connection
+from mizu_node.types.node_service import DataJobQueryResult, SettleRewardRequest
 
-logging.basicConfig(level=logging.INFO)  # Set the desired logging level
+logging.basicConfig(level=logging.INFO)
 
 
-def handle_query_job(
-    pg_conn: connection, job_ids: list[int]
+async def handle_query_job(
+    session: AsyncSession, job_ids: list[int]
 ) -> list[DataJobQueryResult] | None:
     if not job_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
         )
     job_ids = [int(id) for id in job_ids]
-    return get_jobs_info(pg_conn, job_ids)
+    return await get_jobs_info(session, job_ids)
 
 
-def handle_take_job(
+async def handle_take_job(
     conn: Connections, worker: str, job_type: JobType
 ) -> WorkerJob | None:
-    with conn.get_pg_connection() as pg_conn:
-        validate_worker(conn.redis, pg_conn, worker, job_type)
-        result = lease_job(pg_conn, job_type, get_lease_ttl(job_type), worker)
+    async with conn.get_db_session() as session:
+        await validate_worker(conn.redis, session, worker, job_type)
+        result = await lease_job(session, job_type, get_lease_ttl(job_type), worker)
         if result is None:
             return None
 
         (item_id, retry, ctx) = result
         if retry > MAX_RETRY_ALLOWED:
             try:
-                complete_job(
-                    pg_conn,
+                await complete_job(
+                    session,
                     item_id,
                     JobStatus.error,
                     DataJobResult(
@@ -79,7 +78,7 @@ def handle_take_job(
             except HTTPException as e:
                 logging.warning(f"failed to retire job {item_id} with error {e.detail}")
                 pass
-            return handle_take_job(conn, worker, job_type)
+            return await handle_take_job(conn, worker, job_type)
         else:
             job = WorkerJob(
                 job_id=item_id,
@@ -101,19 +100,19 @@ def build_data_job_result(job_result: WorkerJobResult) -> DataJobResult:
     raise ValueError(f"unsupported job type: {job_result.job_type}")
 
 
-def handle_finish_job_v2(
+async def handle_finish_job_v2(
     conn: Connections, worker: str, job_result: WorkerJobResult
 ) -> SettleRewardRequest | None:
-    with conn.get_pg_connection() as pg_conn:
+    async with conn.get_db_session() as session:
         job_id = int(job_result.job_id)
-        ctx, assigner = get_job_lease(pg_conn, job_id, job_result.job_type)
+        ctx, assigner = await get_job_lease(session, job_id, job_result.job_type)
         if assigner != worker:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
         job_status = _validate_job_result(ctx, job_result)
-        complete_job(
-            pg_conn, job_result.job_id, job_status, build_data_job_result(job_result)
+        await complete_job(
+            session, job_result.job_id, job_status, build_data_job_result(job_result)
         )
         if job_result.job_type == JobType.batch_classify:
             api_key = os.environ["API_SECRET_KEY"]
@@ -123,14 +122,10 @@ def handle_finish_job_v2(
                 headers={"Authorization": f"Bearer {api_key}"},
             )
         return (
-            _calculate_reward_v2(conn.redis, worker, ctx, job_result)
+            await _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished
             else None
         )
-
-
-def handle_queue_len(pg_conn: connection, job_type: JobType) -> int:
-    return queue_len(pg_conn, job_type)
 
 
 def validate_admin_job(caller: str):
@@ -163,10 +158,11 @@ def _validate_job_result(ctx: DataJobContext, result: WorkerJobResult) -> JobSta
     return JobStatus.finished
 
 
-def _calculate_reward(
+async def _calculate_reward_v2(
     rclient: Redis, worker: str, ctx: DataJobContext, result: WorkerJobResult
 ) -> SettleRewardRequest:
     if result.job_type == JobType.reward:
+        await record_claim_event(rclient, ctx.reward_ctx)
         return SettleRewardRequest(
             job_id=result.job_id,
             job_type=result.job_type,
@@ -176,36 +172,9 @@ def _calculate_reward(
             recipient=result.reward_result.recipient,
         )
 
-    past_24h_points = total_mined_points_in_past_n_hour_per_worker(rclient, worker, 24)
-    if past_24h_points < 2500:
-        factor = 1
-    elif past_24h_points < 5000:
-        factor = (5000 - past_24h_points) / 5000
-    else:
-        factor = 0
-    return SettleRewardRequest(
-        job_id=result.job_id,
-        job_type=result.job_type,
-        worker=worker,
-        amount=str(0.5 * factor),
+    past_24h_points = await total_mined_points_in_past_n_hour_per_worker(
+        rclient, worker, 24
     )
-
-
-def _calculate_reward_v2(
-    rclient: Redis, worker: str, ctx: DataJobContext, result: WorkerJobResult
-) -> SettleRewardRequest:
-    if result.job_type == JobType.reward:
-        record_claim_event(rclient, ctx.reward_ctx)
-        return SettleRewardRequest(
-            job_id=result.job_id,
-            job_type=result.job_type,
-            worker=worker,
-            token=ctx.reward_ctx.token,
-            amount=str(ctx.reward_ctx.amount),
-            recipient=result.reward_result.recipient,
-        )
-
-    past_24h_points = total_mined_points_in_past_n_hour_per_worker(rclient, worker, 24)
     if past_24h_points < 2500:
         factor = 1
     elif past_24h_points < 5000:
@@ -213,7 +182,7 @@ def _calculate_reward_v2(
     else:
         factor = 0
     rewarded = 0.5 * factor
-    record_mined_points(rclient, worker, rewarded)
+    await record_mined_points(rclient, worker, rewarded)
     return SettleRewardRequest(
         job_id=result.job_id,
         job_type=result.job_type,

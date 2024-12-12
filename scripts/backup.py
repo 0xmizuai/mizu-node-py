@@ -4,7 +4,8 @@ import os
 from datetime import datetime
 from typing import Callable, Dict
 import zlib
-import boto3
+import aioboto3
+import asyncio
 from pydantic import BaseModel, Field
 import pymongo
 import redis
@@ -12,19 +13,13 @@ import redis
 from mizu_node.common import epoch
 from mizu_node.stats import event_name, mined_per_day_field, mined_per_hour_field
 
-logging.basicConfig(level=logging.INFO)  # Set the desired logging level
+logging.basicConfig(level=logging.INFO)
 
 
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 R2_BACKCUP_BUCKET_NAME = "mongo-backup"
-r2 = boto3.resource(
-    "s3",
-    endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
-    aws_access_key_id=R2_ACCESS_KEY,
-    aws_secret_access_key=R2_SECRET_KEY,
-)
 
 REDIS_URL = os.environ["REDIS_URL"]
 logging.info(f"Connecting to redis at {REDIS_URL}")
@@ -58,23 +53,35 @@ def inspect_by_user(env: str, u: str):
     load_backups(filter, env=env, verbose=False)
 
 
-def load_backups(filter: Callable, env: str, verbose: bool = False):
-    keys = r2.meta.client.list_objects_v2(
-        Bucket=R2_BACKCUP_BUCKET_NAME, Prefix=f"{env}/mizu_users/"
-    )
-    for obj in keys.get("Contents", []):
-        epoch = int(obj["Key"].split("/")[-1].split(".")[0])
-        logging.info(f"Loading backup file {epoch}.zz: {datetime.fromtimestamp(epoch)}")
-        file = f"{env}/mizu_users/{epoch}.zz"
-        load_backup(file, filter, verbose)
+# Replace synchronous boto3 initialization with async session
+session = aioboto3.Session()
 
 
-def load_backup(file: str, filter: Callable, verbose: bool = False):
-    obj = r2.meta.client.get_object(
+async def load_backups(filter: Callable, env: str, verbose: bool = False):
+    async with session.resource(
+        "s3",
+        endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=R2_ACCESS_KEY,
+        aws_secret_access_key=R2_SECRET_KEY,
+    ) as r2:
+        keys = await r2.meta.client.list_objects_v2(
+            Bucket=R2_BACKCUP_BUCKET_NAME, Prefix=f"{env}/mizu_users/"
+        )
+        for obj in keys.get("Contents", []):
+            epoch = int(obj["Key"].split("/")[-1].split(".")[0])
+            logging.info(
+                f"Loading backup file {epoch}.zz: {datetime.fromtimestamp(epoch)}"
+            )
+            file = f"{env}/mizu_users/{epoch}.zz"
+            await load_backup(r2, file, filter, verbose)
+
+
+async def load_backup(r2, file: str, filter: Callable, verbose: bool = False):
+    obj = await r2.meta.client.get_object(
         Bucket=R2_BACKCUP_BUCKET_NAME,
         Key=file,
     )
-    compressed = obj["Body"].read()
+    compressed = await obj["Body"].read()
     json_str = zlib.decompress(compressed).decode("utf-8")
     users = [UserRecord.model_validate_json(line) for line in json_str.split("\n")]
     for user in users:
@@ -116,7 +123,7 @@ def restore(epoch: int):
     logging.info("Backup file restored")
 
 
-def backup(env: str):
+async def backup(env: str):
     now = int(epoch())
     logging.info("Backing up user data to R2")
     hour = now // 3600
@@ -153,12 +160,18 @@ def backup(env: str):
     json_str = "\n".join([user.model_dump_json() for user in users])
     compressed = zlib.compress(json_str.encode("utf-8"))
     logging.info("Uploading user data")
-    r2.meta.client.put_object(
-        Bucket=R2_BACKCUP_BUCKET_NAME,
-        Key=f"{env}/mizu_users/{epoch()}.zz",
-        Body=compressed,
-        ContentLength=len(compressed),
-    )
+    async with session.resource(
+        "s3",
+        endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=R2_ACCESS_KEY,
+        aws_secret_access_key=R2_SECRET_KEY,
+    ) as r2:
+        await r2.meta.client.put_object(
+            Bucket=R2_BACKCUP_BUCKET_NAME,
+            Key=f"{env}/mizu_users/{epoch()}.zz",
+            Body=compressed,
+            ContentLength=len(compressed),
+        )
     logging.info("Backup done")
 
 
@@ -167,6 +180,10 @@ parser.add_argument("--env", type=str, action="store", default="local")
 args = parser.parse_args()
 
 
-def main():
+async def main():
     env = os.environ.get("RAILWAY_ENVIRONMENT_NAME", "local")
-    backup(args.env or env)
+    await backup(args.env or env)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

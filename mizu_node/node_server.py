@@ -17,7 +17,6 @@ from mizu_node.job_handler import (
     handle_finish_job_v2,
     handle_query_job,
     handle_take_job,
-    handle_queue_len,
     validate_admin_job,
 )
 from mizu_node.security import (
@@ -34,11 +33,9 @@ from mizu_node.stats import (
 )
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType
-from mizu_node.types.service import (
+from mizu_node.types.node_service import (
     FinishJobRequest,
     FinishJobV2Response,
-    PublishBatchClassifyJobRequest,
-    PublishJobResponse,
     QueryJobResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
@@ -49,20 +46,27 @@ from mizu_node.db.job_queue import (
     add_jobs,
     clear_jobs,
     get_assigned_reward_jobs,
+    get_queue_len,
     queue_clean,
 )
 
-logging.basicConfig(level=logging.INFO)  # Set the desired logging level
+logging.basicConfig(level=logging.INFO)
 
 # Security scheme
 bearer_scheme = HTTPBearer()
 
 
+async def get_caller(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+) -> str:
+    async with app.state.conn.get_db_session() as session:
+        return await verify_api_key(session, credentials.credentials)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.conn = Connections()
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, queue_clean, app.state.conn)
+    asyncio.create_task(queue_clean(app.state.conn))
     yield
 
 
@@ -77,7 +81,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+# Prometheus metrics setup
 REQUEST_TOTAL = Counter("app_http_request_count", "Total App HTTP Request")
 REQUEST_TOTAL_WITH_LABEL = Counter(
     "app_http_request_count_with_label",
@@ -87,18 +91,18 @@ REQUEST_TOTAL_WITH_LABEL = Counter(
 
 OVERALL_LATENCY_WITH_LABEL = Histogram(
     "app_http_request_overall_latency_ms",
-    "Overal Latency of App HTTP Request With Labels",
+    "Overall Latency of App HTTP Request With Labels",
     ["endpoint"],
     buckets=LATENCY_BUCKETS,
 )
 
 
-@app.middleware("tracing")
-def tracing(request: Request, call_next):
+@app.middleware("http")
+async def tracing(request: Request, call_next):
     REQUEST_TOTAL.inc()
     REQUEST_TOTAL_WITH_LABEL.labels(request.url.path).inc()
     start_time = epoch_ms()
-    response = call_next(request)
+    response = await call_next(request)
     OVERALL_LATENCY_WITH_LABEL.labels(request.url.path).observe(epoch_ms() - start_time)
     return response
 
@@ -107,43 +111,37 @@ metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
 
-def get_caller(
-    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
-) -> str:
-    token = credentials.credentials
-    with app.state.conn.get_pg_connection() as db:
-        return verify_api_key(db, token)
-
-
 @app.get("/")
 @app.get("/healthcheck")
-def default():
+async def default():
     return {"status": "ok"}
 
 
 @app.post("/clear_queue")
 @error_handler
-def clear_queue(job_type: JobType, caller: str = Depends(get_caller)):
+async def clear_queue(job_type: JobType, caller: str = Depends(get_caller)):
     validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        clear_jobs(db, job_type)
+    async with app.state.conn.get_db_session() as session:
+        await clear_jobs(session, job_type)
     return build_ok_response()
 
 
 @app.get("/job_status")
 @error_handler
-def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_caller)):
-    with app.state.conn.get_pg_connection() as db:
-        jobs = handle_query_job(db, ids)
+async def query_job_status(
+    ids: List[str] = Query(None), caller: str = Depends(get_caller)
+):
+    async with app.state.conn.get_db_session() as session:
+        jobs = await handle_query_job(session, ids)
         return build_ok_response(QueryJobResponse(jobs=jobs))
 
 
 @app.get("/reward_jobs_v2")
 @error_handler
-def query_reward_jobs(user: str, caller=Depends(get_caller)):
+async def query_reward_jobs(user: str, caller: str = Depends(get_caller)):
     validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        jobs = get_assigned_reward_jobs(db, user)
+    async with app.state.conn.get_db_session() as session:
+        jobs = await get_assigned_reward_jobs(session, user)
         return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
 
 
@@ -154,13 +152,13 @@ TAKE_JOB_V2 = Counter(
 
 @app.get("/take_job_v2")
 @error_handler
-def take_job_v2(
+async def take_job_v2(
     job_type: JobType,
     user: str,
     caller: str = Depends(get_caller),
 ):
     validate_admin_job(caller)
-    job = handle_take_job(app.state.conn, user, job_type)
+    job = await handle_take_job(app.state.conn, user, job_type)
     TAKE_JOB_V2.labels(job_type.name).inc()
     return build_ok_response(TakeJobResponse(job=job))
 
@@ -172,14 +170,14 @@ FINISH_JOB_V2 = Counter(
 
 @app.post("/finish_job_v2")
 @error_handler
-def finish_job_v2(request: FinishJobRequest, caller: str = Depends(get_caller)):
+async def finish_job_v2(request: FinishJobRequest, caller: str = Depends(get_caller)):
     validate_admin_job(caller)
     if request.user is None or request.user == "":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="user must be provided",
         )
-    settle_reward = handle_finish_job_v2(
+    settle_reward = await handle_finish_job_v2(
         app.state.conn, request.user, request.job_result
     )
     job_type = request.job_result.job_type
@@ -190,50 +188,50 @@ def finish_job_v2(request: FinishJobRequest, caller: str = Depends(get_caller)):
 @app.get("/stats/queue_len")
 @app.get("/global_stats/queue_len")
 @error_handler
-def queue_len(job_type: JobType = JobType.pow):
-    """
-    Return the number of queued classify jobs.
-    """
-    with app.state.conn.get_pg_connection() as db:
-        q_len = handle_queue_len(db, job_type)
+async def queue_len(job_type: JobType = JobType.pow):
+    """Return the number of queued classify jobs."""
+    async with app.state.conn.get_db_session() as session:
+        q_len = await get_queue_len(session, job_type)
         return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 
 @app.get("/global_stats/mined_points")
 @error_handler
-def get_mined_points_stats(hours: int | None = None, days: int | None = None):
-    """
-    Return the mined points in the last `hours` hours or last `days` days.
-    """
+async def get_mined_points_stats(hours: int | None = None, days: int | None = None):
+    """Return the mined points in the last `hours` hours or last `days` days."""
     if hours is None and days is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_mined_points_in_past_n_hour(app.state.conn.redis, max(hours, 24))
+        points = await total_mined_points_in_past_n_hour(
+            app.state.conn.redis, max(hours, 24)
+        )
     if days is not None:
-        points = total_mined_points_in_past_n_days(app.state.conn.redis, max(days, 7))
+        points = await total_mined_points_in_past_n_days(
+            app.state.conn.redis, max(days, 7)
+        )
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
 @app.get("/global_stats/rewards")
 @error_handler
-def get_rewards_stats(token: str, hours: int | None = None, days: int | None = None):
-    """
-    Return the mined points in the last `hours` hours or last `days` days.
-    """
+async def get_rewards_stats(
+    token: str, hours: int | None = None, days: int | None = None
+):
+    """Return the mined points in the last `hours` hours or last `days` days."""
     if hours is None and days is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_rewarded_in_past_n_hour(
+        points = await total_rewarded_in_past_n_hour(
             app.state.conn.redis, token, max(hours, 24)
         )
     if days is not None:
-        points = total_rewarded_in_past_n_days(
+        points = await total_rewarded_in_past_n_days(
             app.state.conn.redis, token, max(days, 7)
         )
     return build_ok_response(QueryMinedPointsResponse(points=points))
@@ -242,15 +240,13 @@ def get_rewards_stats(token: str, hours: int | None = None, days: int | None = N
 @app.get("/stats/mined_points_v2")
 @app.get("/worker_stats/mined_points_v2")
 @error_handler
-def get_mined_points_v2(
+async def get_mined_points_v2(
     user: str,
     hours: int | None = None,
     days: int | None = None,
-    caller=Depends(get_caller),
+    caller: str = Depends(get_caller),
 ):
-    """
-    Return the mined points in the last `hours` hours or last `days` days.
-    """
+    """Return the mined points in the last `hours` hours or last `days` days."""
     validate_admin_job(caller)
     if hours is None and days is None:
         raise HTTPException(
@@ -258,37 +254,14 @@ def get_mined_points_v2(
             detail="either hours or days must be provided",
         )
     if hours is not None:
-        points = total_mined_points_in_past_n_hour_per_worker(
+        points = await total_mined_points_in_past_n_hour_per_worker(
             app.state.conn.redis, user, max(hours, 24)
         )
     if days is not None:
-        points = total_mined_points_in_past_n_days_per_worker(
+        points = await total_mined_points_in_past_n_days_per_worker(
             app.state.conn.redis, user, max(days, 7)
         )
     return build_ok_response(QueryMinedPointsResponse(points=points))
-
-
-@app.post("/publish_batch_classify_jobs")
-@error_handler
-def publish_reward_jobs(
-    request: PublishBatchClassifyJobRequest,
-    caller: str = Depends(get_caller),
-):
-    """
-    Manually publish batch_classify jobs
-    """
-    validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        contexts = [
-            DataJobContext(batch_classify_ctx=ctx) for ctx in request.data[:1000]
-        ]
-        job_ids = add_jobs(
-            db,
-            JobType.batch_classify,
-            request.publisher,
-            contexts,
-        )
-        return build_ok_response(PublishJobResponse(job_ids=job_ids))
 
 
 class MyServer(uvicorn.Server):
@@ -309,10 +282,8 @@ async def run():
 
 
 def start_dev():
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(run())
+    asyncio.run(run())
 
 
-# the number of workers is defined by $WEB_CONCURRENCY env as default
 def start():
     uvicorn.run("mizu_node.main:app", host=["::", "0.0.0.0"], lifespan="on", port=8000)

@@ -7,7 +7,6 @@ from mizu_node.types.data_job import (
     DataJobResult,
     JobStatus,
     JobType,
-    PowContext,
     RewardContext,
     Token,
     WorkerJob,

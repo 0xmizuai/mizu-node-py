@@ -13,10 +13,11 @@ redis = "^5.1.1"
 pyjwt = {extras = ["crypto"], version = "^2.9.0"}
 requests = "^2.32.3"
 fastapi-cors = "^0.0.6"
-boto3 = "^1.35.70"
 prometheus-client = "^0.21.0"
 psycopg2-binary = "^2.9.10"
 
+sqlalchemy = "^2.0.36"
+aioboto3 = "^13.2.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 pre-commit = "^4.0.1"
@@ -36,11 +37,12 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-dev = "mizu_node.main:start_dev"
-start = "mizu_node.main:start"
+dev = "mizu_node.node_server:start_dev"
+start = "mizu_node.node_server:start"
 publish_pow = "publisher.pow:start"
 publish_reward = "publisher.reward:start"
-backup = "scripts.backup:main"
+publish_batch_classify = "publisher.batch_classify:start"
 
+backup = "scripts.backup:main"
 client = "scripts.client:main"
 import = "scripts.importer:main"

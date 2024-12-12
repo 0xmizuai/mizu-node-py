@@ -1,5 +1,3 @@
-import os
-from unittest import mock
 from fastapi import HTTPException
 import pytest
 import testing.postgresql
@@ -20,15 +18,14 @@ from tests.worker_utils import (
 
 @pytest.fixture()
 def setenvvar(monkeypatch):
-    with mock.patch.dict(os.environ, clear=True):
-        envvars = {
-            "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
-            "MIN_REWARD_GAP": "60",
-            "ENABLE_ACTIVE_USER_CHECK": "true",
-        }
-        for k, v in envvars.items():
-            monkeypatch.setenv(k, v)
-        yield
+    envvars = {
+        "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
+        "MIN_REWARD_GAP": "60",
+        "ENABLE_ACTIVE_USER_CHECK": "true",
+    }
+    for k, v in envvars.items():
+        monkeypatch.setenv(k, v)
+    yield
 
 
 @pytest.fixture(scope="session")

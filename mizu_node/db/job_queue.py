@@ -1,17 +1,17 @@
+import asyncio
 import logging
 import os
 import random
-import time
 from typing import Any, Tuple
 from typing import Tuple
 
 from prometheus_client import Gauge
-from psycopg2 import sql
 from pydantic import BaseModel
-from psycopg2.extensions import connection
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete, and_, func, text
 
 from mizu_node.common import epoch
-from mizu_node.db.common import with_transaction
+from mizu_node.db.orm.job_queue import JobQueue
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     DataJobContext,
@@ -19,12 +19,11 @@ from mizu_node.types.data_job import (
     JobStatus,
     JobType,
 )
-from mizu_node.types.service import DataJobQueryResult, RewardJobRecord
+from mizu_node.types.node_service import DataJobQueryResult, RewardJobRecord
 
+logging.basicConfig(level=logging.INFO)
 
 JOB_TTL = int(os.environ.get("JOB_TTL", 7 * 24 * 60 * 60))  # 7 days in seconds
-
-logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 def get_random_offset():
@@ -32,287 +31,239 @@ def get_random_offset():
     return random.randint(0, max_concurrent_lease)
 
 
-@with_transaction
-def lease_job(
-    db: connection,
+async def lease_job(
+    session: AsyncSession,
     job_type: JobType,
     ttl_secs: int,
     worker: str,
-) -> Tuple[int, int, DataJobContext] | None:
-    """Optimized job leasing with less contention."""
-    with db.cursor() as cur:
-        # Add randomization to reduce contention
-        cur.execute(
-            sql.SQL(
-                """
-                WITH candidate_jobs AS (
-                    SELECT id, retry, ctx,
-                           random() as r  -- Add randomization
-                    FROM job_queue
-                    WHERE job_type = %s
-                    AND status = %s
-                    LIMIT 100  -- Get a batch of candidates
-                ),
-                selected_job AS (
-                    SELECT id, retry, ctx
-                    FROM candidate_jobs
-                    ORDER BY r  -- Random order
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                )
-                UPDATE job_queue j
-                SET status = %s,
-                    assigned_at = EXTRACT(EPOCH FROM NOW())::BIGINT,
-                    lease_expired_at = %s,
-                    worker = %s
-                FROM selected_job s
-                WHERE j.id = s.id
-                RETURNING j.id, s.retry, s.ctx
-                """
-            ),
-            (
-                job_type,
-                JobStatus.pending,
-                JobStatus.processing,
-                epoch() + ttl_secs,
-                worker,
-            ),
+) -> Tuple[int | None, int | None, DataJobContext | None]:
+    # Single transaction that both finds and updates the job
+    stmt = (
+        update(JobQueue)
+        .where(
+            and_(JobQueue.job_type == job_type, JobQueue.status == JobStatus.pending)
         )
+        .values(
+            status=JobStatus.processing,
+            assigned_at=epoch(),
+            lease_expired_at=epoch() + ttl_secs,
+            worker=worker,
+        )
+        .returning(JobQueue)
+        .order_by(func.random())
+        .limit(1)
+    )
 
-        row = cur.fetchone()
-        if row is None:
-            return None
+    try:
+        result = await session.execute(stmt)
+        job = result.scalar_one_or_none()
+        if job:
+            await session.commit()
+            return (job.id, job.retry, DataJobContext.model_validate(job.ctx))
+    except Exception:
+        await session.rollback()
 
-        item_id, retry, ctx = row
-        return (item_id, retry, DataJobContext.model_validate(ctx))
+    return None
 
 
-@with_transaction
 def add_jobs(
-    db: connection,
+    session: AsyncSession,
+    contexts: list[DataJobContext],
     job_type: JobType,
     publisher: str,
-    contexts: list[BaseModel],
 ) -> list[int]:
-    with db.cursor() as cur:
-        inserted_ids = []
-        for ctx in contexts:
-            cur.execute(
-                sql.SQL(
-                    """
-                        INSERT INTO job_queue (job_type, ctx, publisher) 
-                        VALUES (%s, %s::jsonb, %s)
-                        RETURNING id
-                        """
-                ),
-                (
-                    job_type,
-                    ctx.model_dump_json(by_alias=True, exclude_none=True),
-                    publisher,
-                ),
-            )
-            inserted_ids.append(cur.fetchone()[0])
-        return inserted_ids
+    jobs = [
+        JobQueue(
+            job_type=job_type,
+            ctx=ctx.model_dump(by_alias=True, exclude_none=True),
+            publisher=publisher,
+        )
+        for ctx in contexts
+    ]
+
+    session.add_all(jobs)
+    return [job.id for job in jobs]
 
 
-@with_transaction
-def complete_job(
-    db: connection, item_id: int, status: JobStatus, result: BaseModel
+async def complete_job(
+    session: AsyncSession, item_id: int, status: JobStatus, result: BaseModel
 ) -> bool:
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                """UPDATE job_queue
-                SET status = %s, result = %s::jsonb
-                WHERE id = %s
-                """
-            ),
-            (
-                status,
-                result.model_dump_json(by_alias=True, exclude_none=True),
-                item_id,
-            ),
+    stmt = (
+        update(JobQueue)
+        .where(JobQueue.id == item_id)
+        .values(
+            status=status,
+            result=result.model_dump(by_alias=True, exclude_none=True),
+            finished_at=epoch(),
         )
-        return cur.rowcount > 0
+    )
+    result = await session.execute(stmt)
+    await session.commit()
+    return result.rowcount > 0
 
 
-@with_transaction
-def light_clean(db: connection):
-    with db.cursor() as cur:
-        # Reset expired processing jobs back to pending
-        cur.execute(
-            sql.SQL(
-                """
-                UPDATE job_queue
-                SET status = %s
-                WHERE status = %s
-                AND lease_expired_at < EXTRACT(EPOCH FROM NOW())::BIGINT
-                """
-            ),
-            (JobStatus.pending, JobStatus.processing),
+async def light_clean(session: AsyncSession):
+    # Reset expired processing jobs back to pending
+    stmt = (
+        update(JobQueue)
+        .where(
+            and_(
+                JobQueue.status == JobStatus.processing,
+                JobQueue.lease_expired_at < epoch(),
+            )
         )
+        .values(status=JobStatus.pending)
+    )
+    await session.execute(stmt)
 
-        # Delete completed jobs older than 7 days
-        cur.execute(
-            sql.SQL(
-                """
-                DELETE FROM job_queue 
-                WHERE status IN (%s, %s)
-                AND finished_at < EXTRACT(EPOCH FROM NOW())::BIGINT - %s
-                RETURNING id
-                """
-            ),
-            (
-                JobStatus.finished,
-                JobStatus.error,
-                JOB_TTL,
-            ),
+    # Delete completed jobs older than JOB_TTL
+    stmt = (
+        delete(JobQueue)
+        .where(
+            and_(
+                JobQueue.status.in_([JobStatus.finished, JobStatus.error]),
+                JobQueue.finished_at < epoch() - JOB_TTL,
+            )
         )
+        .returning(JobQueue.id)
+    )
 
-        deleted_rows = cur.fetchall()
-        if deleted_rows:
-            logging.info(f"Deleted {len(deleted_rows)} old completed jobs")
+    result = await session.execute(stmt)
+    deleted_rows = result.scalars().all()
 
+    await session.commit()
 
-@with_transaction
-def clear_jobs(db: connection, job_type: JobType) -> None:
-    with db.cursor() as cur:
-        cur.execute(sql.SQL("DELETE FROM job_queue WHERE job_type = %s"), (job_type,))
-
-
-@with_transaction
-def delete_one_job(db: connection, item_id: int) -> None:
-    with db.cursor() as cur:
-        cur.execute(sql.SQL("DELETE FROM job_queue WHERE id = %s"), (item_id,))
+    if deleted_rows:
+        logging.info(f"Deleted {len(deleted_rows)} old completed jobs")
 
 
-@with_transaction
-def queue_len(db: connection, job_type: JobType) -> int:
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                "SELECT COUNT(*) FROM job_queue WHERE job_type = %s AND status = %s"
-            ),
-            (job_type, JobStatus.pending),
+async def clear_jobs(session: AsyncSession, job_type: JobType) -> None:
+    stmt = delete(JobQueue).where(JobQueue.job_type == job_type)
+    await session.execute(stmt)
+
+
+async def delete_one_job(session: AsyncSession, item_id: int) -> None:
+    stmt = delete(JobQueue).where(JobQueue.id == item_id)
+    await session.execute(stmt)
+
+
+async def get_queue_len(session: AsyncSession, job_type: JobType) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(JobQueue)
+        .where(
+            and_(JobQueue.job_type == job_type, JobQueue.status == JobStatus.pending)
         )
-        return cur.fetchone()[0]
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one()
 
 
-@with_transaction
-def get_job_lease(
-    db: connection, item_id: int, job_type: JobType
+async def get_job_lease(
+    session: AsyncSession, item_id: int, job_type: JobType
 ) -> Tuple[DataJobContext | None, str | None]:
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                """
-                SELECT ctx, worker
-                FROM job_queue 
-                WHERE id = %s 
-                AND job_type = %s 
-                AND status = %s
-                AND lease_expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
-            """
-            ),
-            (item_id, job_type, JobStatus.processing),
+    stmt = select(JobQueue.ctx, JobQueue.worker).where(
+        and_(
+            JobQueue.id == item_id,
+            JobQueue.job_type == job_type,
+            JobQueue.status == JobStatus.processing,
+            JobQueue.lease_expired_at > epoch(),
         )
-        row = cur.fetchone()
-        return (DataJobContext.model_validate(row[0]), row[1]) if row else (None, None)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    return (DataJobContext.model_validate(row[0]), row[1]) if row else (None, None)
 
 
-@with_transaction
-def get_jobs_info(db: connection, item_ids: list[int]) -> list[DataJobQueryResult]:
+async def get_jobs_info(
+    session: AsyncSession, item_ids: list[int]
+) -> list[DataJobQueryResult]:
     if not item_ids:
         return []
 
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                """
-                SELECT id, job_type, status, ctx, result, worker, finished_at
-                FROM job_queue 
-                WHERE id = ANY(%s)
-                """
-            ),
-            (item_ids,),
-        )
-        rows = cur.fetchall()
+    stmt = select(
+        JobQueue.id,
+        JobQueue.job_type,
+        JobQueue.status,
+        JobQueue.ctx,
+        JobQueue.result,
+        JobQueue.worker,
+        JobQueue.finished_at,
+    ).where(JobQueue.id.in_(item_ids))
 
-        return [
-            DataJobQueryResult(
-                job_id=row[0],
-                job_type=row[1],
-                status=row[2],
-                context=DataJobContext.model_validate(row[3]),
-                result=(DataJobResult.model_validate(row[4]) if row[4] else None),
-                worker=row[5],
-                finished_at=row[6],
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    return [
+        DataJobQueryResult(
+            job_id=row[0],
+            job_type=row[1],
+            status=row[2],
+            context=DataJobContext.model_validate(row[3]),
+            result=(DataJobResult.model_validate(row[4]) if row[4] else None),
+            worker=row[5],
+            finished_at=row[6],
+        )
+        for row in rows
+    ]
+
+
+async def get_reward_jobs_stats(
+    session: AsyncSession, worker: str
+) -> Tuple[int, int | None]:
+    stmt = select(
+        func.count().label("job_count"),
+        func.max(JobQueue.assigned_at).label("last_assigned_at"),
+    ).where(
+        and_(
+            JobQueue.job_type == JobType.reward,
+            JobQueue.status == JobStatus.processing,
+            JobQueue.worker == worker,
+            JobQueue.lease_expired_at > epoch(),
+        )
+    )
+
+    result = await session.execute(stmt)
+    row = result.first()
+    return row[0], row[1]
+
+
+async def get_assigned_reward_jobs(
+    session: AsyncSession, worker: str
+) -> list[RewardJobRecord]:
+    stmt = (
+        select(
+            JobQueue.id, JobQueue.assigned_at, JobQueue.lease_expired_at, JobQueue.ctx
+        )
+        .where(
+            and_(
+                JobQueue.job_type == JobType.reward,
+                JobQueue.status == JobStatus.processing,
+                JobQueue.worker == worker,
+                JobQueue.lease_expired_at > epoch(),
             )
-            for row in rows
-        ]
-
-
-@with_transaction
-def get_reward_jobs_stats(db: connection, worker: str) -> Tuple[int, int | None]:
-    """Get count and last assigned time of rewarding jobs for a worker.
-
-    Returns:
-        Tuple of (count, last_assigned_at)
-        last_assigned_at will be None if no jobs exist
-    """
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                """
-                SELECT
-                    COUNT(*) as job_count,
-                    MAX(assigned_at) as last_assigned_at
-                FROM job_queue
-                WHERE job_type = %s
-                AND status = %s
-                AND worker = %s
-                AND lease_expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
-                """
-            ),
-            (JobType.reward, JobStatus.processing, worker),
         )
-        count, last_assigned = cur.fetchone()
-        return count, last_assigned
+        .order_by(JobQueue.lease_expired_at.asc())
+    )
 
+    result = await session.execute(stmt)
+    rows = result.all()
 
-@with_transaction
-def get_assigned_reward_jobs(db: connection, worker: str) -> list[RewardJobRecord]:
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                """
-                SELECT id, assigned_at, lease_expired_at, ctx
-                FROM job_queue
-                WHERE job_type = %s
-                AND status = %s
-                AND worker = %s
-                AND lease_expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
-                ORDER BY lease_expired_at ASC
-                """
-            ),
-            (JobType.reward, JobStatus.processing, worker),
+    return [
+        RewardJobRecord(
+            job_id=row[0],
+            assigned_at=row[1],
+            lease_expired_at=row[2],
+            reward_ctx=DataJobContext.model_validate(row[3]).reward_ctx,
         )
-        return [
-            RewardJobRecord(
-                job_id=row[0],
-                assigned_at=row[1],
-                lease_expired_at=row[2],
-                reward_ctx=DataJobContext.model_validate(row[3]).reward_ctx,
-            )
-            for row in cur.fetchall()
-        ]
+        for row in rows
+    ]
 
 
-@with_transaction
-def get_job_info_raw(db: connection, id: int) -> list[Tuple[Any, ...]]:
-    with db.cursor() as cur:
-        cur.execute(sql.SQL("SELECT * FROM job_queue WHERE id = %s"), (id,))
-        return cur.fetchone()
+async def get_job_info_raw(session: AsyncSession, id: int) -> Any:
+    stmt = select(JobQueue).where(JobQueue.id == id)
+    result = await session.execute(stmt)
+    return result.first()
 
 
 ALL_JOB_TYPES = [JobType.pow, JobType.classify, JobType.batch_classify, JobType.reward]
@@ -324,16 +275,17 @@ QUEUE_LEN = Gauge(
 )
 
 
-def queue_clean(conn: Connections):
+async def queue_clean(connections: Connections):
     while True:
-        with conn.get_pg_connection() as db:
+        async with connections.get_db_session() as session:
             for job_type in ALL_JOB_TYPES:
-                QUEUE_LEN.labels(job_type.name).set(queue_len(db, job_type))
+                length = await queue_len(session, job_type)
+                QUEUE_LEN.labels(job_type.name).set(length)
             try:
-                logging.info(f"light clean start for queue {str(job_type)}")
-                light_clean(db)
-                logging.info(f"light clean done for queue {str(job_type)}")
+                logging.info("light clean start for queue")
+                await light_clean(session)
+                logging.info("light clean done for queue")
             except Exception as e:
-                logging.error(f"failed to clean queue {job_type} with error {e}")
+                logging.error(f"failed to clean queue with error {e}")
                 continue
-            time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
+            await asyncio.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))

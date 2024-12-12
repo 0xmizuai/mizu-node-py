@@ -1,7 +1,8 @@
 import os
 
 from fastapi import HTTPException, status
-from redis import Redis
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from mizu_node.common import epoch
 from mizu_node.constants import (
@@ -23,18 +24,17 @@ from mizu_node.stats import (
 from mizu_node.types.data_job import (
     JobType,
 )
-from mizu_node.types.service import CooldownConfig
-from psycopg2.extensions import connection
+from mizu_node.types.node_service import CooldownConfig
 
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
 
 
-def verify_api_key(pg_conn: connection, token: str) -> str:
+async def verify_api_key(db: AsyncSession, token: str) -> str:
     if token == os.environ["API_SECRET_KEY"]:
         return MIZU_ADMIN_USER
 
-    user_id = get_user_id(pg_conn, token)
+    user_id = await get_user_id(db, token)
     if user_id is None or user_id == MIZU_ADMIN_USER:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="API key is invalid"
@@ -42,15 +42,15 @@ def verify_api_key(pg_conn: connection, token: str) -> str:
     return user_id
 
 
-def validate_worker(
-    redis: Redis, pg_conn: connection, worker: str, job_type: JobType
+async def validate_worker(
+    redis: Redis, db: AsyncSession, worker: str, job_type: JobType
 ) -> bool:
     rate_limit_key = rate_limit_field(job_type)
     fields = [BLOCKED_FIELD, rate_limit_key]
     day = epoch() // 86400
     if job_type == JobType.reward:
         fields.extend([mined_per_day_field(day - i) for i in range(0, 7)])
-    values = redis.hmget(event_name(worker), fields)
+    values = await redis.hmget(event_name(worker), fields)
 
     # check if worker is blocked
     if values[0] is not None:
@@ -70,11 +70,11 @@ def validate_worker(
             detail=f"please retry after {config.interval} seconds",
         )
     request_ts.append(str(now))
-    redis.hset(event_name(worker), rate_limit_key, ",".join(request_ts))
+    await redis.hset(event_name(worker), rate_limit_key, ",".join(request_ts))
 
     if job_type == JobType.reward:
         # check total unclaimed rewards
-        count, last_assigned = get_reward_jobs_stats(pg_conn, worker)
+        count, last_assigned = await get_reward_jobs_stats(db, worker)
         if count >= MAX_UNCLAIMED_REWARD:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -99,6 +99,7 @@ def validate_worker(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="not active user",
             )
+    return True
 
 
 def get_lease_ttl(job_type: JobType) -> int:
