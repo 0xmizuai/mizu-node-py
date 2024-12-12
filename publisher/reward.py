@@ -220,7 +220,6 @@ class RewardJobPublisher(object):
                     await add_jobs(
                         db,
                         JobType.reward,
-                        "mizu_admin",
                         contexts,
                     )
                 logging.info(

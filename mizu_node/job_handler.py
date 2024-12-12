@@ -10,7 +10,6 @@ from mizu_node.constants import (
     DEFAULT_POW_DIFFICULTY,
     MAX_RETRY_ALLOWED,
 )
-from mizu_node.db.query import save_query_result
 from mizu_node.security import (
     get_lease_ttl,
     validate_worker,
@@ -85,11 +84,16 @@ async def handle_finish_job_v2(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
         job_status = _validate_job_result(ctx, job_result)
-        result = DataJobResult(**job_result.model_dump(exclude={"job_id", "job_type"}))
+        if (
+            job_result.job_type == JobType.batch_classify
+            and job_result.batch_classify_result is None
+        ):
+            result = None
+        else:
+            result = DataJobResult(
+                **job_result.model_dump(exclude={"job_id", "job_type"})
+            )
         await complete_job(session, job_id, job_status, result)
-        if job_result.job_type == JobType.batch_classify:
-            async with conn.get_query_db_session() as query_db_session:
-                await save_query_result(query_db_session, job_id, result)
         return (
             await _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished
@@ -112,11 +116,14 @@ def _validate_job_result(ctx: DataJobContext, result: WorkerJobResult) -> JobSta
                     detail="invalid pow_result: hash does not meet difficulty requirement",
                 )
     elif result.job_type == JobType.batch_classify:
-        result.batch_classify_result = [
+        valid_results = [
             result
-            for result in result.batch_classify_result
+            for result in (result.batch_classify_result or [])
             if result.uri and result.text
         ]
+        result.batch_classify_result = (
+            None if len(valid_results) == 0 else valid_results
+        )
     return JobStatus.finished
 
 

@@ -18,6 +18,7 @@ class JobQueue(Base):
     result = Column(JSON)
     finished_at = Column(BigInteger, nullable=False, default=0)
     worker = Column(String(255))
+    reference_id = Column(Integer)
     retry = Column(Integer, nullable=False, default=0)
 
     # Recreate the indexes from the SQL schema
@@ -27,9 +28,10 @@ class JobQueue(Base):
         Index("idx_published_at", "published_at"),
         Index("idx_lease_expired_at", "lease_expired_at"),
         Index("idx_worker", "worker"),
+        Index("idx_reference_id", "reference_id"),
     )
 
     def __repr__(self):
         return (
-            f"<JobQueue(id={self.id}, job_type={self.job_type}, status={self.status})>"
+            f"<JobQueue(id={self.id}, job_type={self.job_type}, status={self.status}>"
         )

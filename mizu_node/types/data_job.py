@@ -141,10 +141,6 @@ class WorkerJobResult(DataJobResult):
             JobType.reward: (self.reward_result, "reward_result"),
             JobType.classify: (self.classify_result, "classify_result"),
             JobType.pow: (self.pow_result, "pow_result"),
-            JobType.batch_classify: (
-                self.batch_classify_result,
-                "batch_classify_result",
-            ),
         }
         if self.job_type in result_map:
             result, name = result_map[self.job_type]

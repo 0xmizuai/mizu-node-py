@@ -80,14 +80,14 @@ async def lease_job(
 async def add_jobs(
     session: AsyncSession,
     job_type: JobType,
-    publisher: str,
     contexts: list[DataJobContext],
+    reference_id: int | None = None,
 ) -> list[int]:
     jobs = [
         JobQueue(
             job_type=job_type,
             ctx=ctx.model_dump(by_alias=True, exclude_none=True),
-            publisher=publisher,
+            reference_id=reference_id,
         )
         for ctx in contexts
     ]
@@ -97,14 +97,17 @@ async def add_jobs(
 
 
 async def complete_job(
-    session: AsyncSession, item_id: int, status: JobStatus, result: BaseModel
+    session: AsyncSession, item_id: int, status: JobStatus, result: BaseModel | None
 ) -> bool:
+
     stmt = (
         update(JobQueue)
         .where(JobQueue.id == item_id)
         .values(
             status=status,
-            result=result.model_dump(by_alias=True, exclude_none=True),
+            result=(
+                result.model_dump(by_alias=True, exclude_none=True) if result else None
+            ),
             finished_at=epoch(),
         )
     )
@@ -127,25 +130,41 @@ async def light_clean(session: AsyncSession):
     )
     await session.execute(stmt)
 
-    # Delete completed jobs older than JOB_TTL
+    # Delete completed pow/reward/classify jobs
     stmt = (
         delete(JobQueue)
         .where(
             and_(
                 JobQueue.status.in_([JobStatus.finished, JobStatus.error]),
+                JobQueue.job_type.in_([JobType.pow, JobType.classify, JobType.reward]),
                 JobQueue.finished_at < epoch() - JOB_TTL,
             )
         )
         .returning(JobQueue.id)
     )
+    result1 = await session.execute(stmt)
+    deleted_rows1 = result1.scalars().count()
 
-    result = await session.execute(stmt)
-    deleted_rows = result.scalars().all()
-
+    # Delete completed batch_classify jobs with no result
+    stmt = (
+        delete(JobQueue)
+        .where(
+            and_(
+                JobQueue.status == JobStatus.finished,
+                JobQueue.job_type == JobType.batch_classify,
+                JobQueue.result.is_(None),
+                JobQueue.finished_at < epoch() - JOB_TTL,
+            )
+        )
+        .returning(JobQueue.id)
+    )
+    result2 = await session.execute(stmt)
+    deleted_rows2 = result2.scalars().count()
     await session.commit()
 
+    deleted_rows = deleted_rows1 + deleted_rows2
     if deleted_rows:
-        logging.info(f"Deleted {len(deleted_rows)} old completed jobs")
+        logging.info(f"Deleted {deleted_rows} old completed jobs")
 
 
 async def clear_jobs(session: AsyncSession, job_type: JobType) -> None:

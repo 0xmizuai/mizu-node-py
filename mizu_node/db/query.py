@@ -1,12 +1,10 @@
-from datetime import datetime, timezone
-from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 
 from mizu_node.db.orm.dataset import Dataset
+from mizu_node.db.orm.job_queue import JobQueue
 from mizu_node.db.orm.query import Query
-from mizu_node.db.orm.query_result import QueryResult
-from mizu_node.types.data_job import DataJobResult, WorkerJobResult
+from mizu_node.types.data_job import JobStatus
 
 
 async def save_new_query(
@@ -27,64 +25,6 @@ async def save_new_query(
     session.add(query_obj)
     await session.flush()  # To get the ID
     return query_obj.id
-
-
-async def add_query_result(
-    session: AsyncSession,
-    query_id: int,
-    job_id: str,
-) -> int:
-    query_result = QueryResult(
-        query_id=query_id,
-        job_id=job_id,
-        status="pending",
-    )
-    session.add(query_result)
-    await session.flush()
-    return query_result.id
-
-
-async def save_query_result(
-    session: AsyncSession,
-    job_id: int,
-    result: DataJobResult,
-) -> int:
-    stmt = select(QueryResult).where(QueryResult.job_id == job_id)
-    query_result = (await session.execute(stmt)).scalar_one_or_none()
-
-    if query_result:
-        query_result.result = result.model_dump(exclude_none=True, by_alias=True)
-        query_result.finished_at = datetime.now(timezone.utc)
-        query_result.status = "error" if result.error_result else "processed"
-    else:
-        raise HTTPException(status_code=404, detail="QueryResult not found")
-
-    await session.flush()
-    return query_result.id
-
-
-async def get_query_results(
-    session: AsyncSession, query_id: int, page: int = 1, page_size: int = 1000
-) -> tuple[list, int]:
-    # Get total count
-    stmt = select(QueryResult).where(QueryResult.query_id == query_id)
-    total = len((await session.execute(stmt)).scalars().all())
-
-    # Get paginated results
-    stmt = (
-        select(QueryResult)
-        .where(
-            QueryResult.query_id == query_id,
-            QueryResult.status == "processed",
-            QueryResult.result.isnot(None),
-        )
-        .order_by(QueryResult.id)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    results = (await session.execute(stmt)).scalars().all()
-
-    return results, total
 
 
 async def get_query_status(session: AsyncSession, query_id: int) -> dict:
@@ -144,3 +84,27 @@ async def update_query_status(
     )
     await session.execute(stmt)
     await session.commit()
+
+
+async def get_query_results(
+    session: AsyncSession, query_id: int, page: int = 1, page_size: int = 1000
+) -> tuple[list, int]:
+    # Get total count
+    stmt = select(JobQueue).where(JobQueue.reference_id == query_id)
+    total = len((await session.execute(stmt)).scalars().all())
+
+    # Get paginated results
+    stmt = (
+        select(JobQueue)
+        .where(
+            JobQueue.reference_id == query_id,
+            JobQueue.status == JobStatus.COMPLETED,
+            JobQueue.result.isnot(None),
+        )
+        .order_by(JobQueue.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    results = (await session.execute(stmt)).scalars().all()
+
+    return results, total

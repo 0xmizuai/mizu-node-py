@@ -53,7 +53,6 @@ class PowDataJobPublisher(object):
                         await add_jobs(
                             db,
                             JobType.pow,
-                            "mizu_admin",
                             contexts,
                         )
                 logging.info(f"all pow jobs published")

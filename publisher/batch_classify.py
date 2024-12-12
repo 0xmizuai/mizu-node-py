@@ -44,7 +44,7 @@ class BatchClassifier:
                 for record in records
             ]
             async with self.conn.get_job_db_session() as session:
-                await add_jobs(session, JobType.batch_classify, query.user, contexts)
+                await add_jobs(session, JobType.batch_classify, contexts, query.id)
             return len(records), records[-1].id
 
     async def manage_job_queue(self):

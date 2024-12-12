@@ -13,7 +13,6 @@ from mizu_node.db.job_queue import (
     get_assigned_reward_jobs,
     get_job_info,
 )
-from mizu_node.db.query import add_query_result
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     BatchClassifyContext,
@@ -147,21 +146,19 @@ async def _publish_jobs(
         return await add_jobs(
             session,
             JobType.pow,
-            "test_user1",
             [DataJobContext(pow_ctx=ctx) for ctx in payloads],
         )
     elif job_type == JobType.batch_classify:
         return await add_jobs(
             session,
             JobType.batch_classify,
-            "test_user1",
             [DataJobContext(batch_classify_ctx=ctx) for ctx in payloads],
+            1,
         )
     elif job_type == JobType.reward:
         return await add_jobs(
             session,
             JobType.reward,
-            "test_user1",
             [DataJobContext(reward_ctx=ctx) for ctx in payloads],
         )
     else:
@@ -405,7 +402,7 @@ async def test_finish_job(mock_requests, mock_connections):
             json={
                 "job_result": {
                     "job_id": bid,
-                    "job_type": JobType.batch_classify,
+                    "job_type": JobType.pow,
                     "classify_result": ["t1"],
                 },
                 "user": "test_worker3",
@@ -422,9 +419,6 @@ async def test_finish_job(mock_requests, mock_connections):
                 ClassifyResult(uri="234", text="234"),
             ],
         )
-        async with app.state.conn.get_query_db_session() as query_db_session:
-            await add_query_result(query_db_session, bid, bid)
-
         response = await client.post(
             "/finish_job_v2",
             json=FinishJobRequest(job_result=r13, user="test_worker3").model_dump(

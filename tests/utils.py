@@ -52,16 +52,9 @@ async def initiate_query_db(session: AsyncSession):
         raw_conn = await (await session.connection()).get_raw_connection()
         pg_conn = raw_conn.driver_connection
 
-        # Drop tables if they exist (in correct order due to dependencies)
-        await session.execute(text("DROP TABLE IF EXISTS query_results CASCADE;"))
         await session.execute(text("DROP TABLE IF EXISTS queries CASCADE;"))
-
-        # Create tables from SQL files
         query_sql = load_sql_file("query.sql")
         await pg_conn.execute(query_sql)
-
-        query_result_sql = load_sql_file("query_result.sql")
-        await pg_conn.execute(query_result_sql)
 
         await session.commit()
 
