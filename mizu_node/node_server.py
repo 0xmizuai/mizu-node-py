@@ -104,21 +104,6 @@ async def default():
     return {"status": "ok"}
 
 
-@app.get("/job_status")
-@error_handler
-async def query_job_status(
-    ids: List[str] = Query(None), _: str = Depends(verify_internal_service)
-):
-    async with app.state.conn.get_job_db_session() as session:
-        if not ids:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
-            )
-        job_ids = [int(id) for id in ids]
-        jobs = await get_jobs_info(session, job_ids)
-        return build_ok_response(QueryJobResponse(jobs=jobs))
-
-
 @app.get("/reward_jobs_v2")
 @error_handler
 async def query_reward_jobs(user: str, _: str = Depends(verify_internal_service)):

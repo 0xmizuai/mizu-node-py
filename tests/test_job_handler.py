@@ -4,7 +4,6 @@ from typing import Any
 from unittest import mock
 from httpx import ASGITransport, AsyncClient
 import testing.postgresql
-from fastapi.testclient import TestClient
 import pytest
 from fastapi import status
 from unittest.mock import patch as mock_patch
@@ -17,7 +16,6 @@ from mizu_node.types.data_job import (
     BatchClassifyContext,
     ClassifyResult,
     DataJobContext,
-    JobStatus,
     JobType,
     PowContext,
     RewardContext,
@@ -69,11 +67,10 @@ public_key_str = public_key.decode("utf-8")
 class MockedConnections(Connections):
     def __init__(
         self,
-        pg_db_url: str | None = None,
+        job_db_url: str | None = None,
         query_db_url: str | None = None,
-        redis: Any | None = None,
     ):
-        super().__init__(pg_db_url, query_db_url, AsyncRedisMock())
+        super().__init__(job_db_url, query_db_url, AsyncRedisMock())
 
     async def close(self):
         await self.job_db_engine.dispose()
@@ -154,27 +151,27 @@ def _new_data_job_payload(
         raise ValueError(f"Invalid job type: {job_type}")
 
 
-def _publish_jobs(
+async def _publish_jobs(
     session: AsyncSession,
     job_type: JobType,
     payloads: list[RewardContext] | list[PowContext] | list[BatchClassifyContext],
 ):
     if job_type == JobType.pow:
-        return add_jobs(
+        return await add_jobs(
             session,
             JobType.pow,
             "test_user1",
             [DataJobContext(pow_ctx=ctx) for ctx in payloads],
         )
     elif job_type == JobType.batch_classify:
-        return add_jobs(
+        return await add_jobs(
             session,
             JobType.batch_classify,
             "test_user1",
             [DataJobContext(batch_classify_ctx=ctx) for ctx in payloads],
         )
     elif job_type == JobType.reward:
-        return add_jobs(
+        return await add_jobs(
             session,
             JobType.reward,
             "test_user1",
@@ -187,7 +184,7 @@ def _publish_jobs(
 async def _publish_jobs_simple(conn: Connections, job_type, num_jobs=3):
     async with conn.get_job_db_session() as session:
         payloads = [_new_data_job_payload(job_type) for i in range(num_jobs)]
-        return _publish_jobs(session, job_type, payloads)
+        return await _publish_jobs(session, job_type, payloads)
 
 
 @pytest.fixture(scope="function")
@@ -195,7 +192,7 @@ async def mock_connections(monkeypatch, setenvvar, pg_db_url):
     monkeypatch.setattr("mizu_node.types.connections.Connections", MockedConnections)
     from mizu_node.node_server import app
 
-    conn = MockedConnections(pg_db_url, pg_db_url, redis=AsyncRedisMock())
+    conn = MockedConnections(pg_db_url, pg_db_url)
     app.state.conn = conn
 
     async with conn.get_job_db_session() as session:
@@ -454,7 +451,7 @@ async def test_finish_job(mock_requests, mock_connections):
 
         # Verify job 1 in database
         async with app.state.conn.get_job_db_session() as session:
-            j1 = await get_jobs_info(session, [bid])[0]
+            j1 = (await get_jobs_info(session, [bid]))[0]
         assert j1.job_type == JobType.batch_classify
         # the empty labels are filtered out
         assert len(j1.result.batch_classify_result) == 2
@@ -499,7 +496,7 @@ async def test_finish_job(mock_requests, mock_connections):
 
         # Verify job 2 in database
         async with app.state.conn.get_job_db_session() as session:
-            j2 = await get_jobs_info(session, [pid])[0]
+            j2 = (await get_jobs_info(session, [pid]))[0]
         assert j2.job_type == JobType.pow
         assert j2.result.pow_result == "166189"
         assert j2.worker == "test_worker2"
@@ -519,15 +516,19 @@ async def test_finish_job(mock_requests, mock_connections):
 
         # Manually expire the job in postgres by setting expired_at to a past time
         async with app.state.conn.get_job_db_session() as session:
-            async with session.connection() as conn:
-                await conn.execute(
+            conn = await session.connection()
+            from sqlalchemy import text
+
+            await conn.execute(
+                text(
                     """
-                UPDATE job_queue 
+                UPDATE job_queue
                 SET lease_expired_at = EXTRACT(EPOCH FROM NOW())::BIGINT - 3600
-                WHERE id = %s
-                """,
-                    (job_id,),
-                )
+                WHERE id = :job_id
+                """
+                ),
+                {"job_id": job_id},
+            )
 
         r3 = WorkerJobResult(
             job_id=job_id, job_type=JobType.reward, reward_result=RewardResult()
@@ -544,94 +545,7 @@ async def test_finish_job(mock_requests, mock_connections):
         async with app.state.conn.get_job_db_session() as session:
             rewards = await get_assigned_reward_jobs(session, "test_worker4")
         assert len(rewards) == 0
-
-
-@mock_patch("requests.post")
-@pytest.mark.asyncio
-async def test_job_status(mock_requests, mock_connections):
-    mock_requests.return_value = MockedHttpResponse(200)
-    app = await mock_connections
-    client = TestClient(app)
-
-    # Publish jobs
-    bids = await _publish_jobs_simple(app.state.conn, JobType.batch_classify, 3)
-    pids = await _publish_jobs_simple(app.state.conn, JobType.pow, 2)
-    all_job_ids = bids + pids
-
-    # Check initial status
-    params = "&".join([f"ids={i}" for i in all_job_ids])
-    response = client.get(
-        f"/job_status?{params}",
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
-    initial_statuses = response.json()["data"]["jobs"]
-    assert len(initial_statuses) == 5
-
-    # Take and finish a batch classify job
-    response = client.get(
-        "/take_job_v2",
-        params={"job_type": int(JobType.batch_classify), "user": "test_worker1"},
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
-    classify_job = response.json()["data"]["job"]
-
-    classify_result = ClassifyResult(uri="", text="")
-    result1 = WorkerJobResult(
-        job_id=classify_job["_id"],
-        job_type=JobType.batch_classify,
-        batch_classify_result=[classify_result],
-    )
-    response = client.post(
-        "/finish_job_v2",
-        json=FinishJobRequest(job_result=result1, user="test_worker1").model_dump(
-            by_alias=True
-        ),
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
-
-    # Take and finish a pow job
-    response = client.get(
-        "/take_job_v2",
-        params={"job_type": int(JobType.pow), "user": "test_worker2"},
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
-    pow_job = response.json()["data"]["job"]
-
-    result2 = WorkerJobResult(
-        job_id=pow_job["_id"], job_type=JobType.pow, pow_result="166189"
-    )
-    response = client.post(
-        "/finish_job_v2",
-        json=FinishJobRequest(job_result=result2, user="test_worker2").model_dump(
-            by_alias=True
-        ),
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
-
-    # Check final status
-    response = client.get(
-        f"/job_status?{params}",
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
-    final_statuses = response.json()["data"]["jobs"]
-    assert len(final_statuses) == 5
-
-    # Count finished jobs
-    finished_jobs = [s for s in final_statuses if s["status"] == JobStatus.finished]
-    assert len(finished_jobs) == 2
-
-    # Verify specific job statuses
-    for status in final_statuses:
-        if status["_id"] in [classify_job["_id"], pow_job["_id"]]:
-            assert status["finishedAt"] != 0
-        else:
-            assert status["finishedAt"] == 0
+    await app.state.conn.close()
 
 
 @mock_patch("requests.post")
@@ -639,59 +553,58 @@ async def test_job_status(mock_requests, mock_connections):
 async def test_pow_validation(mock_requests, mock_connections):
     mock_requests.return_value = MockedHttpResponse(200)
     app = await mock_connections
-    client = TestClient(app)
-    # Publish a PoW job
     await _publish_jobs_simple(app.state.conn, JobType.pow, 1)
 
-    # Take the job
-    response = client.get(
-        "/take_job_v2",
-        params={"job_type": int(JobType.pow), "user": "test_worker1"},
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
         headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
-    job_id = response.json()["data"]["job"]["_id"]
+    ) as client:
+        # Take the job
+        response = await client.get(
+            "/take_job_v2",
+            params={"job_type": int(JobType.pow), "user": "test_worker1"},
+        )
+        assert response.status_code == 200
+        job_id = response.json()["data"]["job"]["_id"]
 
-    # Case 1: invalid pow result
-    result = WorkerJobResult(
-        job_id=job_id,
-        job_type=JobType.pow,
-        pow_result="invalid_nonce",
-    )
-    response = client.post(
-        "/finish_job_v2",
-        json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(
-            by_alias=True
-        ),
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 422
-    assert (
-        response.json()["message"]
-        == "invalid pow_result: hash does not meet difficulty requirement"
-    )
+        # Case 1: invalid pow result
+        result = WorkerJobResult(
+            job_id=job_id,
+            job_type=JobType.pow,
+            pow_result="invalid_nonce",
+        )
+        response = await client.post(
+            "/finish_job_v2",
+            json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(
+                by_alias=True
+            ),
+        )
+        assert response.status_code == 422
+        assert (
+            response.json()["message"]
+            == "invalid pow_result: hash does not meet difficulty requirement"
+        )
 
-    # Case 2: valid pow result
-    result = WorkerJobResult(
-        job_id=job_id,
-        job_type=JobType.pow,
-        pow_result="166189",
-    )
-    response = client.post(
-        "/finish_job_v2",
-        json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(
-            by_alias=True
-        ),
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
+        # Case 2: valid pow result
+        result = WorkerJobResult(
+            job_id=job_id,
+            job_type=JobType.pow,
+            pow_result="166189",
+        )
+        response = await client.post(
+            "/finish_job_v2",
+            json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(
+                by_alias=True
+            ),
+        )
+        assert response.status_code == 200
+    await app.state.conn.close()
 
 
 @pytest.mark.asyncio
 async def test_query_reward_jobs(mock_connections):
     app = await mock_connections
-    client = TestClient(app)
-
     # Publish reward jobs
     async with app.state.conn.get_job_db_session() as session:
         job_ids = await _publish_jobs(
@@ -704,36 +617,42 @@ async def test_query_reward_jobs(mock_connections):
                 ),
             ],
         )
-
     await set_reward_stats(app.state.conn.redis, "test_worker1")
 
     # take reward jobs
     initial_time = datetime.datetime.now()
-    response1 = client.get(
-        "/take_job_v2",
-        params={"job_type": int(JobType.reward), "user": "test_worker1"},
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response1.status_code == 200
 
-    second_time = initial_time + datetime.timedelta(0, 2400)  # 45 minutes later
-    with freeze_time(second_time):
-        response2 = client.get(
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
+    ) as client:
+        response1 = await client.get(
             "/take_job_v2",
             params={"job_type": int(JobType.reward), "user": "test_worker1"},
             headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
         )
-        assert response2.status_code == 200
+        assert response1.status_code == 200
 
-    # query reward jobs
-    response = client.get(
-        "/reward_jobs_v2",
-        params={"user": "test_worker1"},
-        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
-    )
-    assert response.status_code == 200
-    records = QueryRewardJobsResponse.model_validate(response.json()["data"])
-    assert len(records.jobs) == 2
-    for job in records.jobs:
-        assert job.job_id in job_ids
-        assert job.reward_ctx is not None
+        second_time = initial_time + datetime.timedelta(0, 2400)  # 45 minutes later
+        with freeze_time(second_time):
+            response2 = await client.get(
+                "/take_job_v2",
+                params={"job_type": int(JobType.reward), "user": "test_worker1"},
+                headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
+            )
+            assert response2.status_code == 200
+
+        # query reward jobs
+        response = await client.get(
+            "/reward_jobs_v2",
+            params={"user": "test_worker1"},
+            headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
+        )
+        assert response.status_code == 200
+        records = QueryRewardJobsResponse.model_validate(response.json()["data"])
+        assert len(records.jobs) == 2
+        for job in records.jobs:
+            assert job.job_id in job_ids
+            assert job.reward_ctx is not None
+    await app.state.conn.close()

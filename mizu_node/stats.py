@@ -44,7 +44,7 @@ async def record_mined_points(rclient: AsyncRedis, worker: str, points: float):
         now = epoch()
         hour = now // 3600
         day = now // 86400
-        pipeline = rclient.pipeline()
+        pipeline = await rclient.pipeline()
         pipeline.hincrbyfloat(event_name(worker), mined_per_hour_field(hour), points)
         pipeline.hincrbyfloat(event_name(worker), mined_per_day_field(day), points)
         pipeline.incrbyfloat(total_mined_points_per_hour_key(hour), points)
@@ -107,7 +107,7 @@ async def record_claim_event(rclient: AsyncRedis, ctx: RewardContext):
     hour = now // 3600
     day = now // 86400
     token_name = get_token_name(ctx)
-    pipeline = rclient.pipeline()
+    pipeline = await rclient.pipeline()
     pipeline.incrbyfloat(
         total_rewarded_per_hour_key(token_name, hour), float(ctx.amount)
     )

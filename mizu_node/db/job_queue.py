@@ -78,7 +78,7 @@ async def lease_job(
     return None
 
 
-def add_jobs(
+async def add_jobs(
     session: AsyncSession,
     job_type: JobType,
     publisher: str,
@@ -93,6 +93,7 @@ def add_jobs(
         for ctx in contexts
     ]
     session.add_all(jobs)
+    await session.flush()
     return [job.id for job in jobs]
 
 

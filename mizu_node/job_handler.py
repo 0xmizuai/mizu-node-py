@@ -2,7 +2,7 @@ from hashlib import sha512
 import logging
 import os
 
-from redis.asyncio import Redis
+from redis.asyncio import Redis as AsyncRedis
 from fastapi import HTTPException, status
 
 
@@ -85,29 +85,16 @@ async def handle_finish_job_v2(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
         job_status = _validate_job_result(ctx, job_result)
-        await complete_job(
-            session, job_result.job_id, job_status, build_data_job_result(job_result)
-        )
+        result = DataJobResult(**job_result.model_dump(exclude={"job_id", "job_type"}))
+        await complete_job(session, job_id, job_status, result)
         if job_result.job_type == JobType.batch_classify:
             async with conn.get_query_db_session() as query_db_session:
-                await save_query_result(query_db_session, job_result)
+                await save_query_result(query_db_session, job_id, result)
         return (
             await _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished
             else None
         )
-
-
-def build_data_job_result(job_result: WorkerJobResult) -> DataJobResult:
-    if job_result.error_result is not None:
-        return DataJobResult(error_result=job_result.error_result)
-    if job_result.job_type == JobType.reward:
-        return DataJobResult(reward_result=job_result.reward_result)
-    elif job_result.job_type == JobType.pow:
-        return DataJobResult(pow_result=job_result.pow_result)
-    elif job_result.job_type == JobType.batch_classify:
-        return DataJobResult(batch_classify_result=job_result.batch_classify_result)
-    raise ValueError(f"unsupported job type: {job_result.job_type}")
 
 
 def _validate_job_result(ctx: DataJobContext, result: WorkerJobResult) -> JobStatus:
@@ -134,7 +121,7 @@ def _validate_job_result(ctx: DataJobContext, result: WorkerJobResult) -> JobSta
 
 
 async def _calculate_reward_v2(
-    rclient: Redis, worker: str, ctx: DataJobContext, result: WorkerJobResult
+    rclient: AsyncRedis, worker: str, ctx: DataJobContext, result: WorkerJobResult
 ) -> SettleRewardRequest:
     if result.job_type == JobType.reward:
         await record_claim_event(rclient, ctx.reward_ctx)

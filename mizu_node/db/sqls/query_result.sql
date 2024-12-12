@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS query_results (
     "id" SERIAL PRIMARY KEY,
-    "query_id" INTEGER NOT NULL REFERENCES queries(id),
+    "query_id" INTEGER NOT NULL,
     "job_id" INTEGER NOT NULL,
     "result" JSONB,
     "status" VARCHAR(20) DEFAULT 'pending' CHECK ("status" IN ('pending', 'processed', 'error')),

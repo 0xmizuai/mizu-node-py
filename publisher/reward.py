@@ -1,11 +1,12 @@
 import argparse
+import asyncio
 import logging
 import os
 import random
 import time
 
 from pydantic import BaseModel
-from redis import Redis
+from redis.asyncio import AsyncRedis
 from mizu_node.common import epoch, is_prod
 from mizu_node.db.job_queue import add_jobs, queue_len
 from mizu_node.types.connections import Connections
@@ -145,7 +146,9 @@ class RewardJobPublisher(object):
     ):
         self.reward_configs = build_reward_configs(types)
         self.api_key = os.environ["API_SECRET_KEY"]
-        self.rclient = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+        self.rclient = AsyncRedis.from_url(
+            os.environ["REDIS_URL"], decode_responses=True
+        )
         self.cron_gap = cron_gap
         self.queue_threshold = queue_threshold
         self.conn = Connections()
@@ -154,43 +157,43 @@ class RewardJobPublisher(object):
         n = epoch() // config.budget.unit
         return f"{config.key}:spent_per_{config.budget.unit_name}:{n}"
 
-    def spent(self, config: RewardJobConfig):
-        spent = self.rclient.get(self.spent_key(config))
+    async def spent(self, config: RewardJobConfig):
+        spent = await self.rclient.get(self.spent_key(config))
         return int(spent or 0)
 
-    def record_spent(self, config: RewardJobConfig, amount: float):
-        self.rclient.incrbyfloat(self.spent_key(config), amount)
+    async def record_spent(self, config: RewardJobConfig, amount: float):
+        await self.rclient.incrbyfloat(self.spent_key(config), amount)
 
-    def lottery(self, config: RewardJobConfig):
-        if self.spent(config) > config.budget.budget:
+    async def lottery(self, config: RewardJobConfig):
+        if await self.spent(config) > config.budget.budget:
             return False
         total_runs = config.budget.unit // self.cron_gap
         return random.uniform(0, 1) < (config.budget.budget / total_runs)
 
-    def get_batch_size(self, config: RewardJobConfig):
+    async def get_batch_size(self, config: RewardJobConfig):
         total_runs = config.budget.unit // self.cron_gap
         if config.budget.budget > total_runs:
             return config.budget.budget // total_runs
         else:
             return 1
 
-    def run(self):
+    async def run(self):
         while True:
             # Check queue length before publishing
-            with self.conn.get_job_db_session() as db:
-                current_queue_len = queue_len(db, JobType.reward)
+            async with self.conn.get_job_db_session() as db:
+                current_queue_len = await queue_len(db, JobType.reward)
                 if current_queue_len >= self.queue_threshold:
                     logging.info(
                         f"Queue length ({current_queue_len}) exceeds threshold ({self.queue_threshold}), skipping reward publishing"
                     )
-                    time.sleep(self.cron_gap)
+                    await asyncio.sleep(self.cron_gap)
                     continue
 
             contexts = []
             logging.info("======= start to publish reward jobs ======")
             for config in self.reward_configs:
-                if self.lottery(config):
-                    batch_size = self.get_batch_size(config)
+                if await self.lottery(config):
+                    batch_size = await self.get_batch_size(config)
                     # Double check queue won't exceed threshold
                     if (
                         current_queue_len + len(contexts) + batch_size
@@ -208,13 +211,13 @@ class RewardJobPublisher(object):
                             for _ in range(batch_size)
                         ]
                     )
-                    self.record_spent(config, batch_size)
+                    await self.record_spent(config, batch_size)
                 else:
                     logging.info(f"no reward jobs for {config.key}")
 
             if len(contexts) > 0:
-                with self.conn.get_job_db_session() as db:
-                    add_jobs(
+                async with self.conn.get_job_db_session() as db:
+                    await add_jobs(
                         db,
                         JobType.reward,
                         "mizu_admin",
@@ -228,7 +231,7 @@ class RewardJobPublisher(object):
 
             if random.uniform(0, 1) < 0.1:
                 self.print_stats()
-            time.sleep(self.cron_gap)
+            await asyncio.sleep(self.cron_gap)
 
     def print_stats(self):
         for config in self.reward_configs:
@@ -245,4 +248,4 @@ args = parser.parse_args()
 
 
 def start():
-    RewardJobPublisher(args.types.split(",")).run()
+    asyncio.run(RewardJobPublisher(args.types.split(",")).run())

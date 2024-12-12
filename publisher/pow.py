@@ -3,10 +3,10 @@ import logging
 import math
 import os
 import secrets
-import time
 from mizu_node.db.job_queue import queue_len, add_jobs
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, PowContext
+import asyncio
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -25,16 +25,16 @@ class PowDataJobPublisher(object):
         self.cooldown = cooldown
         self.conn = Connections()
 
-    def check_queue_stats(self) -> int:
-        with self.conn.get_job_db_session() as db:
-            current_len = queue_len(db, JobType.pow)
+    async def check_queue_stats(self) -> int:
+        async with self.conn.get_job_db_session() as db:
+            current_len = await queue_len(db, JobType.pow)
             if current_len >= self.threshold:
                 return 0
             return math.ceil(self.threshold * 2 - current_len)
 
-    def run(self):
+    async def run(self):
         while True:
-            num_of_jobs = self.check_queue_stats()
+            num_of_jobs = await self.check_queue_stats()
             logging.info(f"will publish {num_of_jobs} pow jobs")
 
             if num_of_jobs > 0:
@@ -49,8 +49,8 @@ class PowDataJobPublisher(object):
                     logging.info(
                         f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
                     )
-                    with self.conn.get_job_db_session() as db:
-                        add_jobs(
+                    async with self.conn.get_job_db_session() as db:
+                        await add_jobs(
                             db,
                             JobType.pow,
                             "mizu_admin",
@@ -58,7 +58,7 @@ class PowDataJobPublisher(object):
                         )
                 logging.info(f"all pow jobs published")
 
-            time.sleep(self.cooldown)
+            await asyncio.sleep(self.cooldown)
 
 
 parser = argparse.ArgumentParser()
@@ -69,6 +69,8 @@ args = parser.parse_args()
 
 
 def start():
-    PowDataJobPublisher(
-        batch_size=args.batch_size, cooldown=args.cooldown, threshold=args.threshold
-    ).run()
+    asyncio.run(
+        PowDataJobPublisher(
+            batch_size=args.batch_size, cooldown=args.cooldown, threshold=args.threshold
+        ).run()
+    )

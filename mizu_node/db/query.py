@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 from mizu_node.db.orm.dataset import Dataset
 from mizu_node.db.orm.query import Query
 from mizu_node.db.orm.query_result import QueryResult
-from mizu_node.types.data_job import WorkerJobResult
+from mizu_node.types.data_job import DataJobResult, WorkerJobResult
 
 
 async def save_new_query(
@@ -46,14 +46,14 @@ async def add_query_result(
 
 async def save_query_result(
     session: AsyncSession,
-    result: WorkerJobResult,
+    job_id: int,
+    result: DataJobResult,
 ) -> int:
-    stmt = select(QueryResult).where(QueryResult.job_id == result.job_id)
+    stmt = select(QueryResult).where(QueryResult.job_id == job_id)
     query_result = (await session.execute(stmt)).scalar_one_or_none()
 
     if query_result:
-        # Update existing record
-        query_result.result = result.batch_classify_result or result.error_result
+        query_result.result = result.model_dump(exclude_none=True, by_alias=True)
         query_result.finished_at = datetime.now(timezone.utc)
         query_result.status = "error" if result.error_result else "processed"
     else:

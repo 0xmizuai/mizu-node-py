@@ -1,5 +1,6 @@
 import json
 from mizu_node.common import epoch
+from mizu_node.db.orm.job_queue import JobQueue
 from mizu_node.security import (
     BLOCKED_FIELD,
 )
@@ -16,7 +17,7 @@ from mizu_node.types.data_job import (
     RewardContext,
 )
 from tests.redis_mock import AsyncRedisMock
-from psycopg2.extensions import connection
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def block_worker(rclient: AsyncRedisMock, worker: str):
@@ -44,43 +45,30 @@ async def set_reward_stats(rclient: AsyncRedisMock, worker: str):
     await rclient.hmset(event_name(worker), {k: "200" for k in keys})
 
 
-async def set_unclaimed_reward(pg_conn: connection, worker: str, total: int = 5):
-    """Insert reward jobs into job_queue table."""
-    with pg_conn.cursor() as cur:
-        # Prepare batch insert values
-        current_time = epoch()
-        values = [
-            (
-                JobType.reward,
-                JobStatus.processing,  # or 'pending' based on your needs
-                worker,
-                current_time,  # assigned_at
-                current_time + 3600,  # lease_expired_at (1 hour TTL)
-                current_time,  # published_at
-                0,  # retry count
-                DataJobContext(
-                    reward_ctx=RewardContext(amount=100)
-                ).model_dump_json(),  # ctx as JSON
-            )
-            for _ in range(total)
-        ]
-
-        # Batch insert
-        cur.executemany(
-            """
-            INSERT INTO job_queue (
-                job_type, status, worker,
-                assigned_at, lease_expired_at, published_at,
-                retry, ctx
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            values,
+async def set_unclaimed_reward(session: AsyncSession, worker: str, total: int = 5):
+    """Insert reward jobs into job_queue table using ORM."""
+    current_time = epoch()
+    jobs = [
+        JobQueue(
+            job_type=JobType.reward,
+            status=JobStatus.processing,
+            worker=worker,
+            assigned_at=current_time,
+            lease_expired_at=current_time + 3600,
+            published_at=current_time,
+            retry=0,
+            ctx=DataJobContext(
+                reward_ctx=RewardContext(amount=100)
+            ).model_dump(),  # Note: model_dump instead of model_dump_json for JSON column
         )
-        pg_conn.commit()
+        for _ in range(total)
+    ]
+    session.add_all(jobs)
+    await session.flush()
 
 
-async def set_one_unclaimed_reward(pg_conn: connection, worker: str):
-    await set_unclaimed_reward(pg_conn, worker, 1)
+async def set_one_unclaimed_reward(session: AsyncSession, worker: str):
+    await set_unclaimed_reward(session, worker, 1)
 
 
 async def set_cooldown(rclient: AsyncRedisMock, worker: str, job_type: JobType):

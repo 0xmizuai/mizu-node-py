@@ -48,20 +48,6 @@ class AsyncRedisMock:
         self.data[key].update(mapping)
         return self._check_pipeline()
 
-    async def hincrbyfloat(self, key, field, value):
-        if key not in self.data:
-            self.data[key] = {}
-        if field not in self.data[key]:
-            self.data[key][field] = 0.0
-        self.data[key][field] += value
-        return self._check_pipeline()
-
-    async def incrbyfloat(self, key, value):
-        if key not in self.data:
-            self.data[key] = {}
-        self.data[key] += value
-        return self._check_pipeline()
-
     async def mget(self, keys):
         values = [self.data.get(k) for k in keys]
         return self._check_pipeline(values)
@@ -138,8 +124,16 @@ class AsyncRedisMock:
 
     async def incrbyfloat(self, key, value):
         if key not in self.data:
-            self.data[key] = 0
-        self.data[key] += value
+            self.data[key] = 0.0
+        self.data[key] += float(value)
+        return self._check_pipeline(self.data[key])
+
+    async def hincrbyfloat(self, key, field, value):
+        if key not in self.data:
+            self.data[key] = {}
+        if field not in self.data[key]:
+            self.data[key][field] = 0.0
+        self.data[key][field] += value
         return self._check_pipeline()
 
     async def decrby(self, key, value):
@@ -175,3 +169,17 @@ class AsyncRedisMock:
     async def execute(self):
         self.in_pipeline = False
         return tuple(self.pipeline_output)
+
+    def hincrbyfloat(self, key, field, value):
+        if key not in self.data:
+            self.data[key] = {}
+        if field not in self.data[key]:
+            self.data[key][field] = 0.0
+        self.data[key][field] += value
+        return self._check_pipeline()
+
+    def incrbyfloat(self, key, value):
+        if key not in self.data:
+            self.data[key] = 0.0
+        self.data[key] += float(value)
+        return self._check_pipeline(self.data[key])

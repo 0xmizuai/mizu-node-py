@@ -1,11 +1,11 @@
 from fastapi import HTTPException
 import pytest
 import testing.postgresql
-import psycopg2
 
 from mizu_node.security import validate_worker
 from mizu_node.types.data_job import JobType
 from tests.redis_mock import AsyncRedisMock
+from tests.utils import initiate_job_db
 from tests.worker_utils import (
     block_worker,
     clear_cooldown,
@@ -13,6 +13,10 @@ from tests.worker_utils import (
     set_reward_stats,
     set_unclaimed_reward,
 )
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 
 @pytest.fixture()
@@ -28,110 +32,134 @@ def setenvvar(monkeypatch):
 
 
 @pytest.fixture(scope="session")
-def postgresql():
+def pq_db_url():
     """Create a PostgreSQL instance for testing."""
     with testing.postgresql.Postgresql() as postgresql:
-        yield postgresql
+        dsn = postgresql.dsn()
+        url = f"postgresql+asyncpg://{dsn['user']}@{dsn['host']}:{dsn['port']}/{dsn['database']}"
+        yield url
 
 
 @pytest.fixture
-def pg_conn(postgresql):
+async def job_db_session(pq_db_url):
     """Get a fresh connection for each test."""
-    conn = psycopg2.connect(**postgresql.dsn())
-    yield conn
-    conn.close()
+    db_engine = create_async_engine(pq_db_url, echo=False, poolclass=NullPool)
+    db_session = sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
+    async with db_session() as session:
+        await initiate_job_db(session)
+    return db_engine, db_session
 
 
-async def test_validate_worker_blocked(setenvvar, pg_conn):
+@pytest.mark.asyncio
+async def test_validate_worker_blocked(setenvvar, job_db_session):
+    db_engine, db_session = await job_db_session
     r_client = AsyncRedisMock()
 
     # given user1 is blocked
     user1 = "some_user"
-    block_worker(r_client, user1)
+    await block_worker(r_client, user1)
 
     # should throw
     with pytest.raises(HTTPException) as e:
-        await validate_worker(r_client, pg_conn, user1, JobType.pow)
+        async with db_session() as session:
+            await validate_worker(r_client, session, user1, JobType.pow)
     assert e.value.status_code == 403
     assert e.value.detail == "worker is blocked"
+    await db_engine.dispose()
 
 
-async def test_validate_worker_cooldown(setenvvar, pg_conn):
+@pytest.mark.asyncio
+async def test_validate_worker_cooldown(setenvvar, job_db_session):
+    db_engine, db_session = await job_db_session
     r_client = AsyncRedisMock()
 
-    # given user2 has cooldown
-    user2 = "some_user2"
-    await set_reward_stats(r_client, user2)
-    await validate_worker(r_client, pg_conn, user2, JobType.reward)
+    async with db_session() as session:
+        # given user2 has cooldown
+        user2 = "some_user2"
+        await set_reward_stats(r_client, user2)
+        await validate_worker(r_client, session, user2, JobType.reward)
 
-    # should throw
-    with pytest.raises(HTTPException) as e:
-        await validate_worker(r_client, pg_conn, user2, JobType.reward)
-    assert e.value.status_code == 429
-    assert e.value.detail.startswith("please retry after")
+        # should throw
+        with pytest.raises(HTTPException) as e:
+            await validate_worker(r_client, session, user2, JobType.reward)
+        assert e.value.status_code == 429
+        assert e.value.detail.startswith("please retry after")
 
-    # skip 10 requests
-    for _ in range(10):
-        await validate_worker(r_client, pg_conn, user2, JobType.pow)
-    with pytest.raises(HTTPException) as e:
-        await validate_worker(r_client, pg_conn, user2, JobType.pow)
-    assert e.value.status_code == 429
-    assert e.value.detail.startswith("please retry after")
+        # skip 10 requests
+        for _ in range(10):
+            await validate_worker(r_client, session, user2, JobType.pow)
+        with pytest.raises(HTTPException) as e:
+            await validate_worker(r_client, session, user2, JobType.pow)
+        assert e.value.status_code == 429
+        assert e.value.detail.startswith("please retry after")
 
-    # give user cooldown is cleared
-    clear_cooldown(r_client, user2, JobType.pow)
+        # give user cooldown is cleared
+        await clear_cooldown(r_client, user2, JobType.pow)
 
-    # should not throw
-    await validate_worker(r_client, pg_conn, user2, JobType.pow)
+        # should not throw
+        await validate_worker(r_client, session, user2, JobType.pow)
+    await db_engine.dispose()
 
 
-async def test_validate_worker_active_user(setenvvar, pg_conn):
+@pytest.mark.asyncio
+async def test_validate_worker_active_user(setenvvar, job_db_session):
+    db_engine, db_session = await job_db_session
     r_client = AsyncRedisMock()
 
     # given user3 is not active
     user3 = "some_user3"
 
     # should throw
-    with pytest.raises(HTTPException) as e:
-        await validate_worker(r_client, pg_conn, user3, JobType.reward)
-    assert e.value.status_code == 403
-    assert e.value.detail == "not active user"
+    async with db_session() as session:
+        with pytest.raises(HTTPException) as e:
+            await validate_worker(r_client, session, user3, JobType.reward)
+        assert e.value.status_code == 403
+        assert e.value.detail == "not active user"
 
-    # give user4 is active
-    user4 = "some_user4"
-    await set_reward_stats(r_client, user4)
+        # give user4 is active
+        user4 = "some_user4"
+        await set_reward_stats(r_client, user4)
 
-    # should not throw
-    await validate_worker(r_client, pg_conn, user4, JobType.reward)
+        # should not throw
+        await validate_worker(r_client, session, user4, JobType.reward)
+    await db_engine.dispose()
 
 
-async def test_validate_worker_already_rewarded(setenvvar, pg_conn):
+@pytest.mark.asyncio
+async def test_validate_worker_already_rewarded(setenvvar, job_db_session):
+    db_engine, db_session = await job_db_session
     r_client = AsyncRedisMock()
 
-    # given user5 is active and has been rewarded
-    user5 = "some_user5"
-    await set_reward_stats(r_client, user5)
+    async with db_session() as session:
+        # given user5 is active and has been rewarded
+        user5 = "some_user5"
+        await set_reward_stats(r_client, user5)
 
-    # Insert a reward job
-    await set_one_unclaimed_reward(pg_conn, user5)
+        # Insert a reward job
+        await set_one_unclaimed_reward(session, user5)
 
-    # should throw
-    with pytest.raises(HTTPException) as e:
-        await validate_worker(r_client, pg_conn, user5, JobType.reward)
-    assert e.value.status_code == 429
-    assert e.value.detail.startswith("please retry after")
+        # should throw
+        with pytest.raises(HTTPException) as e:
+            await validate_worker(r_client, session, user5, JobType.reward)
+        assert e.value.status_code == 429
+        assert e.value.detail.startswith("please retry after")
+    await db_engine.dispose()
 
 
-async def test_validate_worker_full_pocket(setenvvar, pg_conn):
+@pytest.mark.asyncio
+async def test_validate_worker_full_pocket(setenvvar, job_db_session):
+    db_engine, db_session = await job_db_session
     r_client = AsyncRedisMock()
 
-    # give user 6 is active and
-    user6 = "some_user6"
-    await set_reward_stats(r_client, user6)
-    await set_unclaimed_reward(pg_conn, user6)
+    async with db_session() as session:
+        # give user 6 is active and
+        user6 = "some_user6"
+        await set_reward_stats(r_client, user6)
+        await set_unclaimed_reward(session, user6)
 
-    # should throw
-    with pytest.raises(HTTPException) as e:
-        await validate_worker(r_client, pg_conn, user6, JobType.reward)
-    assert e.value.status_code == 403
-    assert e.value.detail == "unclaimed reward limit reached"
+        # should throw
+        with pytest.raises(HTTPException) as e:
+            await validate_worker(r_client, session, user6, JobType.reward)
+        assert e.value.status_code == 403
+        assert e.value.detail == "unclaimed reward limit reached"
+    await db_engine.dispose()

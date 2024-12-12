@@ -4,7 +4,6 @@ import asyncio
 import aioboto3
 from botocore.config import Config
 from typing import AsyncGenerator
-from sqlalchemy.sql import func
 
 from mizu_node.db.dataset import (
     save_data_records,
