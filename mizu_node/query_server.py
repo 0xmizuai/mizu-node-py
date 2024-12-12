@@ -153,7 +153,7 @@ async def get_all_queries(
 def start():
     """Start production server"""
     uvicorn.run(
-        "app.main:app",
+        "mizu_node.query_server:app",
         host="0.0.0.0",
         port=8000,
         proxy_headers=True,
@@ -164,7 +164,7 @@ def start():
 def start_dev():
     """Start development server with hot reload"""
     uvicorn.run(
-        "app.main:app",
+        "mizu_node.query_server:app",
         host="0.0.0.0",
         port=8000,
         reload=True,

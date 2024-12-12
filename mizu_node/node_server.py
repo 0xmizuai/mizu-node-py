@@ -240,7 +240,11 @@ async def run():
     apps = []
     config1 = uvicorn.Config("mizu_node.dummy_service:app", host="0.0.0.0", port=8001)
     config2 = uvicorn.Config(
-        "mizu_node.main:app", host="0.0.0.0", port=8000, lifespan="on", reload=True
+        "mizu_node.node_server:app",
+        host="0.0.0.0",
+        port=8000,
+        lifespan="on",
+        reload=True,
     )
     apps.append(MyServer(config=config1).run())
     apps.append(MyServer(config=config2).run())
@@ -252,4 +256,6 @@ def start_dev():
 
 
 def start():
-    uvicorn.run("mizu_node.main:app", host=["::", "0.0.0.0"], lifespan="on", port=8000)
+    uvicorn.run(
+        "mizu_node.node_server:app", host=["::", "0.0.0.0"], lifespan="on", port=8000
+    )

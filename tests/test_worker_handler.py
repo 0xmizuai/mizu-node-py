@@ -6,7 +6,7 @@ from mizu_node.security import validate_worker
 from mizu_node.types.data_job import JobType
 from tests.redis_mock import AsyncRedisMock
 from tests.utils import initiate_job_db
-from tests.worker_utils import (
+from tests.utils import (
     block_worker,
     clear_cooldown,
     set_one_unclaimed_reward,

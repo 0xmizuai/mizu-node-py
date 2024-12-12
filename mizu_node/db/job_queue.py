@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import random
-from typing import Any, Tuple
+from typing import Tuple
 from typing import Tuple
 
 from prometheus_client import Gauge

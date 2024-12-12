@@ -1,6 +1,5 @@
 import datetime
 import os
-from typing import Any
 from unittest import mock
 from httpx import ASGITransport, AsyncClient
 import testing.postgresql
@@ -35,11 +34,9 @@ from mizu_node.types.node_service import (
 )
 from tests.redis_mock import AsyncRedisMock
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-from tests.utils import initiate_job_db, initiate_query_db
-from tests.worker_utils import (
+from tests.utils import (
+    initiate_job_db,
+    initiate_query_db,
     block_worker,
     clear_cooldown,
     set_reward_stats,
@@ -52,20 +49,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 API_SECRET_KEY = "some-secret"
-
-# Convert to PEM format
-private_key_obj = Ed25519PrivateKey.generate()
-private_key = private_key_obj.private_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
-    encryption_algorithm=serialization.NoEncryption(),
-)
-public_key = private_key_obj.public_key().public_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PublicFormat.SubjectPublicKeyInfo,
-)
-# Decode bytes to string
-public_key_str = public_key.decode("utf-8")
 
 
 class MockedConnections(Connections):
@@ -81,15 +64,6 @@ class MockedConnections(Connections):
         await self.query_db_engine.dispose()
 
 
-@pytest.fixture
-def pg_db_url():
-    with testing.postgresql.Postgresql() as postgresql:
-        # Convert the dsn dictionary to a SQLAlchemy URL string
-        dsn = postgresql.dsn()
-        url = f"postgresql+asyncpg://{dsn['user']}@{dsn['host']}:{dsn['port']}/{dsn['database']}"
-        yield url
-
-
 class MockedHttpResponse:
     def __init__(self, status_code, json_data={}):
         self.status_code = status_code
@@ -101,6 +75,15 @@ class MockedHttpResponse:
     def raise_for_status(self):
         if self.status_code != 200:
             raise Exception()
+
+
+@pytest.fixture
+def pg_db_url():
+    with testing.postgresql.Postgresql() as postgresql:
+        # Convert the dsn dictionary to a SQLAlchemy URL string
+        dsn = postgresql.dsn()
+        url = f"postgresql+asyncpg://{dsn['user']}@{dsn['host']}:{dsn['port']}/{dsn['database']}"
+        yield url
 
 
 @pytest.fixture()
