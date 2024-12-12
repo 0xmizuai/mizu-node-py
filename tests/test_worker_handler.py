@@ -3,10 +3,10 @@ import pytest
 import testing.postgresql
 import psycopg2
 
-from mizu_node.db.common import initiate_pg_db
 from mizu_node.security import validate_worker
 from mizu_node.types.data_job import JobType
 from tests.redis_mock import RedisMock
+from tests.utils import initiate_pg_db
 from tests.worker_utils import (
     block_worker,
     clear_cooldown,

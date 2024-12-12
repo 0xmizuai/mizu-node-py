@@ -1,6 +1,7 @@
 import os
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +11,6 @@ from mizu_node.constants import (
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
     MAX_UNCLAIMED_REWARD,
     MIN_REWARD_GAP,
-    MIZU_ADMIN_USER,
     REWARD_TTL,
 )
 
@@ -29,17 +29,17 @@ from mizu_node.types.node_service import CooldownConfig
 ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
 
+# Security scheme
+bearer_scheme = HTTPBearer()
 
-async def verify_api_key(db: AsyncSession, token: str) -> str:
-    if token == os.environ["API_SECRET_KEY"]:
-        return MIZU_ADMIN_USER
 
-    user_id = await get_user_id(db, token)
-    if user_id is None or user_id == MIZU_ADMIN_USER:
+def verify_internal_service(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
+) -> str:
+    if credentials.credentials == os.environ["API_SECRET_KEY"]:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="API key is invalid"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         )
-    return user_id
 
 
 async def validate_worker(

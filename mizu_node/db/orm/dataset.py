@@ -1,22 +1,28 @@
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Text
-from .base import Base
+from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy.sql import func
+from mizu_node.db.orm.base import Base
 
 
 class Dataset(Base):
-    __tablename__ = "datasets"
+    __tablename__ = "dataset"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
-    language = Column(String(10), nullable=False, default="unknown")
+    language = Column(String(10), nullable=False)
     data_type = Column(String(50), nullable=False)
-    r2_key = Column(Text, nullable=False)
-    md5 = Column(String(32), nullable=False, unique=True)
-    num_of_records = Column(Integer, default=0)
-    decompressed_byte_size = Column(BigInteger, default=0)
-    byte_size = Column(BigInteger, default=0)
-    source = Column(Text, default="")
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    total_objects = Column(Integer, default=0)
+    total_bytes = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        # Unique constraint
+        {"unique_constraint_name": (language, data_type, name)},
+        # Indexes
+        {"index": True, "name": "idx_dataset_name"},
+        {"index": True, "name": "idx_dataset_language"},
+        {"index": True, "name": "idx_dataset_name_language"},
+        {"index": True, "name": "idx_dataset_created_at"},
+    )
 
     def __repr__(self):
-        return f"<Dataset(name='{self.name}', language='{self.language}', data_type='{self.data_type}')>"
+        return f"<Dataset(id={self.id}, name='{self.name}', language='{self.language}', data_type='{self.data_type}')>"

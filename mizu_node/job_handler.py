@@ -6,12 +6,10 @@ from redis.asyncio import Redis
 from fastapi import HTTPException, status
 import requests
 
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from mizu_node.constants import (
     DEFAULT_POW_DIFFICULTY,
     MAX_RETRY_ALLOWED,
-    MIZU_ADMIN_USER,
 )
 from mizu_node.security import (
     get_lease_ttl,
@@ -35,30 +33,18 @@ from mizu_node.types.data_job import (
 )
 from mizu_node.db.job_queue import (
     complete_job,
-    get_jobs_info,
     get_job_lease,
     lease_job,
 )
-from mizu_node.types.node_service import DataJobQueryResult, SettleRewardRequest
+from mizu_node.types.node_service import SettleRewardRequest
 
 logging.basicConfig(level=logging.INFO)
-
-
-async def handle_query_job(
-    session: AsyncSession, job_ids: list[int]
-) -> list[DataJobQueryResult] | None:
-    if not job_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
-        )
-    job_ids = [int(id) for id in job_ids]
-    return await get_jobs_info(session, job_ids)
 
 
 async def handle_take_job(
     conn: Connections, worker: str, job_type: JobType
 ) -> WorkerJob | None:
-    async with conn.get_db_session() as session:
+    async with conn.get_job_db_session() as session:
         await validate_worker(conn.redis, session, worker, job_type)
         result = await lease_job(session, job_type, get_lease_ttl(job_type), worker)
         if result is None:
@@ -88,22 +74,10 @@ async def handle_take_job(
             return job
 
 
-def build_data_job_result(job_result: WorkerJobResult) -> DataJobResult:
-    if job_result.error_result is not None:
-        return DataJobResult(error_result=job_result.error_result)
-    if job_result.job_type == JobType.reward:
-        return DataJobResult(reward_result=job_result.reward_result)
-    elif job_result.job_type == JobType.pow:
-        return DataJobResult(pow_result=job_result.pow_result)
-    elif job_result.job_type == JobType.batch_classify:
-        return DataJobResult(batch_classify_result=job_result.batch_classify_result)
-    raise ValueError(f"unsupported job type: {job_result.job_type}")
-
-
 async def handle_finish_job_v2(
     conn: Connections, worker: str, job_result: WorkerJobResult
 ) -> SettleRewardRequest | None:
-    async with conn.get_db_session() as session:
+    async with conn.get_job_db_session() as session:
         job_id = int(job_result.job_id)
         ctx, assigner = await get_job_lease(session, job_id, job_result.job_type)
         if assigner != worker:
@@ -128,11 +102,16 @@ async def handle_finish_job_v2(
         )
 
 
-def validate_admin_job(caller: str):
-    if caller != MIZU_ADMIN_USER:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
-        )
+def build_data_job_result(job_result: WorkerJobResult) -> DataJobResult:
+    if job_result.error_result is not None:
+        return DataJobResult(error_result=job_result.error_result)
+    if job_result.job_type == JobType.reward:
+        return DataJobResult(reward_result=job_result.reward_result)
+    elif job_result.job_type == JobType.pow:
+        return DataJobResult(pow_result=job_result.pow_result)
+    elif job_result.job_type == JobType.batch_classify:
+        return DataJobResult(batch_classify_result=job_result.batch_classify_result)
+    raise ValueError(f"unsupported job type: {job_result.job_type}")
 
 
 def _validate_job_result(ctx: DataJobContext, result: WorkerJobResult) -> JobStatus:

@@ -1,8 +1,7 @@
 -- Queries table (updated)
 CREATE TABLE IF NOT EXISTS queries (
     id SERIAL PRIMARY KEY,
-    dataset VARCHAR(255) NOT NULL,
-    language VARCHAR(10) NOT NULL,
+    dataset_id INTEGER NOT NULL,
     query_text TEXT NOT NULL,
     model VARCHAR(255) NOT NULL,
     user VARCHAR(255) NOT NULL,
@@ -13,6 +12,7 @@ CREATE TABLE IF NOT EXISTS queries (
 
 -- Updated indexes for queries
 CREATE INDEX idx_queries_user ON queries(user);
-CREATE INDEX idx_queries_dataset_language ON queries(dataset, language);
+CREATE INDEX idx_queries_dataset_id ON queries(dataset_id);
+CREATE INDEX idx_queries_user_dataset_id ON queries(user, dataset_id);
 CREATE INDEX idx_queries_user_created ON queries(user, created_at DESC);
 CREATE INDEX idx_queries_status ON queries(status);

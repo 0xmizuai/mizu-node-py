@@ -177,7 +177,7 @@ class RewardJobPublisher(object):
     def run(self):
         while True:
             # Check queue length before publishing
-            with self.conn.get_pg_connection() as db:
+            with self.conn.get_job_db_session() as db:
                 current_queue_len = queue_len(db, JobType.reward)
                 if current_queue_len >= self.queue_threshold:
                     logging.info(
@@ -213,7 +213,7 @@ class RewardJobPublisher(object):
                     logging.info(f"no reward jobs for {config.key}")
 
             if len(contexts) > 0:
-                with self.conn.get_pg_connection() as db:
+                with self.conn.get_job_db_session() as db:
                     add_jobs(
                         db,
                         JobType.reward,

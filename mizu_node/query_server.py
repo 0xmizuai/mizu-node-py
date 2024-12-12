@@ -1,8 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends, Query as QueryParam, Security
+from fastapi import FastAPI, HTTPException, Depends, Query as QueryParam
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Annotated
 
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from mizu_node.common import build_ok_response, error_handler
 from contextlib import asynccontextmanager
 import uvicorn
@@ -25,18 +24,7 @@ from mizu_node.types.query_service import (
     RegisterQueryResponse,
 )
 from mizu_node.db.orm.query import Query
-from mizu_node.security import verify_api_key
-
-
-# Security scheme
-bearer_scheme = HTTPBearer()
-
-
-async def get_caller(
-    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
-) -> str:
-    async with app.state.conn.get_pg_connection() as db:
-        return await verify_api_key(db, credentials.credentials)
+from mizu_node.security import verify_internal_service
 
 
 @asynccontextmanager
@@ -70,9 +58,9 @@ async def health_check():
 @app.post("/register_query")
 @error_handler
 async def register_query(
-    query: RegisterQueryRequest, _: Annotated[bool, Depends(get_caller)]
+    query: RegisterQueryRequest, _: Annotated[bool, Depends(verify_internal_service)]
 ):
-    async with app.state.conn.get_pg_connection() as db:
+    async with app.state.conn.get_query_db_session() as db:
         query_id = await save_new_query(
             db,
             dataset=query.dataset,
@@ -87,9 +75,9 @@ async def register_query(
 @app.post("/save_query_result")
 @error_handler
 async def save_query_result_callback(
-    result: QueryJobResult, _: Annotated[bool, Depends(get_caller)]
+    result: QueryJobResult, _: Annotated[bool, Depends(verify_internal_service)]
 ):
-    async with app.state.conn.get_pg_connection() as db:
+    async with app.state.conn.get_query_db_session() as db:
         await save_query_result(db, result)
         return build_ok_response()
 
@@ -99,10 +87,10 @@ async def save_query_result_callback(
 async def get_query_results_endpoint(
     query_id: int,
     user: str,
-    _: Annotated[bool, Depends(get_caller)],
+    _: Annotated[bool, Depends(verify_internal_service)],
     page: int = QueryParam(default=1, ge=1),
 ):
-    async with app.state.conn.get_pg_connection() as db:
+    async with app.state.conn.get_query_db_session() as db:
         # Verify query belongs to publisher
         query = (
             db.query(Query)
@@ -139,8 +127,10 @@ async def get_query_results_endpoint(
 
 
 @app.get("/queries/{query_id}", response_model=QueryContext)
-async def get_query_context(query_id: int, _: Annotated[bool, Depends(get_caller)]):
-    async with app.state.conn.get_pg_connection() as db:
+async def get_query_context(
+    query_id: int, _: Annotated[bool, Depends(verify_internal_service)]
+):
+    async with app.state.conn.get_query_db_session() as db:
         query = await get_query_detail(db, query_id)
         if not query:
             raise HTTPException(status_code=404, detail="Query not found")
@@ -150,8 +140,10 @@ async def get_query_context(query_id: int, _: Annotated[bool, Depends(get_caller
 
 
 @app.get("/queries", response_model=QueryContext)
-async def get_all_queries(user: str, _: Annotated[bool, Depends(get_caller)]):
-    async with app.state.conn.get_pg_connection() as db:
+async def get_all_queries(
+    user: str, _: Annotated[bool, Depends(verify_internal_service)]
+):
+    async with app.state.conn.get_query_db_session() as db:
         queries = await get_owned_queries(db, user=user)
         return build_ok_response(
             QueryList(

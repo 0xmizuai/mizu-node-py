@@ -1,10 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
 import logging
+import os
 from typing import List
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request, Security, status, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, HTTPException, Query, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from prometheus_client import Counter, Histogram, make_asgi_app
@@ -15,13 +15,11 @@ from mizu_node.constants import (
 )
 from mizu_node.job_handler import (
     handle_finish_job_v2,
-    handle_query_job,
     handle_take_job,
-    validate_admin_job,
 )
 from mizu_node.security import (
     get_allowed_origins,
-    verify_api_key,
+    verify_internal_service,
 )
 from mizu_node.stats import (
     total_mined_points_in_past_n_days,
@@ -43,24 +41,13 @@ from mizu_node.types.node_service import (
     TakeJobResponse,
 )
 from mizu_node.db.job_queue import (
-    add_jobs,
-    clear_jobs,
     get_assigned_reward_jobs,
+    get_jobs_info,
     get_queue_len,
     queue_clean,
 )
 
 logging.basicConfig(level=logging.INFO)
-
-# Security scheme
-bearer_scheme = HTTPBearer()
-
-
-async def get_caller(
-    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
-) -> str:
-    async with app.state.conn.get_db_session() as session:
-        return await verify_api_key(session, credentials.credentials)
 
 
 @asynccontextmanager
@@ -117,30 +104,25 @@ async def default():
     return {"status": "ok"}
 
 
-@app.post("/clear_queue")
-@error_handler
-async def clear_queue(job_type: JobType, caller: str = Depends(get_caller)):
-    validate_admin_job(caller)
-    async with app.state.conn.get_db_session() as session:
-        await clear_jobs(session, job_type)
-    return build_ok_response()
-
-
 @app.get("/job_status")
 @error_handler
 async def query_job_status(
-    ids: List[str] = Query(None), caller: str = Depends(get_caller)
+    ids: List[str] = Query(None), _: str = Depends(verify_internal_service)
 ):
-    async with app.state.conn.get_db_session() as session:
-        jobs = await handle_query_job(session, ids)
+    async with app.state.conn.get_job_db_session() as session:
+        if not ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
+            )
+        job_ids = [int(id) for id in ids]
+        jobs = await get_jobs_info(session, job_ids)
         return build_ok_response(QueryJobResponse(jobs=jobs))
 
 
 @app.get("/reward_jobs_v2")
 @error_handler
-async def query_reward_jobs(user: str, caller: str = Depends(get_caller)):
-    validate_admin_job(caller)
-    async with app.state.conn.get_db_session() as session:
+async def query_reward_jobs(user: str, _: str = Depends(verify_internal_service)):
+    async with app.state.conn.get_job_db_session() as session:
         jobs = await get_assigned_reward_jobs(session, user)
         return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
 
@@ -155,9 +137,8 @@ TAKE_JOB_V2 = Counter(
 async def take_job_v2(
     job_type: JobType,
     user: str,
-    caller: str = Depends(get_caller),
+    _: str = Depends(verify_internal_service),
 ):
-    validate_admin_job(caller)
     job = await handle_take_job(app.state.conn, user, job_type)
     TAKE_JOB_V2.labels(job_type.name).inc()
     return build_ok_response(TakeJobResponse(job=job))
@@ -170,8 +151,9 @@ FINISH_JOB_V2 = Counter(
 
 @app.post("/finish_job_v2")
 @error_handler
-async def finish_job_v2(request: FinishJobRequest, caller: str = Depends(get_caller)):
-    validate_admin_job(caller)
+async def finish_job_v2(
+    request: FinishJobRequest, _: str = Depends(verify_internal_service)
+):
     if request.user is None or request.user == "":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -190,7 +172,7 @@ async def finish_job_v2(request: FinishJobRequest, caller: str = Depends(get_cal
 @error_handler
 async def queue_len(job_type: JobType = JobType.pow):
     """Return the number of queued classify jobs."""
-    async with app.state.conn.get_db_session() as session:
+    async with app.state.conn.get_job_db_session() as session:
         q_len = await get_queue_len(session, job_type)
         return build_ok_response(QueryQueueLenResponse(length=q_len))
 
@@ -244,10 +226,8 @@ async def get_mined_points_v2(
     user: str,
     hours: int | None = None,
     days: int | None = None,
-    caller: str = Depends(get_caller),
+    _: str = Depends(verify_internal_service),
 ):
-    """Return the mined points in the last `hours` hours or last `days` days."""
-    validate_admin_job(caller)
     if hours is None and days is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

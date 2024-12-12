@@ -26,7 +26,7 @@ class PowDataJobPublisher(object):
         self.conn = Connections()
 
     def check_queue_stats(self) -> int:
-        with self.conn.get_pg_connection() as db:
+        with self.conn.get_job_db_session() as db:
             current_len = queue_len(db, JobType.pow)
             if current_len >= self.threshold:
                 return 0
@@ -49,7 +49,7 @@ class PowDataJobPublisher(object):
                     logging.info(
                         f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
                     )
-                    with self.conn.get_pg_connection() as db:
+                    with self.conn.get_job_db_session() as db:
                         add_jobs(
                             db,
                             JobType.pow,

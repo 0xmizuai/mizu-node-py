@@ -11,16 +11,14 @@ from mizu_node.types.query_service import QueryJobResult
 
 async def save_new_query(
     session: AsyncSession,
-    dataset: str,
-    language: str,
+    dataset_id: int,
     query_text: str,
     model: str,
     user: str,
     status: str = "pending",
 ) -> int:
     query_obj = Query(
-        dataset=dataset,
-        language=language,
+        dataset_id=dataset_id,
         query_text=query_text,
         model=model,
         user=user,
@@ -104,10 +102,10 @@ async def get_query_status(session: AsyncSession, query_id: int) -> dict:
         return None
 
     # Get dataset size
-    stmt = select(Dataset).where(
+    stmt = select(Dataset.total_objects).where(
         Dataset.name == query.dataset, Dataset.language == query.language
     )
-    dataset_size = len((await session.execute(stmt)).scalars().all())
+    dataset_size = (await session.execute(stmt)).scalar_one()
 
     # Get query results count
     stmt = select(QueryResult).where(QueryResult.query_id == query_id)
@@ -118,7 +116,6 @@ async def get_query_status(session: AsyncSession, query_id: int) -> dict:
         "dataset_id": query.dataset_id,
         "processed_records": query.progress,
         "created_at": query.created_at,
-        "language": query.language,
         "dataset_size": dataset_size,
         "query_results_count": query_results_count,
     }
