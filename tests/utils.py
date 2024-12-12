@@ -7,7 +7,7 @@ import psycopg2
 def load_sql_file(filename: str) -> str:
     """Load SQL file from db/sql directory"""
     current_dir = Path(__file__).parent
-    sql_path = current_dir / "sqls" / filename
+    sql_path = current_dir / ".." / "mizu_node" / "db" / "sqls" / filename
     with open(sql_path, "r") as f:
         return f.read()
 
@@ -31,28 +31,28 @@ def initiate_pg_db(conn: psycopg2.extensions.connection):
 
         cur.execute(
             """
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
                 WHERE table_schema = 'public' 
-                AND table_name = 'api_keys'
+                AND table_name = 'queries'
             );
         """
         )
         if not cur.fetchone()[0]:
-            api_key_sql = load_sql_file("api_key.sql")
-            cur.execute(api_key_sql)
+            query_sql = load_sql_file("query.sql")
+            cur.execute(query_sql)
 
         cur.execute(
             """
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
                 WHERE table_schema = 'public' 
-                AND table_name = 'classifiers'
+                AND table_name = 'query_results'
             );
         """
         )
         if not cur.fetchone()[0]:
-            classifier_sql = load_sql_file("classifier.sql")
-            cur.execute(classifier_sql)
+            query_result_sql = load_sql_file("query_result.sql")
+            cur.execute(query_result_sql)
 
         conn.commit()

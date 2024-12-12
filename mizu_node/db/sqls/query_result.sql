@@ -1,12 +1,12 @@
 CREATE TABLE IF NOT EXISTS query_results (
-    id SERIAL PRIMARY KEY,
-    query_id INTEGER NOT NULL REFERENCES queries(id),
-    job_id VARCHAR(255) NOT NULL,
-    result JSONB,
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'processed', 'error')),
-    finished_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(job_id),
+    "id" SERIAL PRIMARY KEY,
+    "query_id" INTEGER NOT NULL REFERENCES queries(id),
+    "job_id" VARCHAR(255) NOT NULL,
+    "result" JSONB,
+    "status" VARCHAR(20) DEFAULT 'pending' CHECK ("status" IN ('pending', 'processed', 'error')),
+    "finished_at" TIMESTAMP WITH TIME ZONE,
+    "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE("job_id"),
     CONSTRAINT fk_query
         FOREIGN KEY(query_id)
         REFERENCES queries(id)

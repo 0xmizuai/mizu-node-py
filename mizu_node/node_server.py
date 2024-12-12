@@ -1,7 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
 import logging
-import os
 from typing import List
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, status, Depends

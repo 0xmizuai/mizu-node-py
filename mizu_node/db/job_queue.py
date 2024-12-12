@@ -8,7 +8,7 @@ from typing import Tuple
 from prometheus_client import Gauge
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_, func, text
+from sqlalchemy import select, update, delete, and_, func
 
 from mizu_node.common import epoch
 from mizu_node.db.orm.job_queue import JobQueue

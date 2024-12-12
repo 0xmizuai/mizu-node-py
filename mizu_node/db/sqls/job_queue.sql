@@ -1,16 +1,16 @@
-CREATE TABLE job_queue (
-    id SERIAL PRIMARY KEY,
-    job_type INTEGER NOT NULL,
-    status INTEGER NOT NULL DEFAULT 0,
-    ctx JSONB NOT NULL,
-    publisher VARCHAR(255),
-    published_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
-    assigned_at BIGINT NOT NULL DEFAULT 0,
-    lease_expired_at BIGINT NOT NULL DEFAULT 0,
-    result JSONB,
-    finished_at BIGINT NOT NULL DEFAULT 0,
-    worker VARCHAR(255),
-    retry INTEGER NOT NULL DEFAULT 0
+CREATE TABLE IF NOT EXISTS job_queue (
+    "id" SERIAL PRIMARY KEY,
+    "job_type" INTEGER NOT NULL,
+    "status" INTEGER NOT NULL DEFAULT 0,
+    "ctx" JSONB NOT NULL,
+    "publisher" VARCHAR(255),
+    "published_at" BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+    "assigned_at" BIGINT NOT NULL DEFAULT 0,
+    "lease_expired_at" BIGINT NOT NULL DEFAULT 0,
+    "result" JSONB,
+    "finished_at" BIGINT NOT NULL DEFAULT 0,
+    "worker" VARCHAR(255),
+    "retry" INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_job_type ON job_queue (job_type);
 CREATE INDEX idx_status ON job_queue (status);

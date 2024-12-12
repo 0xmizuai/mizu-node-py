@@ -1,12 +1,12 @@
 -- Datasets table
 CREATE TABLE IF NOT EXISTS data_records (
-    id SERIAL PRIMARY KEY,
-    dataset_id INTEGER NOT NULL,
-    md5 CHAR(32) NOT NULL,
-    num_of_records INTEGER DEFAULT 0,
-    decompressed_byte_size BIGINT DEFAULT 0,
-    byte_size BIGINT DEFAULT 0,
-    source TEXT DEFAULT '',
+    "id" SERIAL PRIMARY KEY,
+    "dataset_id" INTEGER NOT NULL,
+    "md5" CHAR(32) NOT NULL,
+    "num_of_records" INTEGER DEFAULT 0,
+    "decompressed_byte_size" BIGINT DEFAULT 0,
+    "byte_size" BIGINT DEFAULT 0,
+    "source" TEXT DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(md5)
 );

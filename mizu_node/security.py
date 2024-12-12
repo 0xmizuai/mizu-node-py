@@ -14,7 +14,6 @@ from mizu_node.constants import (
     REWARD_TTL,
 )
 
-from mizu_node.db.api_key import get_user_id
 from mizu_node.db.job_queue import get_reward_jobs_stats
 from mizu_node.stats import (
     event_name,

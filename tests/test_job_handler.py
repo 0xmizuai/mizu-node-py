@@ -9,7 +9,6 @@ import pytest
 from fastapi import status
 from unittest.mock import patch as mock_patch
 
-from mizu_node.db.api_key import create_api_key
 from mizu_node.db.job_queue import add_jobs, delete_one_job, get_assigned_reward_jobs
 from mizu_node.db.job_queue import get_jobs_info
 from mizu_node.types.data_job import (
@@ -46,8 +45,6 @@ from freezegun import freeze_time
 from unittest import mock
 import pytest
 
-TEST_API_KEY1 = "test_api_key1"
-TEST_API_KEY2 = "test_api_key2"
 API_SECRET_KEY = "some-secret"
 
 
@@ -204,8 +201,6 @@ def mock_connections(monkeypatch, pg_conn, setenvvar):
 
     with mock_conn.get_pg_connection() as pg_conn:
         initiate_pg_db(pg_conn)
-        create_api_key(pg_conn, "test_user1", TEST_API_KEY1)
-        create_api_key(pg_conn, "test_user2", TEST_API_KEY2)
     return app
 
 
@@ -564,7 +559,7 @@ def test_job_status(mock_requests, mock_connections):
     params = "&".join([f"ids={i}" for i in all_job_ids])
     response = client.get(
         f"/job_status?{params}",
-        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     initial_statuses = response.json()["data"]["jobs"]
@@ -618,7 +613,7 @@ def test_job_status(mock_requests, mock_connections):
     # Check final status
     response = client.get(
         f"/job_status?{params}",
-        headers={"Authorization": f"Bearer {TEST_API_KEY1}"},
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
     )
     assert response.status_code == 200
     final_statuses = response.json()["data"]["jobs"]

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, UniqueConstraint, Index
 from sqlalchemy.sql import func
 from mizu_node.db.orm.base import Base
 
@@ -15,14 +15,12 @@ class Dataset(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
-        # Unique constraint
-        {"unique_constraint_name": (language, data_type, name)},
-        # Indexes
-        {"index": True, "name": "idx_dataset_name"},
-        {"index": True, "name": "idx_dataset_language"},
-        {"index": True, "name": "idx_dataset_data_type"},
-        {"index": True, "name": "idx_dataset_name_language_data_type"},
-        {"index": True, "name": "idx_dataset_created_at"},
+        UniqueConstraint(language, data_type, name, name="unique_constraint_name"),
+        Index("idx_dataset_name", name),
+        Index("idx_dataset_language", language),
+        Index("idx_dataset_data_type", data_type),
+        Index("idx_dataset_name_language_data_type", name, language, data_type),
+        Index("idx_dataset_created_at", created_at),
     )
 
     def __repr__(self):
