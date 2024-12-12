@@ -3,8 +3,8 @@ import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
+from sqlalchemy import select
 
-from mizu_node.db.dataset import save_data_records
 from mizu_node.db.orm.data_record import DataRecord
 
 # Set up logging
@@ -20,8 +20,8 @@ async def process_combination(session, combo, sample_size: int, batch_size: int 
     """Process a single dataset/language combination"""
     try:
         # Sample records for the combination
-        samples = (
-            await session.query(DataRecord)
+        query = (
+            select(DataRecord)
             .filter(
                 DataRecord.dataset_id == combo.name,
                 DataRecord.language == combo.language,
@@ -29,16 +29,17 @@ async def process_combination(session, combo, sample_size: int, batch_size: int 
             )
             .order_by(func.random())
             .limit(sample_size)
-            .all()
         )
+
+        result = await session.execute(query)
+        samples = result.scalars().all()
 
         if samples:
             batches = [
                 samples[i : i + batch_size] for i in range(0, len(samples), batch_size)
             ]
-            await asyncio.gather(
-                *[save_data_records(session, batch) for batch in batches]
-            )
+            for batch in batches:
+                await session.merge(batch)
 
             logger.info(
                 f"Processed {len(samples)} records for {combo.name}/{combo.language}/{combo.data_type}"
