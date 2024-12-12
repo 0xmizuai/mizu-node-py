@@ -1,7 +1,6 @@
-from contextlib import closing
 from pathlib import Path
-
-import psycopg2
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def load_sql_file(filename: str) -> str:
@@ -12,47 +11,62 @@ def load_sql_file(filename: str) -> str:
         return f.read()
 
 
-def initiate_pg_db(conn: psycopg2.extensions.connection):
-    with closing(conn.cursor()) as cur:
-        cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
+async def initiate_job_db(session: AsyncSession):
+    async with session.begin():
+        raw_conn = await (await session.connection()).get_raw_connection()
+        pg_conn = raw_conn.driver_connection
+
+        await session.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto;"))
         # Check if tables exist before running SQL files
-        cur.execute(
-            """
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'job_queue'
-            );
-        """
+        result = await session.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'job_queue'
+                );
+                """
+            )
         )
-        if not cur.fetchone()[0]:
+        if not result.scalar_one():
             job_queue_sql = load_sql_file("job_queue.sql")
-            cur.execute(job_queue_sql)
+            await pg_conn.execute(job_queue_sql)
+            await session.commit()
 
-        cur.execute(
-            """
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'queries'
-            );
-        """
+
+async def initiate_query_db(session: AsyncSession):
+    async with session.begin():
+        raw_conn = await (await session.connection()).get_raw_connection()
+        pg_conn = raw_conn.driver_connection
+        result = await session.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'queries'
+                );
+                """
+            )
         )
-        if not cur.fetchone()[0]:
+        if not result.scalar_one():
             query_sql = load_sql_file("query.sql")
-            cur.execute(query_sql)
+            await pg_conn.execute(query_sql)
 
-        cur.execute(
-            """
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'query_results'
-            );
-        """
+        result = await session.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'query_results'
+                );
+                """
+            )
         )
-        if not cur.fetchone()[0]:
+        if not result.scalar_one():
             query_result_sql = load_sql_file("query_result.sql")
-            cur.execute(query_result_sql)
+            await pg_conn.execute(query_result_sql)
 
-        conn.commit()
+        await session.commit()

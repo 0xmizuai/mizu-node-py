@@ -1,24 +1,29 @@
 from contextlib import asynccontextmanager
 import logging
 import os
-from redis.asyncio import Redis
+from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 
 class Connections:
-    def __init__(self):
-        self.job_db_url = os.environ["JOB_DB_URL"].replace(
+    def __init__(
+        self,
+        job_db_url: str | None = None,
+        query_db_url: str | None = None,
+        redis: AsyncRedis | None = None,
+    ):
+        self.job_db_url = job_db_url or os.environ["JOB_DB_URL"].replace(
             "postgresql://", "postgresql+asyncpg://"
         )
         logging.info(f"Connecting to postgres at {self.job_db_url}")
 
-        self.engine = create_async_engine(self.job_db_url, echo=False)
+        self.job_db_engine = create_async_engine(self.job_db_url, echo=False)
         self.job_db_session = sessionmaker(
-            self.engine, class_=AsyncSession, expire_on_commit=False
+            self.job_db_engine, class_=AsyncSession, expire_on_commit=False
         )
 
-        self.query_db_url = os.environ["QUERY_DB_URL"].replace(
+        self.query_db_url = query_db_url or os.environ["QUERY_DB_URL"].replace(
             "postgresql://", "postgresql+asyncpg://"
         )
         logging.info(f"Connecting to postgres at {self.query_db_url}")
@@ -27,10 +32,10 @@ class Connections:
             self.query_db_engine, class_=AsyncSession, expire_on_commit=False
         )
 
-        REDIS_URL = os.environ["REDIS_URL"]
-        logging.info(f"Connecting to redis at {REDIS_URL}")
-        self.redis = Redis.from_url(REDIS_URL, decode_responses=True)
-        logging.info(f"Connected to redis at {REDIS_URL}")
+        self.redis = redis or AsyncRedis.from_url(
+            os.environ["REDIS_URL"], decode_responses=True
+        )
+        logging.info(f"Connected to redis at {os.environ['REDIS_URL']}")
 
     @asynccontextmanager
     async def get_job_db_session(self):
@@ -51,3 +56,8 @@ class Connections:
             except Exception:
                 await session.rollback()
                 raise
+
+    async def close(self):
+        await self.job_db_engine.dispose()
+        await self.query_db_engine.dispose()
+        await self.redis.aclose()

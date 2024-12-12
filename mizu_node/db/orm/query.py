@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Text
 from sqlalchemy.orm import relationship
-from .base import Base
+from mizu_node.db.orm.base import Base
 
 
 class Query(Base):

@@ -2,7 +2,7 @@ import os
 
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from redis.asyncio import Redis
+from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mizu_node.common import epoch
@@ -35,14 +35,15 @@ bearer_scheme = HTTPBearer()
 def verify_internal_service(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
-    if credentials.credentials == os.environ["API_SECRET_KEY"]:
+    if credentials.credentials != os.environ["API_SECRET_KEY"]:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         )
+    return True
 
 
 async def validate_worker(
-    redis: Redis, db: AsyncSession, worker: str, job_type: JobType
+    redis: AsyncRedis, db: AsyncSession, worker: str, job_type: JobType
 ) -> bool:
     rate_limit_key = rate_limit_field(job_type)
     fields = [BLOCKED_FIELD, rate_limit_key]

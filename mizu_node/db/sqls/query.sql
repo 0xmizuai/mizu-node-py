@@ -11,8 +11,7 @@ CREATE TABLE IF NOT EXISTS queries (
 );
 
 -- Updated indexes for queries
-CREATE INDEX idx_queries_user ON queries(user);
+CREATE INDEX idx_queries_user ON queries("user");
 CREATE INDEX idx_queries_dataset_id ON queries(dataset_id);
-CREATE INDEX idx_queries_user_dataset_id ON queries(user, dataset_id);
-CREATE INDEX idx_queries_user_created ON queries(user, created_at);
-CREATE INDEX idx_queries_status ON queries(status);
+CREATE INDEX idx_queries_user_dataset_id_status ON queries("user", dataset_id, status);
+CREATE INDEX idx_queries_user_created_at ON queries("user", created_at);

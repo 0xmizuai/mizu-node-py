@@ -1,6 +1,6 @@
 from datetime import datetime, UTC
 from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Text
-from .base import Base
+from mizu_node.db.orm.base import Base
 
 
 class DataRecord(Base):

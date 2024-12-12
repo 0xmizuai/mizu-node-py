@@ -18,6 +18,8 @@ psycopg2-binary = "^2.9.10"
 
 sqlalchemy = "^2.0.36"
 aioboto3 = "^13.2.0"
+pytest-asyncio = "^0.24.0"
+asyncpg = "^0.30.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 pre-commit = "^4.0.1"

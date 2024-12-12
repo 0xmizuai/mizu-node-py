@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI):
     app.state.conn = Connections()
     asyncio.create_task(queue_clean(app.state.conn))
     yield
+    await app.state.conn.close()
 
 
 app = FastAPI(lifespan=lifespan)

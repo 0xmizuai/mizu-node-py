@@ -68,9 +68,9 @@ async def lease_job(
 
 def add_jobs(
     session: AsyncSession,
-    contexts: list[DataJobContext],
     job_type: JobType,
     publisher: str,
+    contexts: list[DataJobContext],
 ) -> list[int]:
     jobs = [
         JobQueue(
@@ -80,7 +80,6 @@ def add_jobs(
         )
         for ctx in contexts
     ]
-
     session.add_all(jobs)
     return [job.id for job in jobs]
 

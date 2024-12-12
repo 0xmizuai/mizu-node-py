@@ -1,7 +1,5 @@
 from sqlalchemy import BigInteger, Column, Integer, String, JSON, Index
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
+from mizu_node.db.orm.base import Base
 
 
 class JobQueue(Base):

@@ -15,11 +15,11 @@ from mizu_node.types.data_job import (
     JobType,
     RewardContext,
 )
-from tests.redis_mock import RedisMock
+from tests.redis_mock import AsyncRedisMock
 from psycopg2.extensions import connection
 
 
-def block_worker(rclient: RedisMock, worker: str):
+def block_worker(rclient: AsyncRedisMock, worker: str):
     rclient.hset(
         event_name(worker),
         BLOCKED_FIELD,
@@ -27,24 +27,24 @@ def block_worker(rclient: RedisMock, worker: str):
     )
 
 
-def set_reward_stats_strict(rclient: RedisMock, worker: str):
+async def set_reward_stats_strict(rclient: AsyncRedisMock, worker: str):
     epoch = epoch() // 3600
     # set past 24 hours stats
     keys = [mined_per_hour_field(epoch - i) for i in range(0, 24)]
-    rclient.hmset(event_name(worker), {k: "50" for k in keys})
+    await rclient.hmset(event_name(worker), {k: "50" for k in keys})
 
     day = epoch() // 86400
     keys = [mined_per_day_field(day - i) for i in range(0, 7)]
-    rclient.hmset(event_name(worker), {k: "200" for k in keys})
+    await rclient.hmset(event_name(worker), {k: "200" for k in keys})
 
 
-def set_reward_stats(rclient: RedisMock, worker: str):
+async def set_reward_stats(rclient: AsyncRedisMock, worker: str):
     day = epoch() // 86400
     keys = [mined_per_day_field(day - i) for i in range(0, 7)]
-    rclient.hmset(event_name(worker), {k: "200" for k in keys})
+    await rclient.hmset(event_name(worker), {k: "200" for k in keys})
 
 
-def set_unclaimed_reward(pg_conn: connection, worker: str, total: int = 5):
+async def set_unclaimed_reward(pg_conn: connection, worker: str, total: int = 5):
     """Insert reward jobs into job_queue table."""
     with pg_conn.cursor() as cur:
         # Prepare batch insert values
@@ -79,13 +79,13 @@ def set_unclaimed_reward(pg_conn: connection, worker: str, total: int = 5):
         pg_conn.commit()
 
 
-def set_one_unclaimed_reward(pg_conn: connection, worker: str):
-    set_unclaimed_reward(pg_conn, worker, 1)
+async def set_one_unclaimed_reward(pg_conn: connection, worker: str):
+    await set_unclaimed_reward(pg_conn, worker, 1)
 
 
-def set_cooldown(rclient: RedisMock, worker: str, job_type: JobType):
-    rclient.hset(event_name(worker), rate_limit_field(job_type), str(epoch()))
+async def set_cooldown(rclient: AsyncRedisMock, worker: str, job_type: JobType):
+    await rclient.hset(event_name(worker), rate_limit_field(job_type), str(epoch()))
 
 
-def clear_cooldown(rclient: RedisMock, worker: str, job_type: JobType):
-    rclient.hset(event_name(worker), rate_limit_field(job_type), "0")
+async def clear_cooldown(rclient: AsyncRedisMock, worker: str, job_type: JobType):
+    await rclient.hset(event_name(worker), rate_limit_field(job_type), "0")

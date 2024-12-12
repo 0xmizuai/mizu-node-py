@@ -1,4 +1,3 @@
-from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
 
 from mizu_node.common import epoch

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
     "worker" VARCHAR(255),
     "retry" INTEGER NOT NULL DEFAULT 0
 );
+
 CREATE INDEX idx_job_type ON job_queue (job_type);
 CREATE INDEX idx_status ON job_queue (status);
 CREATE INDEX idx_published_at ON job_queue (published_at);
@@ -45,11 +46,13 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Create triggers
+DROP TRIGGER IF EXISTS trg_update_finished_at ON job_queue;
 CREATE TRIGGER trg_update_finished_at
     BEFORE UPDATE ON job_queue
     FOR EACH ROW
     EXECUTE FUNCTION update_finished_at();
 
+DROP TRIGGER IF EXISTS trg_reset_lease_on_requeue ON job_queue;
 CREATE TRIGGER trg_reset_lease_on_requeue
     BEFORE UPDATE ON job_queue
     FOR EACH ROW
