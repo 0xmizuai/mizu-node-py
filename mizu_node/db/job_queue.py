@@ -143,7 +143,7 @@ async def light_clean(session: AsyncSession):
         .returning(JobQueue.id)
     )
     result1 = await session.execute(stmt)
-    deleted_rows1 = result1.scalars().count()
+    deleted_rows1 = len(result1.all()) if result1 else 0
 
     # Delete completed batch_classify jobs with no result
     stmt = (
@@ -159,15 +159,14 @@ async def light_clean(session: AsyncSession):
         .returning(JobQueue.id)
     )
     result2 = await session.execute(stmt)
-    deleted_rows2 = result2.scalars().count()
-    await session.commit()
+    deleted_rows2 = len(result2.all()) if result2 else 0
 
     deleted_rows = deleted_rows1 + deleted_rows2
     if deleted_rows:
         logging.info(f"Deleted {deleted_rows} old completed jobs")
 
 
-async def clear_jobs(session: AsyncSession, job_type: JobType) -> None:
+async def clear_jobs(session: AsyncSession, job_type: JobType):
     stmt = delete(JobQueue).where(JobQueue.job_type == job_type)
     await session.execute(stmt)
 
