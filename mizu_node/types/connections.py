@@ -26,7 +26,7 @@ class Connections:
         job_db_url = (
             job_db_url
             or os.environ.get("JOB_DB_URL", None)
-            or os.environ["POSTGRES_URL"]
+            or os.environ.get("POSTGRES_URL", None)
         )
         if job_db_url:
             self.job_db_url = job_db_url.replace(
