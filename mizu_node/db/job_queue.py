@@ -9,8 +9,10 @@ from prometheus_client import Gauge
 from psycopg2 import sql
 from pydantic import BaseModel
 from psycopg2.extensions import connection
+from redis import Redis
 
 from mizu_node.common import epoch
+from mizu_node.constants import REWARD_TTL
 from mizu_node.db.common import with_transaction
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
@@ -24,49 +26,44 @@ from mizu_node.types.service import RewardJobRecord
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
-def get_random_offset():
-    max_concurrent_lease = int(os.environ.get("MAX_CONCURRENT_LEASE", 50))
-    return random.randint(0, max_concurrent_lease)
+def job_queue_cache_key(job_type: JobType) -> str:
+    return f"job_cache_v2:{job_type.name}"
 
 
 @with_transaction
 def lease_job(
     db: connection,
+    redis: Redis,
     job_type: JobType,
-    ttl_secs: int,
     worker: str,
 ) -> Tuple[int, int, DataJobContext] | None:
     """Optimized job leasing with less contention."""
+    id = redis.rpop(job_queue_cache_key(job_type))
+    if id is None:
+        return None
+
     with db.cursor() as cur:
         cur.execute(
             sql.SQL(
-                """
-                WITH selected_job AS (
-                    SELECT id, retry, ctx
-                    FROM job_queue
-                    WHERE job_type = %s
-                    AND status = %s
-                    OFFSET %s
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                )
-                UPDATE job_queue j
-                SET status = %s,
-                    assigned_at = EXTRACT(EPOCH FROM NOW())::BIGINT,
+                """UPDATE job_queue
+                SET
+                    status = %s,
+                    assigned_at = %s,
                     lease_expired_at = %s,
-                    worker = %s
-                FROM selected_job s
-                WHERE j.id = s.id
-                RETURNING j.id, s.retry, s.ctx
-                """
+                    worker = CASE
+                        WHEN status = 1 THEN worker || ',' || %s
+                        ELSE %s
+                    END
+                WHERE id = %s
+                RETURNING id, retry, ctx"""
             ),
             (
-                job_type,
-                JobStatus.pending,
-                get_random_offset(),
                 JobStatus.processing,
-                epoch() + ttl_secs,
+                epoch(),
+                epoch() + get_lease_ttl(job_type),
                 worker,
+                worker,
+                id,
             ),
         )
 
@@ -179,6 +176,20 @@ def queue_len(db: connection, job_type: JobType) -> int:
 
 
 @with_transaction
+def update_job_worker(db: connection, item_id: int, worker: str) -> None:
+    with db.cursor() as cur:
+        cur.execute(
+            sql.SQL(
+                """UPDATE job_queue
+                SET worker = %s
+                WHERE id = %s
+            """
+            ),
+            (worker, item_id),
+        )
+
+
+@with_transaction
 def get_job_lease(
     db: connection, item_id: int, job_type: JobType
 ) -> Tuple[DataJobContext | None, str | None]:
@@ -197,7 +208,14 @@ def get_job_lease(
             (item_id, job_type, JobStatus.processing),
         )
         row = cur.fetchone()
-        return (DataJobContext.model_validate(row[0]), row[1]) if row else (None, None)
+        return (
+            (
+                DataJobContext.model_validate(row[0]),
+                row[1].split(",") if row[1] else [],
+            )
+            if row
+            else (None, [])
+        )
 
 
 @with_transaction
@@ -308,3 +326,44 @@ def queue_clean(conn: Connections):
                 logging.error(f"failed to clean queue {job_type} with error {e}")
                 continue
             time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
+
+
+@with_transaction
+def refill_job_cache(db: connection, redis: Redis):
+    with db.cursor() as cur:
+        for job_type in ALL_JOB_TYPES:
+            logging.info(f"refill job cache start for queue {str(job_type)}")
+            if redis.llen(job_queue_cache_key(job_type)) > 50000:
+                logging.info(f"job cache for queue {str(job_type)} is full, skipping")
+                continue
+
+            cur.execute(
+                sql.SQL(
+                    """SELECT id FROM job_queue
+                    WHERE job_type = %s AND status = %s
+                    ORDER BY published_at ASC LIMIT 50000"""
+                ),
+                (
+                    job_type,
+                    JobStatus.pending,
+                ),
+            )
+            job_ids = [str(row[0]) for row in cur.fetchall()]
+            if job_ids:
+                redis.lpush(job_queue_cache_key(job_type), *job_ids)
+
+
+def refill_job_cache_loop(conn: Connections):
+    while True:
+        with conn.get_pg_connection() as db:
+            refill_job_cache(db, conn.redis)
+        time.sleep(int(os.environ.get("QUEUE_REFILL_INTERVAL", 60)))
+
+
+def get_lease_ttl(job_type: JobType) -> int:
+    if job_type == JobType.reward:
+        return REWARD_TTL
+    elif job_type == JobType.batch_classify:
+        return 3600
+    else:
+        return 600

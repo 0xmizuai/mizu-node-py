@@ -126,11 +126,14 @@ def _new_data_job_payload(
 
 
 def _publish_jobs_simple(client: TestClient, job_type: JobType, num_jobs=3):
-    return add_jobs(
+    job_ids = add_jobs(
         client.app.state.conn.postgres,
         job_type,
         [_new_data_job_payload(job_type) for i in range(num_jobs)],
     )
+    # Cache job IDs in Redis
+    client.app.state.conn.redis.lpush(f"job_cache_v2:{job_type.name}", *job_ids)
+    return job_ids
 
 
 @pytest.fixture(scope="function")
@@ -526,6 +529,8 @@ def test_query_reward_jobs(mock_connections):
             ),
         ],
     )
+    # Cache job IDs in Redis
+    client.app.state.conn.redis.lpush(f"job_cache_v2:{JobType.reward.name}", *job_ids)
 
     set_reward_stats(client.app.state.conn.redis, "worker1")
 

@@ -39,7 +39,12 @@ from mizu_node.types.service import (
     QueryRewardJobsResponse,
     TakeJobResponse,
 )
-from mizu_node.db.job_queue import get_assigned_reward_jobs, queue_clean
+from mizu_node.db.job_queue import (
+    get_assigned_reward_jobs,
+    queue_clean,
+    refill_job_cache,
+    refill_job_cache_loop,
+)
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -49,9 +54,13 @@ bearer_scheme = HTTPBearer()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.conn = Connections()
+    conn = Connections()
+    with conn.get_pg_connection() as db:
+        refill_job_cache(db, conn.redis)
+    app.state.conn = conn
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, queue_clean, app.state.conn)
+    loop.run_in_executor(None, refill_job_cache_loop, app.state.conn)
     yield
 
 

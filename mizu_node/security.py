@@ -9,7 +9,6 @@ from mizu_node.constants import (
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
     MAX_UNCLAIMED_REWARD,
     MIN_REWARD_GAP,
-    REWARD_TTL,
 )
 
 from mizu_node.db.job_queue import get_reward_jobs_stats
@@ -84,15 +83,6 @@ def validate_worker(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="not active user",
             )
-
-
-def get_lease_ttl(job_type: JobType) -> int:
-    if job_type == JobType.reward:
-        return REWARD_TTL
-    elif job_type == JobType.batch_classify:
-        return 3600
-    else:
-        return 600
 
 
 def get_cooldown_config(job_type: JobType) -> CooldownConfig:

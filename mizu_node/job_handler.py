@@ -5,7 +5,6 @@ import os
 from prometheus_client import Histogram
 from redis import Redis
 from fastapi import HTTPException, status
-import requests
 
 
 from mizu_node.common import epoch_ms
@@ -16,7 +15,6 @@ from mizu_node.constants import (
     MIZU_ADMIN_USER,
 )
 from mizu_node.security import (
-    get_lease_ttl,
     validate_worker,
 )
 from mizu_node.stats import (
@@ -40,6 +38,7 @@ from mizu_node.db.job_queue import (
     get_job_lease,
     lease_job,
     queue_len,
+    update_job_worker,
 )
 from mizu_node.types.service import SettleRewardRequest
 from psycopg2.extensions import connection
@@ -65,7 +64,7 @@ def handle_take_job(
             epoch_ms() - start_time
         )
         after_validation = epoch_ms()
-        result = lease_job(pg_conn, job_type, get_lease_ttl(job_type), worker)
+        result = lease_job(pg_conn, conn.redis, job_type, worker)
         HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
             epoch_ms() - after_validation
         )
@@ -86,7 +85,7 @@ def handle_take_job(
             except HTTPException as e:
                 logging.warning(f"failed to retire job {item_id} with error {e.detail}")
                 pass
-            return handle_take_job(conn, worker, job_type)
+            return None
         else:
             job = WorkerJob(
                 job_id=item_id,
@@ -109,8 +108,8 @@ def handle_finish_job_v2(
 ) -> SettleRewardRequest | None:
     with conn.get_pg_connection() as pg_conn:
         job_id = int(job_result.job_id)
-        ctx, assigner = get_job_lease(pg_conn, job_id, job_result.job_type)
-        if assigner != worker:
+        ctx, assigners = get_job_lease(pg_conn, job_id, job_result.job_type)
+        if worker not in assigners:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
@@ -118,7 +117,11 @@ def handle_finish_job_v2(
         data_job_result = DataJobResult(
             **job_result.model_dump(exclude={"job_id", "job_type"})
         )
-        complete_job(pg_conn, job_result.job_id, job_status, data_job_result)
+        assigners.remove(worker)
+        if assigners:
+            update_job_worker(pg_conn, job_id, assigners)
+        else:
+            complete_job(pg_conn, job_id, job_status, data_job_result)
         return (
             _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished
