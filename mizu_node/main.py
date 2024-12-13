@@ -176,7 +176,7 @@ def queue_len(job_type: JobType = JobType.pow):
     Return the number of queued classify jobs.
     """
     with app.state.conn.get_pg_connection() as db:
-        q_len = get_queue_len(db, app.state.conn.redis, job_type)
+        q_len = get_queue_len(db, job_type)
         return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 

@@ -173,7 +173,7 @@ class RewardJobPublisher(object):
 
     def should_publish(self, conn: Connections):
         with conn.get_pg_connection() as db:
-            length = get_queue_len(db, conn.redis, JobType.reward)
+            length = get_queue_len(db, JobType.reward)
         return length < self.threshold
 
     def run(self, conn: Connections):

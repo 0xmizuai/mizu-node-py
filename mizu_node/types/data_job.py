@@ -21,6 +21,7 @@ class JobStatus(int, Enum):
     processing = 1
     finished = 2
     error = 3
+    cached = 4
 
 
 class ErrorCode(int, Enum):

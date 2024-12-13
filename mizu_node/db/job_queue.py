@@ -163,20 +163,24 @@ def delete_one_job(db: connection, item_id: int) -> None:
 
 
 @with_transaction
-def get_queue_len(db: connection, redis: Redis, job_type: JobType) -> int:
+def get_num_of_jobs(db: connection, job_type: JobType, status: JobStatus) -> int:
     with db.cursor() as cur:
         cur.execute(
             sql.SQL(
                 "SELECT COUNT(*) FROM job_queue WHERE job_type = %s AND status = %s"
             ),
-            (job_type, JobStatus.pending),
+            (job_type, status),
         )
-        cached = redis.llen(job_queue_cache_key(job_type))
-        pending = cur.fetchone()[0]
-        logging.info(
-            f"job_type: {job_type.name}, cached: {cached}, db pending: {pending}"
-        )
-        return pending + cached
+        return cur.fetchone()[0]
+
+
+def get_queue_len(db: connection, job_type: JobType) -> int:
+    cached = get_num_of_jobs(db, job_type, JobStatus.cached)
+    pending = get_num_of_jobs(db, job_type, JobStatus.pending)
+    logging.info(
+        f"job_type: {job_type.name}, cached: {cached}, db pending: {pending}, total: {cached + pending}"
+    )
+    return cached + pending
 
 
 @with_transaction
@@ -321,9 +325,7 @@ def queue_clean(conn: Connections):
     while True:
         with conn.get_pg_connection() as db:
             for job_type in ALL_JOB_TYPES:
-                QUEUE_LEN.labels(job_type.name).set(
-                    get_queue_len(db, conn.redis, job_type)
-                )
+                QUEUE_LEN.labels(job_type.name).set(get_queue_len(db, job_type))
             try:
                 logging.info(f"light clean start for queue {str(job_type)}")
                 light_clean(db)
@@ -365,7 +367,7 @@ def refill_job_cache(db: connection, redis: Redis):
                     job_type,
                     JobStatus.pending,
                     min_queue_len,
-                    JobStatus.processing,
+                    JobStatus.cached,
                 ),
             )
             job_ids = [str(row[0]) for row in cur.fetchall()]

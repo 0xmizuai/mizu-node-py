@@ -25,8 +25,8 @@ class PowDataJobPublisher(object):
         self.threshold = threshold
         self.cooldown = cooldown
 
-    def check_queue_stats(self, conn, redis: Redis):
-        length = get_queue_len(conn, redis, JobType.pow)
+    def check_queue_stats(self, conn):
+        length = get_queue_len(conn, JobType.pow)
         if length > self.threshold:
             return 0
         return math.ceil(self.threshold * 2 - length)
