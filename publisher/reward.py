@@ -140,7 +140,7 @@ class RewardJobPublisher(object):
         self,
         types: list[str],
         cron_gap: int = 60,  # run every 60 seconds
-        queue_threshold: int = 10000,  # max number of pending jobs
+        queue_threshold: int = 50000,  # max number of pending jobs
     ):
         self.reward_configs = build_reward_configs(types)
         self.api_key = os.environ["API_SECRET_KEY"]

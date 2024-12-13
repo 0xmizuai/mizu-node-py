@@ -22,7 +22,7 @@ from mizu_node.types.node_service import RewardJobRecord
 
 logging.basicConfig(level=logging.INFO)
 
-JOB_TTL = int(os.environ.get("JOB_TTL", 7 * 24 * 60 * 60))  # 7 days in seconds
+JOB_TTL = int(os.environ.get("JOB_TTL", 3 * 24 * 60 * 60))  # 3 days in seconds
 
 
 def get_random_offset():
