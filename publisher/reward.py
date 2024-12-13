@@ -4,11 +4,11 @@ import os
 import random
 import time
 
-import psycopg2
 from pydantic import BaseModel
 from redis import Redis
 from mizu_node.common import epoch, is_prod
-from mizu_node.db.job_queue import add_jobs
+from mizu_node.db.job_queue import add_jobs, get_queue_len
+from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, RewardContext, Token
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
@@ -144,22 +144,21 @@ class RewardJobPublisher(object):
     ):
         self.reward_configs = build_reward_configs(types)
         self.api_key = os.environ["API_SECRET_KEY"]
-        self.rclient = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
         self.cron_gap = cron_gap
 
     def spent_key(self, config: RewardJobConfig):
         n = epoch() // config.budget.unit
         return f"{config.key}:spent_per_{config.budget.unit_name}:{n}"
 
-    def spent(self, config: RewardJobConfig):
-        spent = self.rclient.get(self.spent_key(config))
+    def spent(self, rclient: Redis, config: RewardJobConfig):
+        spent = rclient.get(self.spent_key(config))
         return int(spent or 0)
 
-    def record_spent(self, config: RewardJobConfig, amount: float):
-        self.rclient.incrbyfloat(self.spent_key(config), amount)
+    def record_spent(self, rclient: Redis, config: RewardJobConfig, amount: float):
+        rclient.incrbyfloat(self.spent_key(config), amount)
 
-    def lottery(self, config: RewardJobConfig):
-        if self.spent(config) > config.budget.budget:
+    def lottery(self, rclient: Redis, config: RewardJobConfig):
+        if self.spent(rclient, config) > config.budget.budget:
             return False
         total_runs = config.budget.unit // self.cron_gap
         return random.uniform(0, 1) < (config.budget.budget / total_runs)
@@ -171,12 +170,21 @@ class RewardJobPublisher(object):
         else:
             return 1
 
-    def run(self, conn: psycopg2.extensions.connection):
+    def should_publish(self, conn: Connections):
+        with conn.get_pg_connection() as db:
+            length = get_queue_len(db, conn.redis, JobType.reward)
+        return length < self.threshold
+
+    def run(self, conn: Connections):
         while True:
+            if not self.should_publish(conn):
+                time.sleep(self.cron_gap)
+                continue
+
             contexts = []
             logging.info("======= start to publish reward jobs ======")
             for config in self.reward_configs:
-                if self.lottery(config):
+                if self.lottery(conn.redis, config):
                     batch_size = self.get_batch_size(config)
                     logging.info(f"publishing {batch_size} reward jobs: {config.key}")
                     contexts.extend(
@@ -187,24 +195,26 @@ class RewardJobPublisher(object):
                             for _ in range(batch_size)
                         ]
                     )
-                    self.record_spent(config, batch_size)
+                    self.record_spent(conn.redis, config, batch_size)
                 else:
                     logging.info(f"no reward jobs for {config.key}")
             if len(contexts) > 0:
-                add_jobs(conn, JobType.reward, contexts)
+                with conn.get_pg_connection() as db:
+                    add_jobs(db, JobType.reward, contexts)
                 logging.info("all reward jobs published")
             else:
                 logging.info("no reward job to publish")
 
             # print stats every 10 runs (10 minutes)
             if random.uniform(0, 1) < 0.1:
-                self.print_stats()
+                self.print_stats(conn.redis)
             time.sleep(self.cron_gap)
 
-    def print_stats(self):
+    def print_stats(self, rclient: Redis):
         for config in self.reward_configs:
+            spent = self.spent(rclient, config)
             logging.info(
-                f">>>>>> {config.key} spent_per_{config.budget.unit_name}: {self.spent(config)}, budget_per_{config.budget.unit_name}: {config.budget.budget}"
+                f">>>>>> {config.key} spent_per_{config.budget.unit_name}: {spent}, budget_per_{config.budget.unit_name}: {config.budget.budget}"
             )
 
 
@@ -216,6 +226,5 @@ args = parser.parse_args()
 
 
 def start():
-    conn = psycopg2.connect(os.environ["POSTGRES_URL"])
+    conn = Connections()
     RewardJobPublisher(args.types.split(",")).run(conn)
-    conn.close()

@@ -4,12 +4,10 @@ import math
 import os
 import secrets
 import time
-import psycopg2
-import requests
-from mizu_node.db.job_queue import add_jobs
+from redis import Redis
+from mizu_node.db.job_queue import add_jobs, get_queue_len
+from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, PowContext
-from mizu_node.types.service import PublishPowJobRequest
-from publisher.common import NODE_SERVICE_URL, publish
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -27,31 +25,29 @@ class PowDataJobPublisher(object):
         self.threshold = threshold
         self.cooldown = cooldown
 
-    def check_queue_stats(self):
-        result = requests.get(
-            f"{NODE_SERVICE_URL}/stats/queue_len?job_type=0",
-        )
-        length = result.json()["data"]["length"]
+    def check_queue_stats(self, conn, redis: Redis):
+        length = get_queue_len(conn, redis, JobType.pow)
         if length > self.threshold:
             return 0
         return math.ceil(self.threshold * 2 - length)
 
-    def run(self, conn: psycopg2.extensions.connection):
+    def run(self, conn: Connections):
         while True:
-            num_of_jobs = self.check_queue_stats()
+            num_of_jobs = self.check_queue_stats(db, conn.redis)
             logging.info(f"will publish {num_of_jobs} pow jobs")
             num_of_batches = math.ceil(num_of_jobs / self.batch_size)
-            for batch in range(num_of_batches):
-                contexts = [
-                    DataJobContext(
-                        pow_ctx=PowContext(difficulty=4, seed=secrets.token_hex(32))
+            with conn.get_pg_connection() as db:
+                for batch in range(num_of_batches):
+                    contexts = [
+                        DataJobContext(
+                            pow_ctx=PowContext(difficulty=4, seed=secrets.token_hex(32))
+                        )
+                        for _ in range(self.batch_size)
+                    ]
+                    logging.info(
+                        f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
                     )
-                    for _ in range(self.batch_size)
-                ]
-                logging.info(
-                    f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
-                )
-                add_jobs(conn, JobType.Pow, contexts)
+                    add_jobs(db, JobType.Pow, contexts)
             logging.info(f"all pow jobs published")
             time.sleep(self.cooldown)
 
@@ -64,8 +60,7 @@ args = parser.parse_args()
 
 
 def start():
-    conn = psycopg2.connect(os.environ["POSTGRES_URL"])
+    conn = Connections()
     PowDataJobPublisher(
         batch_size=args.batch_size, cooldown=args.cooldown, threshold=args.threshold
     ).run(conn)
-    conn.close()

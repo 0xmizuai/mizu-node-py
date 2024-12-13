@@ -1,6 +1,5 @@
 import logging
 import os
-import random
 import time
 from typing import Tuple
 from typing import Tuple
@@ -164,7 +163,7 @@ def delete_one_job(db: connection, item_id: int) -> None:
 
 
 @with_transaction
-def queue_len(db: connection, job_type: JobType) -> int:
+def get_queue_len(db: connection, redis: Redis, job_type: JobType) -> int:
     with db.cursor() as cur:
         cur.execute(
             sql.SQL(
@@ -172,7 +171,8 @@ def queue_len(db: connection, job_type: JobType) -> int:
             ),
             (job_type, JobStatus.pending),
         )
-        return cur.fetchone()[0]
+        cached = redis.llen(job_queue_cache_key(job_type))
+        return cur.fetchone()[0] + cached
 
 
 @with_transaction

@@ -16,7 +16,6 @@ from mizu_node.constants import (
 from mizu_node.job_handler import (
     handle_finish_job_v2,
     handle_take_job,
-    handle_queue_len,
 )
 from mizu_node.security import (
     get_allowed_origins,
@@ -41,6 +40,7 @@ from mizu_node.types.service import (
 )
 from mizu_node.db.job_queue import (
     get_assigned_reward_jobs,
+    get_queue_len,
     queue_clean,
     refill_job_cache,
     refill_job_cache_loop,
@@ -176,7 +176,7 @@ def queue_len(job_type: JobType = JobType.pow):
     Return the number of queued classify jobs.
     """
     with app.state.conn.get_pg_connection() as db:
-        q_len = handle_queue_len(db, job_type)
+        q_len = get_queue_len(db, app.state.conn.redis, job_type)
         return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 

@@ -129,10 +129,6 @@ def handle_finish_job_v2(
         )
 
 
-def handle_queue_len(pg_conn: connection, job_type: JobType) -> int:
-    return queue_len(pg_conn, job_type)
-
-
 def validate_admin_job(caller: str):
     if caller != MIZU_ADMIN_USER:
         raise HTTPException(
