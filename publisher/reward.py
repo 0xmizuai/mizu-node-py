@@ -4,12 +4,12 @@ import os
 import random
 import time
 
+import psycopg2
 from pydantic import BaseModel
 from redis import Redis
 from mizu_node.common import epoch, is_prod
-from mizu_node.types.data_job import RewardContext, Token
-from mizu_node.types.service import PublishRewardJobRequest
-from publisher.common import publish
+from mizu_node.db.job_queue import add_jobs
+from mizu_node.types.data_job import DataJobContext, JobType, RewardContext, Token
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -171,7 +171,7 @@ class RewardJobPublisher(object):
         else:
             return 1
 
-    def run(self):
+    def run(self, conn: psycopg2.extensions.connection):
         while True:
             contexts = []
             logging.info("======= start to publish reward jobs ======")
@@ -179,16 +179,19 @@ class RewardJobPublisher(object):
                 if self.lottery(config):
                     batch_size = self.get_batch_size(config)
                     logging.info(f"publishing {batch_size} reward jobs: {config.key}")
-                    contexts.extend([config.ctx for _ in range(batch_size)])
+                    contexts.extend(
+                        [
+                            DataJobContext(
+                                reward_ctx=config.ctx,
+                            )
+                            for _ in range(batch_size)
+                        ]
+                    )
                     self.record_spent(config, batch_size)
                 else:
                     logging.info(f"no reward jobs for {config.key}")
             if len(contexts) > 0:
-                publish(
-                    "/publish_reward_jobs",
-                    self.api_key,
-                    PublishRewardJobRequest(data=contexts),
-                )
+                add_jobs(conn, JobType.reward, contexts)
                 logging.info("all reward jobs published")
             else:
                 logging.info("no reward job to publish")
@@ -213,4 +216,6 @@ args = parser.parse_args()
 
 
 def start():
-    RewardJobPublisher(args.types.split(",")).run()
+    conn = psycopg2.connect(os.environ["POSTGRES_URL"])
+    RewardJobPublisher(args.types.split(",")).run(conn)
+    conn.close()

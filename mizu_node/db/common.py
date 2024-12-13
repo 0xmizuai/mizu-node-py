@@ -55,30 +55,4 @@ def initiate_pg_db(conn: psycopg2.extensions.connection):
             job_queue_sql = load_sql_file("job_queue.sql")
             cur.execute(job_queue_sql)
 
-        cur.execute(
-            """
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'api_keys'
-            );
-        """
-        )
-        if not cur.fetchone()[0]:
-            api_key_sql = load_sql_file("api_key.sql")
-            cur.execute(api_key_sql)
-
-        cur.execute(
-            """
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'classifiers'
-            );
-        """
-        )
-        if not cur.fetchone()[0]:
-            classifier_sql = load_sql_file("classifier.sql")
-            cur.execute(classifier_sql)
-
         conn.commit()

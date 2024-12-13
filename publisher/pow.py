@@ -4,8 +4,10 @@ import math
 import os
 import secrets
 import time
+import psycopg2
 import requests
-from mizu_node.types.data_job import PowContext
+from mizu_node.db.job_queue import add_jobs
+from mizu_node.types.data_job import DataJobContext, JobType, PowContext
 from mizu_node.types.service import PublishPowJobRequest
 from publisher.common import NODE_SERVICE_URL, publish
 
@@ -34,24 +36,22 @@ class PowDataJobPublisher(object):
             return 0
         return math.ceil(self.threshold * 2 - length)
 
-    def run(self):
+    def run(self, conn: psycopg2.extensions.connection):
         while True:
             num_of_jobs = self.check_queue_stats()
             logging.info(f"will publish {num_of_jobs} pow jobs")
             num_of_batches = math.ceil(num_of_jobs / self.batch_size)
             for batch in range(num_of_batches):
                 contexts = [
-                    PowContext(difficulty=4, seed=secrets.token_hex(32))
+                    DataJobContext(
+                        pow_ctx=PowContext(difficulty=4, seed=secrets.token_hex(32))
+                    )
                     for _ in range(self.batch_size)
                 ]
                 logging.info(
                     f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
                 )
-                publish(
-                    "/publish_pow_jobs",
-                    self.api_key,
-                    PublishPowJobRequest(data=contexts),
-                )
+                add_jobs(conn, JobType.Pow, contexts)
             logging.info(f"all pow jobs published")
             time.sleep(self.cooldown)
 
@@ -64,6 +64,8 @@ args = parser.parse_args()
 
 
 def start():
+    conn = psycopg2.connect(os.environ["POSTGRES_URL"])
     PowDataJobPublisher(
         batch_size=args.batch_size, cooldown=args.cooldown, threshold=args.threshold
-    ).run()
+    ).run(conn)
+    conn.close()

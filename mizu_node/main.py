@@ -2,9 +2,8 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
-from typing import List
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request, Security, status, Depends
+from fastapi import FastAPI, HTTPException, Request, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,17 +15,11 @@ from mizu_node.constants import (
 )
 from mizu_node.job_handler import (
     handle_finish_job_v2,
-    handle_query_job,
     handle_take_job,
-    handle_publish_jobs,
-    handle_finish_job,
     handle_queue_len,
-    validate_admin_job,
 )
 from mizu_node.security import (
     get_allowed_origins,
-    verify_jwt,
-    verify_api_key,
 )
 from mizu_node.stats import (
     total_mined_points_in_past_n_days,
@@ -40,19 +33,13 @@ from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import JobType
 from mizu_node.types.service import (
     FinishJobRequest,
-    FinishJobResponse,
     FinishJobV2Response,
-    PublishBatchClassifyJobRequest,
-    PublishJobResponse,
-    PublishPowJobRequest,
-    PublishRewardJobRequest,
-    QueryJobResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
     QueryRewardJobsResponse,
     TakeJobResponse,
 )
-from mizu_node.db.job_queue import clear_jobs, get_assigned_reward_jobs, queue_clean
+from mizu_node.db.job_queue import get_assigned_reward_jobs, queue_clean
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -109,19 +96,15 @@ metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
 
-def get_user(
+def verify_internal_service(
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
 ) -> str:
-    token = credentials.credentials
-    return verify_jwt(token, os.environ["JWT_VERIFY_KEY"])
-
-
-def get_caller(
-    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
-) -> str:
-    token = credentials.credentials
-    with app.state.conn.get_pg_connection() as db:
-        return verify_api_key(db, token)
+    if credentials.credentials != os.environ["API_SECRET_KEY"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+    return True
 
 
 @app.get("/")
@@ -130,98 +113,9 @@ def default():
     return {"status": "ok"}
 
 
-@app.post("/clear_queue")
-@error_handler
-def clear_queue(job_type: JobType, caller: str = Depends(get_caller)):
-    validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        clear_jobs(db, job_type)
-    return build_ok_response()
-
-
-@app.post("/publish_pow_jobs")
-@error_handler
-def publish_pow_jobs(
-    request: PublishPowJobRequest,
-    caller: str = Depends(get_caller),
-):
-    validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, caller, JobType.pow, request.data)
-        return build_ok_response(PublishJobResponse(job_ids=ids))
-
-
-@app.post("/publish_reward_jobs")
-@error_handler
-def publish_reward_jobs(
-    request: PublishRewardJobRequest,
-    caller: str = Depends(get_caller),
-):
-    validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, caller, JobType.reward, request.data)
-        return build_ok_response(PublishJobResponse(job_ids=ids))
-
-
-@app.post("/publish_batch_classify_jobs")
-@error_handler
-def publish_batch_classify_jobs(
-    request: PublishBatchClassifyJobRequest, caller: str = Depends(get_caller)
-):
-    validate_admin_job(caller)
-    with app.state.conn.get_pg_connection() as db:
-        ids = handle_publish_jobs(db, caller, JobType.batch_classify, request.data)
-        return build_ok_response(PublishJobResponse(job_ids=ids))
-
-
-@app.get("/job_status")
-@error_handler
-def query_job_status(ids: List[str] = Query(None), _: str = Depends(get_caller)):
-    with app.state.conn.get_pg_connection() as db:
-        jobs = handle_query_job(db, ids)
-        return build_ok_response(QueryJobResponse(jobs=jobs))
-
-
-@app.get("/reward_jobs")
-@error_handler
-def query_reward_jobs(user: str = Depends(get_user)):
-    with app.state.conn.get_pg_connection() as db:
-        jobs = get_assigned_reward_jobs(db, user)
-        return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
-
-
-TAKE_JOB = Counter("take_job", "# of take_job requests per job_type", ["job_type"])
-
-
-@app.get("/take_job")
-@error_handler
-def take_job(
-    job_type: JobType,
-    user: str = Depends(get_user),
-):
-    job = handle_take_job(app.state.conn, user, job_type)
-    TAKE_JOB.labels(job_type.name).inc()
-    return build_ok_response(TakeJobResponse(job=job))
-
-
-FINISH_JOB = Counter(
-    "finish_job", "# of finish_job requests per job_type", ["job_type"]
-)
-
-
-@app.post("/finish_job")
-@error_handler
-def finish_job(request: FinishJobRequest, user: str = Depends(get_user)):
-    points = handle_finish_job(app.state.conn, user, request.job_result)
-    job_type = request.job_result.job_type
-    FINISH_JOB.labels(job_type.name).inc()
-    return build_ok_response(FinishJobResponse(rewarded_points=points))
-
-
 @app.get("/reward_jobs_v2")
 @error_handler
-def query_reward_jobs(user: str, caller=Depends(get_caller)):
-    validate_admin_job(caller)
+def query_reward_jobs(user: str, _=Depends(verify_internal_service)):
     with app.state.conn.get_pg_connection() as db:
         jobs = get_assigned_reward_jobs(db, user)
         return build_ok_response(QueryRewardJobsResponse(jobs=jobs))
@@ -237,9 +131,8 @@ TAKE_JOB_V2 = Counter(
 def take_job_v2(
     job_type: JobType,
     user: str,
-    caller: str = Depends(get_caller),
+    _: str = Depends(verify_internal_service),
 ):
-    validate_admin_job(caller)
     job = handle_take_job(app.state.conn, user, job_type)
     TAKE_JOB_V2.labels(job_type.name).inc()
     return build_ok_response(TakeJobResponse(job=job))
@@ -252,8 +145,7 @@ FINISH_JOB_V2 = Counter(
 
 @app.post("/finish_job_v2")
 @error_handler
-def finish_job_v2(request: FinishJobRequest, caller: str = Depends(get_caller)):
-    validate_admin_job(caller)
+def finish_job_v2(request: FinishJobRequest, _: str = Depends(verify_internal_service)):
     if request.user is None or request.user == "":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -319,31 +211,6 @@ def get_rewards_stats(token: str, hours: int | None = None, days: int | None = N
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
-@app.get("/stats/mined_points")
-@app.get("/worker_stats/mined_points")
-@error_handler
-def get_mined_points(
-    hours: int | None = None, days: int | None = None, user=Depends(get_user)
-):
-    """
-    Return the mined points in the last `hours` hours or last `days` days.
-    """
-    if hours is None and days is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="either hours or days must be provided",
-        )
-    if hours is not None:
-        points = total_mined_points_in_past_n_hour_per_worker(
-            app.state.conn.redis, user, max(hours, 24)
-        )
-    if days is not None:
-        points = total_mined_points_in_past_n_days_per_worker(
-            app.state.conn.redis, user, max(days, 7)
-        )
-    return build_ok_response(QueryMinedPointsResponse(points=points))
-
-
 @app.get("/stats/mined_points_v2")
 @app.get("/worker_stats/mined_points_v2")
 @error_handler
@@ -351,12 +218,11 @@ def get_mined_points_v2(
     user: str,
     hours: int | None = None,
     days: int | None = None,
-    caller=Depends(get_caller),
+    _=Depends(verify_internal_service),
 ):
     """
     Return the mined points in the last `hours` hours or last `days` days.
     """
-    validate_admin_job(caller)
     if hours is None and days is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

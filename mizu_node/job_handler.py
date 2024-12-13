@@ -2,8 +2,7 @@ from hashlib import sha512
 import logging
 import os
 
-from prometheus_client import Counter, Histogram
-from pydantic import BaseModel
+from prometheus_client import Histogram
 from redis import Redis
 from fastapi import HTTPException, status
 import requests
@@ -37,57 +36,15 @@ from mizu_node.types.data_job import (
     WorkerJobResult,
 )
 from mizu_node.db.job_queue import (
-    add_jobs,
     complete_job,
-    get_jobs_info,
     get_job_lease,
     lease_job,
     queue_len,
 )
-from mizu_node.types.service import DataJobQueryResult, SettleRewardRequest
+from mizu_node.types.service import SettleRewardRequest
 from psycopg2.extensions import connection
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
-
-
-def build_data_job_context(job_type: JobType, ctx: BaseModel) -> DataJobContext:
-    if job_type == JobType.reward:
-        return DataJobContext(reward_ctx=ctx)
-    elif job_type == JobType.classify:
-        return DataJobContext(classify_ctx=ctx)
-    elif job_type == JobType.pow:
-        return DataJobContext(pow_ctx=ctx)
-    elif job_type == JobType.batch_classify:
-        return DataJobContext(batch_classify_ctx=ctx)
-
-
-def handle_publish_jobs(
-    pg_conn: connection,
-    publisher: str,
-    job_type: JobType,
-    contexts: list[BaseModel],
-) -> list[int]:
-    if len(contexts) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="data cannot be empty"
-        )
-    return add_jobs(
-        pg_conn,
-        job_type,
-        publisher,
-        [build_data_job_context(job_type, ctx) for ctx in contexts],
-    )
-
-
-def handle_query_job(
-    pg_conn: connection, job_ids: list[int]
-) -> list[DataJobQueryResult] | None:
-    if not job_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="job_ids is required"
-        )
-    job_ids = [int(id) for id in job_ids]
-    return get_jobs_info(pg_conn, job_ids)
 
 
 HANDLE_TAKE_JOB_LATENCY = Histogram(
@@ -146,78 +103,6 @@ HANDLE_FINISH_JOB_LATENCY = Histogram(
     buckets=LATENCY_BUCKETS,
 )
 
-HANDLE_FINISH_JOB_404_COUNTER = Counter(
-    "handle_finish_job_404",
-    "total requests of handle_finish_job 404 cases",
-)
-
-
-def build_data_job_result(job_result: WorkerJobResult) -> DataJobResult:
-    if job_result.error_result is not None:
-        return DataJobResult(error_result=job_result.error_result)
-    if job_result.job_type == JobType.reward:
-        return DataJobResult(reward_result=job_result.reward_result)
-    elif job_result.job_type == JobType.pow:
-        return DataJobResult(pow_result=job_result.pow_result)
-    elif job_result.job_type == JobType.batch_classify:
-        return DataJobResult(batch_classify_result=job_result.batch_classify_result)
-    raise ValueError(f"unsupported job type: {job_result.job_type}")
-
-
-def handle_finish_job(
-    conn: Connections, worker: str, job_result: WorkerJobResult
-) -> float:
-    reward_points = 0
-    start_time = epoch_ms()
-    job_type = job_result.job_type
-    with conn.get_pg_connection() as pg_conn:
-        job_id = int(job_result.job_id)
-        ctx, assigner = get_job_lease(pg_conn, job_id, job_type)
-        if assigner != worker:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
-            )
-        job_status = _validate_job_result(ctx, job_result)
-        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "validate").observe(
-            epoch_ms() - start_time
-        )
-        after_validation = epoch_ms()
-        if job_status == JobStatus.finished:
-            settle_reward = _calculate_reward(conn.redis, worker, ctx, job_result)
-            response = requests.post(
-                os.environ["BACKEND_SERVICE_URL"] + "/api/settle_reward",
-                json=settle_reward.model_dump(exclude_none=True),
-                headers={"x-api-secret": os.environ["API_SECRET_KEY"]},
-            )
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"failed to settle reward",
-                )
-            if settle_reward.token is None:
-                reward_points = float(settle_reward.amount)
-            HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "settle").observe(
-                epoch_ms() - after_validation
-            )
-
-        after_settle_reward = epoch_ms()
-        if job_type == JobType.reward:
-            record_claim_event(conn.redis, ctx.reward_ctx)
-        elif reward_points > 0:
-            record_mined_points(conn.redis, worker, reward_points)
-        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "record").observe(
-            epoch_ms() - after_settle_reward
-        )
-
-        after_record = epoch_ms()
-        complete_job(
-            pg_conn, job_result.job_id, job_status, build_data_job_result(job_result)
-        )
-        HANDLE_FINISH_JOB_LATENCY.labels(job_type.name, "execute").observe(
-            epoch_ms() - after_record
-        )
-    return reward_points
-
 
 def handle_finish_job_v2(
     conn: Connections, worker: str, job_result: WorkerJobResult
@@ -230,16 +115,10 @@ def handle_finish_job_v2(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
         job_status = _validate_job_result(ctx, job_result)
-        complete_job(
-            pg_conn, job_result.job_id, job_status, build_data_job_result(job_result)
+        data_job_result = DataJobResult(
+            **job_result.model_dump(exclude={"job_id", "job_type"})
         )
-        if job_result.job_type == JobType.batch_classify:
-            api_key = os.environ["API_SECRET_KEY"]
-            requests.post(
-                os.environ["WORKFLOW_SERVER_URL"] + "/save_query_result",
-                json=job_result.model_dump(exclude_none=True, by_alias=True),
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
+        complete_job(pg_conn, job_result.job_id, job_status, data_job_result)
         return (
             _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished
@@ -279,34 +158,6 @@ def _validate_job_result(ctx: DataJobContext, result: WorkerJobResult) -> JobSta
             if result.uri and result.text
         ]
     return JobStatus.finished
-
-
-def _calculate_reward(
-    rclient: Redis, worker: str, ctx: DataJobContext, result: WorkerJobResult
-) -> SettleRewardRequest:
-    if result.job_type == JobType.reward:
-        return SettleRewardRequest(
-            job_id=result.job_id,
-            job_type=result.job_type,
-            worker=worker,
-            token=ctx.reward_ctx.token,
-            amount=str(ctx.reward_ctx.amount),
-            recipient=result.reward_result.recipient,
-        )
-
-    past_24h_points = total_mined_points_in_past_n_hour_per_worker(rclient, worker, 24)
-    if past_24h_points < 2500:
-        factor = 1
-    elif past_24h_points < 5000:
-        factor = (5000 - past_24h_points) / 5000
-    else:
-        factor = 0
-    return SettleRewardRequest(
-        job_id=result.job_id,
-        job_type=result.job_type,
-        worker=worker,
-        amount=str(0.5 * factor),
-    )
 
 
 def _calculate_reward_v2(

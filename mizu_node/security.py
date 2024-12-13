@@ -9,12 +9,9 @@ from mizu_node.constants import (
     COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
     MAX_UNCLAIMED_REWARD,
     MIN_REWARD_GAP,
-    MIZU_ADMIN_USER,
     REWARD_TTL,
 )
-import jwt
 
-from mizu_node.db.api_key import get_user_id
 from mizu_node.db.job_queue import get_reward_jobs_stats
 from mizu_node.stats import (
     event_name,
@@ -27,41 +24,7 @@ from mizu_node.types.data_job import (
 from mizu_node.types.service import CooldownConfig
 from psycopg2.extensions import connection
 
-ALGORITHM = "EdDSA"
 BLOCKED_FIELD = "blocked_worker"
-
-
-def verify_jwt(token: str, public_key: str) -> str:
-    """verify and return user is from token, raise otherwise"""
-    try:
-        # Decode and validate: expiration is automatically taken care of
-        payload = jwt.decode(jwt=token, key=public_key, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is invalid"
-            )
-        return str(user_id)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"
-        )
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token verification failed"
-        )
-
-
-def verify_api_key(pg_conn: connection, token: str) -> str:
-    if token == os.environ["API_SECRET_KEY"]:
-        return MIZU_ADMIN_USER
-
-    user_id = get_user_id(pg_conn, token)
-    if user_id is None or user_id == MIZU_ADMIN_USER:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="API key is invalid"
-        )
-    return user_id
 
 
 def validate_worker(

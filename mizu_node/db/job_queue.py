@@ -2,7 +2,7 @@ import logging
 import os
 import random
 import time
-from typing import Any, Tuple
+from typing import Tuple
 from typing import Tuple
 
 from prometheus_client import Gauge
@@ -15,11 +15,10 @@ from mizu_node.db.common import with_transaction
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     DataJobContext,
-    DataJobResult,
     JobStatus,
     JobType,
 )
-from mizu_node.types.service import DataJobQueryResult, RewardJobRecord
+from mizu_node.types.service import RewardJobRecord
 
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
@@ -89,8 +88,8 @@ def lease_job(
 def add_jobs(
     db: connection,
     job_type: JobType,
-    publisher: str,
     contexts: list[BaseModel],
+    reference_id: str | None = None,
 ) -> list[int]:
     with db.cursor() as cur:
         inserted_ids = []
@@ -98,7 +97,7 @@ def add_jobs(
             cur.execute(
                 sql.SQL(
                     """
-                        INSERT INTO job_queue (job_type, ctx, publisher) 
+                        INSERT INTO job_queue (job_type, ctx, reference_id) 
                         VALUES (%s, %s::jsonb, %s)
                         RETURNING id
                         """
@@ -106,7 +105,7 @@ def add_jobs(
                 (
                     job_type,
                     ctx.model_dump_json(by_alias=True, exclude_none=True),
-                    publisher,
+                    reference_id,
                 ),
             )
             inserted_ids.append(cur.fetchone()[0])
@@ -198,38 +197,6 @@ def get_job_lease(
 
 
 @with_transaction
-def get_jobs_info(db: connection, item_ids: list[int]) -> list[DataJobQueryResult]:
-    if not item_ids:
-        return []
-
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                """
-                SELECT id, job_type, status, ctx, result, worker, finished_at
-                FROM job_queue 
-                WHERE id = ANY(%s)
-                """
-            ),
-            (item_ids,),
-        )
-        rows = cur.fetchall()
-
-        return [
-            DataJobQueryResult(
-                job_id=row[0],
-                job_type=row[1],
-                status=row[2],
-                context=DataJobContext.model_validate(row[3]),
-                result=(DataJobResult.model_validate(row[4]) if row[4] else None),
-                worker=row[5],
-                finished_at=row[6],
-            )
-            for row in rows
-        ]
-
-
-@with_transaction
 def get_reward_jobs_stats(db: connection, worker: str) -> Tuple[int, int | None]:
     """Get count and last assigned time of rewarding jobs for a worker.
 
@@ -286,10 +253,33 @@ def get_assigned_reward_jobs(db: connection, worker: str) -> list[RewardJobRecor
 
 
 @with_transaction
-def get_job_info_raw(db: connection, id: int) -> list[Tuple[Any, ...]]:
+def get_job_info(db: connection, id: int) -> dict:
+    """Get job information as a dictionary.
+
+    Returns a dictionary containing all job fields from the job_queue table.
+    Returns None if job is not found.
+    """
     with db.cursor() as cur:
         cur.execute(sql.SQL("SELECT * FROM job_queue WHERE id = %s"), (id,))
-        return cur.fetchone()
+        row = cur.fetchone()
+        if row is None:
+            return None
+
+        return {
+            "id": row[0],
+            "job_type": row[1],
+            "status": row[2],
+            "ctx": row[3],
+            "publisher": row[4],
+            "published_at": row[5],
+            "assigned_at": row[6],
+            "lease_expired_at": row[7],
+            "result": row[8],
+            "finished_at": row[9],
+            "reference_id": row[10],
+            "worker": row[11],
+            "retry": row[12],
+        }
 
 
 ALL_JOB_TYPES = [JobType.pow, JobType.classify, JobType.batch_classify, JobType.reward]
