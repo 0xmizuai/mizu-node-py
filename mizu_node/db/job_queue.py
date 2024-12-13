@@ -178,7 +178,7 @@ def get_queue_len(db: connection, job_type: JobType) -> int:
     cached = get_num_of_jobs(db, job_type, JobStatus.cached)
     pending = get_num_of_jobs(db, job_type, JobStatus.pending)
     logging.info(
-        f"job_type: {job_type.name}, cached: {cached}, db pending: {pending}, total: {cached + pending}"
+        f"{job_type.name}: cached: {cached}, db pending: {pending}, total: {cached + pending}"
     )
     return cached + pending
 
@@ -336,11 +336,9 @@ def queue_clean(conn: Connections):
             time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
 
 
-min_queue_len = 50000
-
-
 @with_transaction
 def refill_job_cache(db: connection, redis: Redis):
+    min_queue_len = get_min_queue_len(JobType.pow)
     with db.cursor() as cur:
         for job_type in ALL_JOB_TYPES:
             logging.info(f"refill job cache start for queue {str(job_type)}")
@@ -392,3 +390,10 @@ def get_lease_ttl(job_type: JobType) -> int:
         return 3600
     else:
         return 600
+
+
+def get_min_queue_len(job_type: JobType) -> int:
+    if job_type == JobType.pow:
+        return 100000
+    else:
+        return 20000
