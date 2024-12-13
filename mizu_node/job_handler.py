@@ -12,7 +12,6 @@ from mizu_node.constants import (
     DEFAULT_POW_DIFFICULTY,
     LATENCY_BUCKETS,
     MAX_RETRY_ALLOWED,
-    MIZU_ADMIN_USER,
 )
 from mizu_node.security import (
     validate_worker,
@@ -37,11 +36,9 @@ from mizu_node.db.job_queue import (
     complete_job,
     get_job_lease,
     lease_job,
-    queue_len,
     update_job_worker,
 )
 from mizu_node.types.service import SettleRewardRequest
-from psycopg2.extensions import connection
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -126,13 +123,6 @@ def handle_finish_job_v2(
             _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished
             else None
-        )
-
-
-def validate_admin_job(caller: str):
-    if caller != MIZU_ADMIN_USER:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized"
         )
 
 
