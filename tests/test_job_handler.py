@@ -91,6 +91,7 @@ def setenvvar(monkeypatch):
             "ACTIVE_USER_PAST_7D_THRESHOLD": "50",
             "MIN_REWARD_GAP": "1800",
             "ENABLE_ACTIVE_USER_CHECK": "true",
+            "MAX_CONCURRENT_LEASE": "1",
         }
         for k, v in envvars.items():
             monkeypatch.setenv(k, v)

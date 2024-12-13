@@ -38,9 +38,9 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.scripts]
 dev = "mizu_node.main:start_dev"
 start = "mizu_node.main:start"
+
 publish_pow = "publisher.pow:start"
 publish_reward = "publisher.reward:start"
-backup = "scripts.backup:main"
 
-client = "scripts.client:main"
+backup = "scripts.backup:main"
 import = "scripts.importer:main"

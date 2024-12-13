@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 def get_random_offset():
-    max_concurrent_lease = int(os.environ.get("MAX_CONCURRENT_LEASE", 10))
+    max_concurrent_lease = int(os.environ.get("MAX_CONCURRENT_LEASE", 50))
     return random.randint(0, max_concurrent_lease)
 
 
@@ -38,22 +38,15 @@ def lease_job(
 ) -> Tuple[int, int, DataJobContext] | None:
     """Optimized job leasing with less contention."""
     with db.cursor() as cur:
-        # Add randomization to reduce contention
         cur.execute(
             sql.SQL(
                 """
-                WITH candidate_jobs AS (
-                    SELECT id, retry, ctx,
-                           random() as r  -- Add randomization
+                WITH selected_job AS (
+                    SELECT id, retry, ctx
                     FROM job_queue
                     WHERE job_type = %s
                     AND status = %s
-                    LIMIT 100  -- Get a batch of candidates
-                ),
-                selected_job AS (
-                    SELECT id, retry, ctx
-                    FROM candidate_jobs
-                    ORDER BY r  -- Random order
+                    OFFSET %s
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
                 )
@@ -70,6 +63,7 @@ def lease_job(
             (
                 job_type,
                 JobStatus.pending,
+                get_random_offset(),
                 JobStatus.processing,
                 epoch() + ttl_secs,
                 worker,
@@ -147,6 +141,16 @@ def light_clean(db: connection):
             """
             ),
             (JobStatus.pending, JobStatus.processing),
+        )
+
+        # delete finished or error jobs
+        cur.execute(
+            sql.SQL(
+                """DELETE FROM job_queue
+                WHERE (status = %s OR status = %s)
+                AND job_type IN (%s, %s)"""
+            ),
+            (JobStatus.finished, JobStatus.error, JobType.pow, JobType.reward),
         )
 
 
