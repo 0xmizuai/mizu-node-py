@@ -338,9 +338,9 @@ def queue_clean(conn: Connections):
 
 @with_transaction
 def refill_job_cache(db: connection, redis: Redis):
-    min_queue_len = get_min_queue_len(JobType.pow)
     with db.cursor() as cur:
         for job_type in ALL_JOB_TYPES:
+            min_queue_len = get_min_queue_len(job_type)
             logging.info(f"refill job cache start for queue {str(job_type)}")
             if redis.llen(job_queue_cache_key(job_type)) > min_queue_len:
                 logging.info(f"job cache for queue {str(job_type)} is full, skipping")
