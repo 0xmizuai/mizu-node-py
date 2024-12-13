@@ -18,6 +18,7 @@ from mizu_node.types.data_job import (
     BatchClassifyContext,
     ClassifyResult,
     DataJobContext,
+    JobStatus,
     JobType,
     PowContext,
     RewardContext,
@@ -432,11 +433,11 @@ async def test_finish_job(mock_requests, mock_connections):
         # Verify job 1 in database
         async with app.state.conn.get_job_db_session() as session:
             j1 = await get_job_info(session, bid)
-        assert j1["job_type"] == JobType.batch_classify
+        assert j1.job_type == JobType.batch_classify
         # the empty labels are filtered out
-        assert len(j1["result"]["batchClassifyResult"]) == 2
-        assert j1["worker"] == "test_worker3"
-        assert j1["finished_at"] is not None
+        assert len(j1.result["batchClassifyResult"]) == 2
+        assert j1.worker == "test_worker3"
+        assert j1.finished_at is not None
 
         # Case 1.4: finishing finished jobs
         r14 = WorkerJobResult(
@@ -477,10 +478,10 @@ async def test_finish_job(mock_requests, mock_connections):
         # Verify job 2 in database
         async with app.state.conn.get_job_db_session() as session:
             j2 = await get_job_info(session, pid)
-        assert j2["job_type"] == JobType.pow
-        assert j2["result"]["powResult"] == "166189"
-        assert j2["worker"] == "test_worker2"
-        assert j2["finished_at"] is not None
+        assert j2.job_type == JobType.pow
+        assert j2.result["powResult"] == "166189"
+        assert j2.worker == "test_worker2"
+        assert j2.finished_at is not None
 
         # Case 3: job expired
         await set_reward_stats(app.state.conn.redis, "test_worker4")
@@ -635,4 +636,107 @@ async def test_query_reward_jobs(mock_connections):
         for job in records.jobs:
             assert job.job_id in job_ids
             assert job.reward_ctx is not None
+    await app.state.conn.close()
+
+
+@mock_patch("requests.post")
+@pytest.mark.asyncio
+async def test_multiple_workers_directly_assigned(mock_requests, mock_connections):
+    app = await mock_connections
+    mock_requests.return_value = MockedHttpResponse(200)
+
+    # Publish one job
+    job_ids = await _publish_jobs_simple(app.state.conn, JobType.pow, 1)
+    job_id = job_ids[0]
+
+    # Directly insert multiple worker assignments in the database
+    async with app.state.conn.get_job_db_session() as session:
+        conn = await session.connection()
+        from sqlalchemy import text
+
+        # Set the job as assigned to both workers
+        current_time = int(datetime.datetime.now().timestamp())
+        expire_time = current_time + 3600  # 1 hour later
+
+        await conn.execute(
+            text(
+                """
+                UPDATE job_queue 
+                SET worker = :worker,
+                    lease_expired_at = :expire_time,
+                    status = :status,
+                    assigned_at = :assigned_at
+                WHERE id = :job_id
+            """
+            ),
+            {
+                "worker": "test_worker1,test_worker2",
+                "expire_time": expire_time,
+                "job_id": job_id,
+                "status": JobStatus.processing,
+                "assigned_at": current_time,
+            },
+        )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {API_SECRET_KEY}"},
+    ) as client:
+        # First worker completes the job
+        result = WorkerJobResult(
+            job_id=job_id,
+            job_type=JobType.pow,
+            pow_result="166189",
+        )
+        response1 = await client.post(
+            "/finish_job_v2",
+            json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(
+                by_alias=True
+            ),
+        )
+        assert response1.status_code == 200
+        resp = FinishJobV2Response.model_validate(response1.json()["data"])
+        assert resp.settle_reward.amount == "0.5"
+
+        async with app.state.conn.get_job_db_session() as session:
+            job = await get_job_info(session, job_id)
+        assert job.worker == "test_worker2"
+        assert job.status == JobStatus.processing
+
+        response12 = await client.post(
+            "/finish_job_v2",
+            json=FinishJobRequest(job_result=result, user="test_worker1").model_dump(
+                by_alias=True
+            ),
+        )
+        assert response12.status_code == 404
+        assert response12.json()["message"] == "lease not exists"
+
+        # Second worker tries to complete the same job - should succeed
+        response2 = await client.post(
+            "/finish_job_v2",
+            json=FinishJobRequest(job_result=result, user="test_worker2").model_dump(
+                by_alias=True
+            ),
+        )
+        assert response2.status_code == 200
+        resp = FinishJobV2Response.model_validate(response1.json()["data"])
+        assert resp.settle_reward.amount == "0.5"
+
+        async with app.state.conn.get_job_db_session() as session:
+            job = await get_job_info(session, job_id)
+        assert job.worker == "test_worker2"
+        assert job.status == JobStatus.finished
+
+        # Second worker tries to complete the same job - should fail
+        response22 = await client.post(
+            "/finish_job_v2",
+            json=FinishJobRequest(job_result=result, user="test_worker2").model_dump(
+                by_alias=True
+            ),
+        )
+        assert response22.status_code == 404
+        assert response22.json()["message"] == "lease not exists"
+
     await app.state.conn.close()

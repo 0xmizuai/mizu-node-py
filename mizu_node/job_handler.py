@@ -37,6 +37,7 @@ from mizu_node.db.job_queue import (
     complete_job,
     get_job_lease,
     lease_job,
+    update_worker,
 )
 from mizu_node.types.node_service import SettleRewardRequest
 
@@ -96,11 +97,12 @@ async def handle_finish_job_v2(
 ) -> SettleRewardRequest | None:
     async with conn.get_job_db_session() as session:
         job_id = int(job_result.job_id)
-        ctx, assigner = await get_job_lease(session, job_id, job_result.job_type)
-        if assigner != worker:
+        ctx, assigners = await get_job_lease(session, job_id, job_result.job_type)
+        if worker not in assigners:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
+
         job_status = _validate_job_result(ctx, job_result)
         if (
             job_result.job_type == JobType.batch_classify
@@ -111,7 +113,12 @@ async def handle_finish_job_v2(
             result = DataJobResult(
                 **job_result.model_dump(exclude={"job_id", "job_type"})
             )
-        await complete_job(session, job_id, job_status, result)
+
+        assigners.remove(worker)
+        if assigners:
+            await update_worker(session, job_id, ",".join(assigners))
+        else:
+            await complete_job(session, job_id, job_status, result)
         return (
             await _calculate_reward_v2(conn.redis, worker, ctx, job_result)
             if job_status == JobStatus.finished

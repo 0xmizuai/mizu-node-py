@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import logging
 import os
 import random
@@ -35,46 +36,29 @@ async def lease_job(
     job_type: JobType,
     ttl_secs: int,
     worker: str,
-) -> Tuple[int | None, int | None, DataJobContext | None]:
-    candidate_jobs = (
-        select(JobQueue.id, JobQueue.retry, JobQueue.ctx, func.random().label("r"))
+) -> Tuple[int, int, DataJobContext] | None:
+    stmt = (
+        select(JobQueue)
         .where(
-            and_(JobQueue.job_type == job_type, JobQueue.status == JobStatus.pending)
+            and_(
+                JobQueue.job_type == job_type,
+                JobQueue.status == JobStatus.pending,
+            )
         )
-        .limit(100)
-        .cte("candidate_jobs")
-    )
-
-    selected_job = (
-        select(candidate_jobs.c.id, candidate_jobs.c.retry, candidate_jobs.c.ctx)
-        .order_by("r")
         .limit(1)
         .with_for_update(skip_locked=True)
-        .cte("selected_job")
     )
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
 
-    stmt = (
-        update(JobQueue)
-        .where(JobQueue.id == selected_job.c.id)
-        .values(
-            status=JobStatus.processing,
-            assigned_at=func.extract("epoch", func.now()).cast(Integer),
-            lease_expired_at=epoch() + ttl_secs,
-            worker=worker,
-        )
-        .returning(JobQueue.id, selected_job.c.retry, selected_job.c.ctx)
-    )
-
-    try:
-        result = await session.execute(stmt)
-        row = result.first()
-        if row:
-            await session.commit()
-            return (row[0], row[1], DataJobContext.model_validate(row[2]))
-    except Exception:
-        await session.rollback()
-
-    return None
+    current_time = int(datetime.now().timestamp())
+    job.worker = worker
+    job.status = JobStatus.processing
+    job.lease_expired_at = current_time + ttl_secs
+    job.assigned_at = current_time
+    return (job.id, job.retry, DataJobContext.model_validate(job.ctx))
 
 
 async def add_jobs(
@@ -94,6 +78,11 @@ async def add_jobs(
     session.add_all(jobs)
     await session.flush()
     return [job.id for job in jobs]
+
+
+async def update_worker(session: AsyncSession, item_id: int, worker: str):
+    stmt = update(JobQueue).where(JobQueue.id == item_id).values(worker=worker)
+    await session.execute(stmt)
 
 
 async def complete_job(
@@ -190,7 +179,7 @@ async def get_queue_len(session: AsyncSession, job_type: JobType) -> int:
 
 async def get_job_lease(
     session: AsyncSession, item_id: int, job_type: JobType
-) -> Tuple[DataJobContext | None, str | None]:
+) -> Tuple[DataJobContext | None, list[str]]:
     stmt = select(JobQueue.ctx, JobQueue.worker).where(
         and_(
             JobQueue.id == item_id,
@@ -200,8 +189,14 @@ async def get_job_lease(
         )
     )
     result = await session.execute(stmt)
-    row = result.first()
-    return (DataJobContext.model_validate(row[0]), row[1]) if row else (None, None)
+    job = result.first()
+    if job:
+        if job.worker:
+            return (DataJobContext.model_validate(job.ctx), job.worker.split(","))
+        else:
+            return (DataJobContext.model_validate(job.ctx), [])
+    else:
+        return None, []
 
 
 async def get_reward_jobs_stats(
@@ -256,11 +251,11 @@ async def get_assigned_reward_jobs(
     ]
 
 
-async def get_job_info(session: AsyncSession, id: int) -> dict:
+async def get_job_info(session: AsyncSession, id: int) -> JobQueue:
     stmt = select(JobQueue).where(JobQueue.id == id)
     result = await session.execute(stmt)
     row = result.first()
-    return row[0].__dict__ if row else None
+    return row[0] if row else None
 
 
 ALL_JOB_TYPES = [JobType.pow, JobType.classify, JobType.batch_classify, JobType.reward]
