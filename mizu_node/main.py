@@ -239,26 +239,10 @@ def get_mined_points_v2(
     return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
-class MyServer(uvicorn.Server):
-    async def run(self, sockets=None):
-        self.config.setup_event_loop()
-        return await self.serve(sockets=sockets)
-
-
-async def run():
-    apps = []
-    config1 = uvicorn.Config("mizu_node.dummy_service:app", host="0.0.0.0", port=8001)
-    config2 = uvicorn.Config(
+def start_dev():
+    uvicorn.run(
         "mizu_node.main:app", host="0.0.0.0", port=8000, lifespan="on", reload=True
     )
-    apps.append(MyServer(config=config1).run())
-    apps.append(MyServer(config=config2).run())
-    return await asyncio.gather(*apps)
-
-
-def start_dev():
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(run())
 
 
 # the number of workers is defined by $WEB_CONCURRENCY env as default
