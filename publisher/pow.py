@@ -33,10 +33,10 @@ class PowDataJobPublisher(object):
 
     def run(self, conn: Connections):
         while True:
-            num_of_jobs = self.check_queue_stats(db, conn.redis)
-            logging.info(f"will publish {num_of_jobs} pow jobs")
-            num_of_batches = math.ceil(num_of_jobs / self.batch_size)
             with conn.get_pg_connection() as db:
+                num_of_jobs = self.check_queue_stats(db, conn.redis)
+                logging.info(f"will publish {num_of_jobs} pow jobs")
+                num_of_batches = math.ceil(num_of_jobs / self.batch_size)
                 for batch in range(num_of_batches):
                     contexts = [
                         DataJobContext(
@@ -47,7 +47,7 @@ class PowDataJobPublisher(object):
                     logging.info(
                         f"Publishing {self.batch_size} pow jobs: batch {batch} out of {num_of_batches}"
                     )
-                    add_jobs(db, JobType.Pow, contexts)
+                    add_jobs(db, JobType.pow, contexts)
             logging.info(f"all pow jobs published")
             time.sleep(self.cooldown)
 

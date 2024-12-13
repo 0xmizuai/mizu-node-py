@@ -172,7 +172,9 @@ def get_queue_len(db: connection, redis: Redis, job_type: JobType) -> int:
             (job_type, JobStatus.pending),
         )
         cached = redis.llen(job_queue_cache_key(job_type))
-        return cur.fetchone()[0] + cached
+        pending = cur.fetchone()[0]
+        logging.info(f"cached: {cached}, db pending: {pending}")
+        return pending + cached
 
 
 @with_transaction
