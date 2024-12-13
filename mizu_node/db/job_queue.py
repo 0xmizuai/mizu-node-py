@@ -54,7 +54,7 @@ def lease_job(
                         WHEN status = 1 THEN worker || ',' || %s
                         ELSE %s
                     END
-                WHERE id = %s
+                WHERE id = %sq
                 RETURNING id, retry, ctx"""
             ),
             (
@@ -328,24 +328,36 @@ def queue_clean(conn: Connections):
             time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
 
 
+min_queue_len = 50000
+
+
 @with_transaction
 def refill_job_cache(db: connection, redis: Redis):
     with db.cursor() as cur:
         for job_type in ALL_JOB_TYPES:
             logging.info(f"refill job cache start for queue {str(job_type)}")
-            if redis.llen(job_queue_cache_key(job_type)) > 50000:
+            if redis.llen(job_queue_cache_key(job_type)) > min_queue_len:
                 logging.info(f"job cache for queue {str(job_type)} is full, skipping")
                 continue
 
             cur.execute(
                 sql.SQL(
-                    """SELECT id FROM job_queue
-                    WHERE job_type = %s AND status = %s
-                    ORDER BY published_at ASC LIMIT 50000"""
+                    """UPDATE job_queue 
+                    SET status = %s
+                    WHERE id IN (
+                        SELECT id FROM job_queue
+                        WHERE job_type = %s AND status = %s
+                        ORDER BY published_at ASC
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    RETURNING id"""
                 ),
                 (
+                    JobStatus.processing,
                     job_type,
                     JobStatus.pending,
+                    min_queue_len,
                 ),
             )
             job_ids = [str(row[0]) for row in cur.fetchall()]
