@@ -366,6 +366,9 @@ def refill_job_cache(db: connection, redis: Redis):
             )
             job_ids = [str(row[0]) for row in cur.fetchall()]
             if job_ids:
+                logging.info(
+                    f"refill job cache for queue {str(job_type)} with {len(job_ids)} jobs"
+                )
                 redis.lpush(job_queue_cache_key(job_type), *job_ids)
 
 
