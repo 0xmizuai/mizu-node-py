@@ -44,7 +44,7 @@ async def lease_job(
                    random() as r  -- Add randomization
             FROM job_queue
             WHERE job_type = :job_type
-            AND status = :status
+            AND status = :pending_status
             LIMIT 100  -- Get a batch of candidates
         ),
         selected_job AS (
@@ -55,7 +55,7 @@ async def lease_job(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE job_queue j
-        SET status = :status,
+        SET status = :processing_status,
             assigned_at = :current_time,
             lease_expired_at = :lease_expired_at,
             worker = :worker
@@ -71,7 +71,8 @@ async def lease_job(
             "lease_expired_at": current_time + ttl_secs,
             "current_time": current_time,
             "job_type": job_type.value,
-            "status": JobStatus.processing.value,
+            "pending_status": JobStatus.pending.value,
+            "processing_status": JobStatus.processing.value,
         },
     )
 
@@ -127,7 +128,7 @@ async def complete_job(
         WHERE id = :item_id
     """
     result_dict = (
-        result.model_dump(by_alias=True, exclude_none=True) if result else None
+        result.model_dump_json(by_alias=True, exclude_none=True) if result else None
     )
     db_result = await session.execute(
         text(stmt),
