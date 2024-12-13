@@ -173,7 +173,9 @@ def get_queue_len(db: connection, redis: Redis, job_type: JobType) -> int:
         )
         cached = redis.llen(job_queue_cache_key(job_type))
         pending = cur.fetchone()[0]
-        logging.info(f"cached: {cached}, db pending: {pending}")
+        logging.info(
+            f"job_type: {job_type.name}, cached: {cached}, db pending: {pending}"
+        )
         return pending + cached
 
 
@@ -346,22 +348,24 @@ def refill_job_cache(db: connection, redis: Redis):
 
             cur.execute(
                 sql.SQL(
-                    """UPDATE job_queue 
-                    SET status = %s
-                    WHERE id IN (
+                    """WITH selected_jobs AS (
                         SELECT id FROM job_queue
                         WHERE job_type = %s AND status = %s
                         ORDER BY published_at ASC
                         LIMIT %s
                         FOR UPDATE SKIP LOCKED
                     )
-                    RETURNING id"""
+                    UPDATE job_queue
+                    SET status = %s
+                    FROM selected_jobs
+                    WHERE job_queue.id = selected_jobs.id
+                    RETURNING job_queue.id"""
                 ),
                 (
-                    JobStatus.processing,
                     job_type,
                     JobStatus.pending,
                     min_queue_len,
+                    JobStatus.processing,
                 ),
             )
             job_ids = [str(row[0]) for row in cur.fetchall()]
