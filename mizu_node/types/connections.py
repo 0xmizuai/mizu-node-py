@@ -16,10 +16,10 @@ class Connections:
         logging.info(f"Connected to redis at {REDIS_URL}")
 
     @contextmanager
-    def get_pg_connection(self):
+    def get_pg_connection(self, pg_url: str | None = None):
         conn = None
         try:
-            conn = psycopg2.connect(self.postgres_url)
+            conn = psycopg2.connect(pg_url or self.postgres_url)
             yield conn
         finally:
             if conn:
