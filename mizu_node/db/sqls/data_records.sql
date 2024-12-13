@@ -14,5 +14,4 @@ CREATE TABLE IF NOT EXISTS data_records (
 -- Indexes for datasets
 CREATE INDEX idx_data_record_dataset_id ON data_records(dataset_id);
 CREATE INDEX idx_data_record_md5 ON data_records(md5);
-CREATE INDEX idx_data_record_byte_size ON data_records(byte_size);
 CREATE INDEX idx_data_record_created_at ON data_records(created_at);

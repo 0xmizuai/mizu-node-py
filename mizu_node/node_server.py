@@ -123,10 +123,7 @@ async def take_job_v2(
 ):
     job = await handle_take_job(app.state.conn, user, job_type)
     TAKE_JOB_V2.labels(job_type.name).inc()
-
-    logging.info(f"Job type: {type(job)}")
     response = build_ok_response(TakeJobResponse(job=job))
-    logging.info(f"Response type: {type(response)}")
     return response
 
 
