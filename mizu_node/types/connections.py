@@ -34,7 +34,14 @@ class Connections:
             )
             logging.info(f"Connecting to postgres at {self.job_db_url}")
 
-            self.job_db_engine = create_async_engine(self.job_db_url, echo=False)
+            self.job_db_engine = create_async_engine(
+                self.job_db_url,
+                echo=False,
+                pool_size=20,
+                max_overflow=10,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+            )
             self.job_db_session = sessionmaker(
                 self.job_db_engine, class_=AsyncSession, expire_on_commit=False
             )
@@ -48,7 +55,14 @@ class Connections:
                 "postgresql://", "postgresql+asyncpg://"
             )
             logging.info(f"Connecting to postgres at {self.query_db_url}")
-            self.query_db_engine = create_async_engine(self.query_db_url, echo=False)
+            self.query_db_engine = create_async_engine(
+                self.query_db_url,
+                echo=False,
+                pool_size=20,
+                max_overflow=10,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+            )
             self.query_db_session = sessionmaker(
                 self.query_db_engine, class_=AsyncSession, expire_on_commit=False
             )
@@ -57,29 +71,39 @@ class Connections:
             self.query_db_session = None
 
     @asynccontextmanager
-    async def get_job_db_session(self):
+    async def get_job_db_session(self, *, autocommit=False):
         if not self.job_db_session:
             raise Exception("Job database is not initialized")
 
         async with self.job_db_session() as session:
+            if autocommit:
+                # For read-only operations
+                session.sync_session.autocommit = True
             try:
                 yield session
-                await session.commit()
+                if not autocommit:
+                    await session.commit()
             except Exception:
-                await session.rollback()
+                if not autocommit:
+                    await session.rollback()
                 raise
 
     @asynccontextmanager
-    async def get_query_db_session(self):
+    async def get_query_db_session(self, *, autocommit=False):
         if not self.query_db_session:
             raise Exception("Query database is not initialized")
 
         async with self.query_db_session() as session:
+            if autocommit:
+                # For read-only operations
+                session.sync_session.autocommit = True
             try:
                 yield session
-                await session.commit()
+                if not autocommit:
+                    await session.commit()
             except Exception:
-                await session.rollback()
+                if not autocommit:
+                    await session.rollback()
                 raise
 
     async def close(self):

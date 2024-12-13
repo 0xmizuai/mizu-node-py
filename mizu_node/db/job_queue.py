@@ -9,7 +9,7 @@ from typing import Tuple
 from prometheus_client import Gauge
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_, func, Integer
+from sqlalchemy import select, text, update, delete, and_, func
 
 from mizu_node.common import epoch
 from mizu_node.db.orm.job_queue import JobQueue
@@ -37,28 +37,49 @@ async def lease_job(
     ttl_secs: int,
     worker: str,
 ) -> Tuple[int, int, DataJobContext] | None:
-    stmt = (
-        select(JobQueue)
-        .where(
-            and_(
-                JobQueue.job_type == job_type,
-                JobQueue.status == JobStatus.pending,
-            )
+    current_time = epoch()
+    stmt = """
+        WITH candidate_jobs AS (
+            SELECT id, retry, ctx,
+                   random() as r  -- Add randomization
+            FROM job_queue
+            WHERE job_type = :job_type
+            AND status = :status
+            LIMIT 100  -- Get a batch of candidates
+        ),
+        selected_job AS (
+            SELECT id, retry, ctx
+            FROM candidate_jobs
+            ORDER BY r  -- Random order
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
         )
-        .limit(1)
-        .with_for_update(skip_locked=True)
+        UPDATE job_queue j
+        SET status = :status,
+            assigned_at = :current_time,
+            lease_expired_at = :lease_expired_at,
+            worker = :worker
+        FROM selected_job s
+        WHERE j.id = s.id
+        RETURNING j.id, s.retry, s.ctx
+    """
+
+    result = await session.execute(
+        text(stmt),
+        {
+            "worker": worker,
+            "lease_expired_at": current_time + ttl_secs,
+            "current_time": current_time,
+            "job_type": job_type.value,
+            "status": JobStatus.processing.value,
+        },
     )
-    result = await session.execute(stmt)
-    job = result.scalar_one_or_none()
-    if job is None:
+
+    row = result.first()
+    if row is None:
         return None
 
-    current_time = int(datetime.now().timestamp())
-    job.worker = worker
-    job.status = JobStatus.processing
-    job.lease_expired_at = current_time + ttl_secs
-    job.assigned_at = current_time
-    return (job.id, job.retry, DataJobContext.model_validate(job.ctx))
+    return (row.id, row.retry, DataJobContext.model_validate(row.ctx))
 
 
 async def add_jobs(
@@ -81,28 +102,43 @@ async def add_jobs(
 
 
 async def update_worker(session: AsyncSession, item_id: int, worker: str):
-    stmt = update(JobQueue).where(JobQueue.id == item_id).values(worker=worker)
-    await session.execute(stmt)
+    stmt = """
+        UPDATE job_queue 
+        SET worker = :worker 
+        WHERE id = :item_id
+    """
+    await session.execute(
+        text(stmt),
+        {
+            "worker": worker,
+            "item_id": item_id,
+        },
+    )
 
 
 async def complete_job(
     session: AsyncSession, item_id: int, status: JobStatus, result: BaseModel | None
 ) -> bool:
-
-    stmt = (
-        update(JobQueue)
-        .where(JobQueue.id == item_id)
-        .values(
-            status=status,
-            result=(
-                result.model_dump(by_alias=True, exclude_none=True) if result else None
-            ),
-            finished_at=epoch(),
-        )
+    stmt = """
+        UPDATE job_queue 
+        SET status = :status,
+            result = :result,
+            finished_at = :finished_at
+        WHERE id = :item_id
+    """
+    result_dict = (
+        result.model_dump(by_alias=True, exclude_none=True) if result else None
     )
-    result = await session.execute(stmt)
-    await session.commit()
-    return result.rowcount > 0
+    db_result = await session.execute(
+        text(stmt),
+        {
+            "status": status.value,
+            "result": result_dict,
+            "finished_at": epoch(),
+            "item_id": item_id,
+        },
+    )
+    return db_result.rowcount > 0
 
 
 async def light_clean(session: AsyncSession):
