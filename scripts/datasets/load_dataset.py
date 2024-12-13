@@ -6,7 +6,7 @@ import aioboto3
 from botocore.config import Config
 from typing import AsyncGenerator
 from sqlalchemy.future import select
-from sqlalchemy import insert, text
+from sqlalchemy import text
 
 from mizu_node.db.orm.data_record import DataRecord
 from mizu_node.db.orm.dataset import Dataset
@@ -63,10 +63,7 @@ async def list_r2_objects(
                     DataRecord(
                         dataset_id=dataset_id,
                         md5=obj["Key"].split("/")[3].replace(".zz", ""),
-                        num_of_records=0,
-                        decompressed_byte_size=0,
                         byte_size=int(obj.get("Size", 0)),
-                        source="",
                     )
                     for obj in page["Contents"]
                 ]
@@ -86,29 +83,6 @@ async def list_r2_objects(
         except Exception as e:
             logger.error(f"Error listing objects for {prefix} from R2: {str(e)}")
             return
-
-
-def get_last_processed_key(language: str) -> str:
-    """Get the r2_key of the last processed item from the database"""
-    try:
-        with conn.get_query_db_session() as session:
-            stmt = (
-                select(DataRecord)
-                .filter(DataRecord.language == language)
-                .order_by(DataRecord.id.desc())
-            )
-            last_dataset = session.execute(stmt).scalar_one_or_none()
-
-            if last_dataset:
-                last_key = f"{last_dataset.name}/{last_dataset.data_type}/{last_dataset.language}/{last_dataset.md5}.zz"
-                logger.info(f"Resuming from last processed key: {last_key}")
-                return last_key
-
-            logger.info("No previous progress found, starting from beginning")
-            return ""
-    except Exception as e:
-        logger.error(f"Error getting last processed key: {str(e)}")
-        return ""
 
 
 async def load_dataset_for_language(
