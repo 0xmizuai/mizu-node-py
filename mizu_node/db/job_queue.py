@@ -54,7 +54,7 @@ def lease_job(
                         WHEN status = 1 THEN worker || ',' || %s
                         ELSE %s
                     END
-                WHERE id = %sq
+                WHERE id = %s
                 RETURNING id, retry, ctx"""
             ),
             (
