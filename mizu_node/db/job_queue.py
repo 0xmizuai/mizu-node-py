@@ -317,7 +317,9 @@ def queue_clean(conn: Connections):
     while True:
         with conn.get_pg_connection() as db:
             for job_type in ALL_JOB_TYPES:
-                QUEUE_LEN.labels(job_type.name).set(queue_len(db, job_type))
+                QUEUE_LEN.labels(job_type.name).set(
+                    get_queue_len(db, conn.redis, job_type)
+                )
             try:
                 logging.info(f"light clean start for queue {str(job_type)}")
                 light_clean(db)
