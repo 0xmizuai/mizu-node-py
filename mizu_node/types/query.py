@@ -4,8 +4,9 @@ from sqlalchemy import Enum
 
 class QueryStatus(int, Enum):
     pending = 0
-    published = 1
-    processed = 2
+    publishing = 1
+    processing = 2
+    processed = 3
 
 
 class Dataset(BaseModel):

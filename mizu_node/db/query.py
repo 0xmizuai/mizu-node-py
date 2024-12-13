@@ -104,9 +104,7 @@ def get_unpublished_data_per_query(
 
 
 @with_transaction
-def update_query_status(
-    db: connection, query: DataQuery, status: QueryStatus, last_record_published: int
-) -> None:
+def update_query_status(db: connection, query: DataQuery) -> None:
     cursor = db.cursor()
     cursor.execute(
         """
@@ -114,7 +112,7 @@ def update_query_status(
         SET status = %s, last_record_published = %s
         WHERE id = %s
         """,
-        (status.value, last_record_published, query.id),
+        (query.status.value, query.last_record_published, query.id),
     )
 
 
