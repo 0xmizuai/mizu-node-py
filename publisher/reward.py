@@ -145,6 +145,7 @@ class RewardJobPublisher(object):
         self.reward_configs = build_reward_configs(types)
         self.api_key = os.environ["API_SECRET_KEY"]
         self.cron_gap = cron_gap
+        self.threshold = 20000
 
     def spent_key(self, config: RewardJobConfig):
         n = epoch() // config.budget.unit
@@ -178,6 +179,9 @@ class RewardJobPublisher(object):
     def run(self, conn: Connections):
         while True:
             if not self.should_publish(conn):
+                logging.info(
+                    f"reward queue is full, will sleep for {self.cron_gap} seconds"
+                )
                 time.sleep(self.cron_gap)
                 continue
 
