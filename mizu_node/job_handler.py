@@ -2,12 +2,15 @@ from hashlib import sha512
 import logging
 import os
 
+from prometheus_client import Histogram
 from redis.asyncio import Redis as AsyncRedis
 from fastapi import HTTPException, status
 
 
+from mizu_node.common import epoch_ms
 from mizu_node.constants import (
     DEFAULT_POW_DIFFICULTY,
+    LATENCY_BUCKETS,
     MAX_RETRY_ALLOWED,
 )
 from mizu_node.security import (
@@ -39,13 +42,28 @@ from mizu_node.types.node_service import SettleRewardRequest
 
 logging.basicConfig(level=logging.INFO)
 
+HANDLE_TAKE_JOB_LATENCY = Histogram(
+    "handle_take_job_latency_ms",
+    "Detailed latency of handle_take_job function",
+    ["job_type", "step"],
+    buckets=LATENCY_BUCKETS,
+)
+
 
 async def handle_take_job(
     conn: Connections, worker: str, job_type: JobType
 ) -> WorkerJob | None:
+    start_time = epoch_ms()
     async with conn.get_job_db_session() as session:
         await validate_worker(conn.redis, session, worker, job_type)
+        HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "validate").observe(
+            epoch_ms() - start_time
+        )
+        start_time = epoch_ms()
         result = await lease_job(session, job_type, get_lease_ttl(job_type), worker)
+        HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
+            epoch_ms() - start_time
+        )
         if result is None:
             return None
 
@@ -63,7 +81,7 @@ async def handle_take_job(
             except HTTPException as e:
                 logging.warning(f"failed to retire job {item_id} with error {e.detail}")
                 pass
-            return await handle_take_job(conn, worker, job_type)
+            return None
         else:
             job = WorkerJob(
                 job_id=item_id,
