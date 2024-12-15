@@ -13,8 +13,8 @@ from mizu_node.types.data_job import (
 class PublishRewardJobsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    reference_id: int
-    jobs: list[RewardContext]
+    reference_id: int = Field(alias="referenceId")
+    jobs: list[RewardContext] = Field(alias="jobs")
 
 
 class PublishRewardJobsResponse(BaseModel):
