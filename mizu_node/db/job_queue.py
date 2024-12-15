@@ -87,7 +87,7 @@ def add_jobs(
                 sql.SQL(
                     """
                         INSERT INTO job_queue (job_type, ctx)
-                        VALUES (%s, %s::jsonb, %s)
+                        VALUES (%s, %s::jsonb)
                         RETURNING id
                         """
                 ),
