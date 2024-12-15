@@ -79,7 +79,7 @@ def add_jobs(
     db: connection,
     job_type: JobType,
     contexts: list[BaseModel],
-    reference_id: str | None = None,
+    reference_id: int = 0,
 ) -> list[int]:
     with db.cursor() as cur:
         inserted_ids = []

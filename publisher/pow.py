@@ -4,7 +4,6 @@ import math
 import os
 import secrets
 import time
-from redis import Redis
 from mizu_node.db.job_queue import add_jobs, get_queue_len
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, PowContext
