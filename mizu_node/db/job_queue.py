@@ -24,8 +24,8 @@ from mizu_node.types.service import RewardJobRecord
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
-def job_queue_cache_key(job_type: JobType, reference_id: int) -> str:
-    if reference_id == 0:
+def job_queue_cache_key(job_type: JobType, reference_id: int | None) -> str:
+    if reference_id is None or reference_id == 0:
         return f"job_cache_v2:{job_type.name}"  # backward compatibility
     else:
         return f"job_cache_v2:{job_type.name}:{reference_id}"
@@ -316,11 +316,33 @@ def get_assigned_reward_jobs(db: connection, worker: str) -> list[RewardJobRecor
 def get_job_info(db: connection, id: int) -> dict:
     """Get job information as a dictionary.
 
-    Returns a dictionary containing all job fields from the job_queue table.
+    Returns a dictionary containing specific job fields from the job_queue table.
     Returns None if job is not found.
     """
     with db.cursor() as cur:
-        cur.execute(sql.SQL("SELECT * FROM job_queue WHERE id = %s"), (id,))
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    id,
+                    job_type,
+                    status,
+                    ctx,
+                    publisher,
+                    published_at,
+                    assigned_at,
+                    lease_expired_at,
+                    result,
+                    finished_at,
+                    reference_id,
+                    worker,
+                    retry
+                FROM job_queue
+                WHERE id = %s
+            """
+            ),
+            (id,),
+        )
         row = cur.fetchone()
         if row is None:
             return None
@@ -359,13 +381,17 @@ def queue_clean(conn: Connections):
 def refill_job_cache(db: connection, redis: Redis):
     with db.cursor() as cur:
         cur.execute(
-            """
-            SELECT DISTINCT job_type, reference_id
-            FROM job_queue
-            WHERE status = 'pending'
-            """
+            sql.SQL(
+                """
+                SELECT DISTINCT job_type, reference_id
+                FROM job_queue
+                WHERE status = %s
+                """
+            ),
+            (JobStatus.pending,),
         )
         for job_type, reference_id in cur.fetchall():
+            job_type = JobType(job_type)
             min_queue_len = get_min_queue_len(job_type)
             queue_key = job_queue_cache_key(job_type, reference_id)
             logging.info(f"refill job cache start for queue {queue_key}")

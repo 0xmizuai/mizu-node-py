@@ -52,7 +52,7 @@ HANDLE_TAKE_JOB_LATENCY = Histogram(
 
 
 def handle_take_job(
-    conn: Connections, worker: str, job_type: JobType, reference_id: int | None = None
+    conn: Connections, worker: str, job_type: JobType, reference_id: int
 ) -> WorkerJob | None:
     start_time = epoch_ms()
     with conn.get_pg_connection() as pg_conn:
@@ -106,7 +106,7 @@ def handle_finish_job_v2(
 ) -> SettleRewardRequest | None:
     with conn.get_pg_connection() as pg_conn:
         job_id = int(job_result.job_id)
-        ctx, assigners = get_job_lease(pg_conn, job_id, job_result.job_type)
+        ctx, assigners = get_job_lease(pg_conn, job_id)
         if worker not in assigners:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
@@ -115,8 +115,8 @@ def handle_finish_job_v2(
         data_job_result = DataJobResult(
             **job_result.model_dump(exclude={"job_id", "job_type"})
         )
+        assigners.remove(worker)
         if assigners:
-            assigners.remove(worker)
             update_job_worker(pg_conn, job_id, assigners)
         else:
             complete_job(pg_conn, job_id, job_status, data_job_result)

@@ -140,12 +140,13 @@ TAKE_JOB_V2 = Counter(
 def take_job_v2(
     job_type: JobType,
     user: str,
-    reference_ids: list[int] = Query([]),
+    reference_ids: str = Query(default="0"),
     _: str = Depends(verify_internal_service),
 ):
     TAKE_JOB_V2.labels(job_type.name).inc()
+    reference_ids = reference_ids.split(",")
     for reference_id in reference_ids:
-        job = handle_take_job(app.state.conn, user, job_type, reference_id)
+        job = handle_take_job(app.state.conn, user, job_type, int(reference_id))
         if job is not None:
             return build_ok_response(TakeJobResponse(job=job))
     return build_ok_response(TakeJobResponse(job=None))
