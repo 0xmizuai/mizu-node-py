@@ -9,7 +9,7 @@ CREATE TABLE job_queue (
     lease_expired_at BIGINT NOT NULL DEFAULT 0,
     result JSONB,
     finished_at BIGINT NOT NULL DEFAULT 0,
-    reference_id integer,
+    reference_id INTEGER DEFAULT 0,
     worker VARCHAR(255),
     retry INTEGER NOT NULL DEFAULT 0
 );
@@ -18,7 +18,7 @@ CREATE INDEX idx_status ON job_queue (status);
 CREATE INDEX idx_published_at ON job_queue (published_at);
 CREATE INDEX idx_lease_expired_at ON job_queue (lease_expired_at);
 CREATE INDEX idx_worker ON job_queue (worker);
-CREATE INDEX idx_reference_id ON job_queue (reference_id);
+CREATE INDEX idx_job_type_reference_id ON job_queue (job_type, reference_id);
 
 -- Trigger function to update finished_at when status changes to completed/failed
 CREATE OR REPLACE FUNCTION update_finished_at()
