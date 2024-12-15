@@ -79,7 +79,6 @@ def add_jobs(
     db: connection,
     job_type: JobType,
     contexts: list[BaseModel],
-    reference_id: str | None = None,
 ) -> list[int]:
     with db.cursor() as cur:
         inserted_ids = []
@@ -87,7 +86,7 @@ def add_jobs(
             cur.execute(
                 sql.SQL(
                     """
-                        INSERT INTO job_queue (job_type, ctx, reference_id) 
+                        INSERT INTO job_queue (job_type, ctx)
                         VALUES (%s, %s::jsonb, %s)
                         RETURNING id
                         """
@@ -95,7 +94,6 @@ def add_jobs(
                 (
                     job_type,
                     ctx.model_dump_json(by_alias=True, exclude_none=True),
-                    reference_id,
                 ),
             )
             inserted_ids.append(cur.fetchone()[0])
@@ -290,7 +288,28 @@ def get_job_info(db: connection, id: int) -> dict:
     Returns None if job is not found.
     """
     with db.cursor() as cur:
-        cur.execute(sql.SQL("SELECT * FROM job_queue WHERE id = %s"), (id,))
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    id,
+                    job_type,
+                    status,
+                    ctx,
+                    publisher,
+                    published_at,
+                    assigned_at,
+                    lease_expired_at,
+                    result,
+                    finished_at,
+                    worker,
+                    retry
+                FROM job_queue
+                WHERE id = %s
+            """
+            ),
+            (id,),
+        )
         row = cur.fetchone()
         if row is None:
             return None
@@ -306,9 +325,8 @@ def get_job_info(db: connection, id: int) -> dict:
             "lease_expired_at": row[7],
             "result": row[8],
             "finished_at": row[9],
-            "reference_id": row[10],
-            "worker": row[11],
-            "retry": row[12],
+            "worker": row[10],
+            "retry": row[11],
         }
 
 
