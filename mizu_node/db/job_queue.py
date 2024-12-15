@@ -4,7 +4,6 @@ import time
 from typing import Tuple
 from typing import Tuple
 
-from prometheus_client import Gauge
 from psycopg2 import sql
 from pydantic import BaseModel
 from psycopg2.extensions import connection
@@ -25,8 +24,11 @@ from mizu_node.types.service import RewardJobRecord
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
-def job_queue_cache_key(job_type: JobType) -> str:
-    return f"job_cache_v2:{job_type.name}"
+def job_queue_cache_key(job_type: JobType, reference_id: int) -> str:
+    if reference_id == 0:
+        return f"job_cache_v2:{job_type.name}"  # backward compatibility
+    else:
+        return f"job_cache_v2:{job_type.name}:{reference_id}"
 
 
 @with_transaction
@@ -34,10 +36,11 @@ def lease_job(
     db: connection,
     redis: Redis,
     job_type: JobType,
+    reference_id: int,
     worker: str,
 ) -> Tuple[int, int, DataJobContext] | None:
     """Optimized job leasing with less contention."""
-    id = redis.rpop(job_queue_cache_key(job_type))
+    id = redis.rpop(job_queue_cache_key(job_type, reference_id))
     if id is None:
         return None
 
@@ -50,7 +53,7 @@ def lease_job(
                     assigned_at = %s,
                     lease_expired_at = %s,
                     worker = CASE
-                        WHEN status = 1 THEN worker || ',' || %s
+                        WHEN status = %s THEN worker || ',' || %s
                         ELSE %s
                     END
                 WHERE id = %s
@@ -60,6 +63,7 @@ def lease_job(
                 JobStatus.processing,
                 epoch(),
                 epoch() + get_lease_ttl(job_type),
+                JobStatus.processing,
                 worker,
                 worker,
                 id,
@@ -151,9 +155,21 @@ def light_clean(db: connection):
 
 
 @with_transaction
-def clear_jobs(db: connection, job_type: JobType) -> None:
+def clear_jobs(
+    db: connection, job_type: JobType, reference_ids: list[int] = []
+) -> None:
     with db.cursor() as cur:
-        cur.execute(sql.SQL("DELETE FROM job_queue WHERE job_type = %s"), (job_type,))
+        cur.execute(
+            sql.SQL(
+                "DELETE FROM job_queue WHERE job_type = %s"
+                + (
+                    f" AND reference_id IN ({', '.join(map(str, reference_ids))})"
+                    if reference_ids
+                    else ""
+                )
+            ),
+            (job_type,),
+        )
 
 
 @with_transaction
@@ -163,20 +179,32 @@ def delete_one_job(db: connection, item_id: int) -> None:
 
 
 @with_transaction
-def get_num_of_jobs(db: connection, job_type: JobType, status: JobStatus) -> int:
+def get_num_of_jobs(
+    db: connection,
+    job_type: JobType,
+    status: JobStatus,
+    reference_ids: list[int] = [],
+) -> int:
     with db.cursor() as cur:
         cur.execute(
             sql.SQL(
                 "SELECT COUNT(*) FROM job_queue WHERE job_type = %s AND status = %s"
+                + (
+                    f" AND reference_id IN ({', '.join(map(str, reference_ids))})"
+                    if reference_ids
+                    else ""
+                ),
             ),
             (job_type, status),
         )
         return cur.fetchone()[0]
 
 
-def get_queue_len(db: connection, job_type: JobType) -> int:
-    cached = get_num_of_jobs(db, job_type, JobStatus.cached)
-    pending = get_num_of_jobs(db, job_type, JobStatus.pending)
+def get_queue_len(
+    db: connection, job_type: JobType, reference_ids: list[int] = []
+) -> int:
+    cached = get_num_of_jobs(db, job_type, JobStatus.cached, reference_ids)
+    pending = get_num_of_jobs(db, job_type, JobStatus.pending, reference_ids)
     logging.info(
         f"{job_type.name}: cached: {cached}, db pending: {pending}, total: {cached + pending}"
     )
@@ -199,7 +227,7 @@ def update_job_worker(db: connection, item_id: int, worker: str) -> None:
 
 @with_transaction
 def get_job_lease(
-    db: connection, item_id: int, job_type: JobType
+    db: connection, item_id: int
 ) -> Tuple[DataJobContext | None, str | None]:
     with db.cursor() as cur:
         cur.execute(
@@ -208,12 +236,14 @@ def get_job_lease(
                 SELECT ctx, worker
                 FROM job_queue 
                 WHERE id = %s 
-                AND job_type = %s 
                 AND status = %s
                 AND lease_expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
             """
             ),
-            (item_id, job_type, JobStatus.processing),
+            (
+                item_id,
+                JobStatus.processing,
+            ),
         )
         row = cur.fetchone()
         return (
@@ -312,26 +342,15 @@ def get_job_info(db: connection, id: int) -> dict:
         }
 
 
-ALL_JOB_TYPES = [JobType.pow, JobType.classify, JobType.batch_classify, JobType.reward]
-
-QUEUE_LEN = Gauge(
-    "app_job_queue_len",
-    "the queue length of each job_type",
-    ["job_type"],
-)
-
-
 def queue_clean(conn: Connections):
     while True:
         with conn.get_pg_connection() as db:
-            for job_type in ALL_JOB_TYPES:
-                QUEUE_LEN.labels(job_type.name).set(get_queue_len(db, job_type))
             try:
-                logging.info(f"light clean start for queue {str(job_type)}")
+                logging.info(f"light clean start for queue")
                 light_clean(db)
-                logging.info(f"light clean done for queue {str(job_type)}")
+                logging.info(f"light clean done for queue")
             except Exception as e:
-                logging.error(f"failed to clean queue {job_type} with error {e}")
+                logging.error(f"failed to clean queue with error {e}")
                 continue
             time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
 
@@ -339,18 +358,26 @@ def queue_clean(conn: Connections):
 @with_transaction
 def refill_job_cache(db: connection, redis: Redis):
     with db.cursor() as cur:
-        for job_type in ALL_JOB_TYPES:
+        cur.execute(
+            """
+            SELECT DISTINCT job_type, reference_id
+            FROM job_queue
+            WHERE status = 'pending'
+            """
+        )
+        for job_type, reference_id in cur.fetchall():
             min_queue_len = get_min_queue_len(job_type)
-            logging.info(f"refill job cache start for queue {str(job_type)}")
-            if redis.llen(job_queue_cache_key(job_type)) > min_queue_len:
-                logging.info(f"job cache for queue {str(job_type)} is full, skipping")
+            queue_key = job_queue_cache_key(job_type, reference_id)
+            logging.info(f"refill job cache start for queue {queue_key}")
+            if redis.llen(queue_key) > min_queue_len:
+                logging.info(f"job cache for queue {queue_key} is full, skipping")
                 continue
 
             cur.execute(
                 sql.SQL(
                     """WITH selected_jobs AS (
                         SELECT id FROM job_queue
-                        WHERE job_type = %s AND status = %s
+                        WHERE job_type = %s AND reference_id = %s AND status = %s
                         ORDER BY published_at ASC
                         LIMIT %s
                         FOR UPDATE SKIP LOCKED
@@ -363,6 +390,7 @@ def refill_job_cache(db: connection, redis: Redis):
                 ),
                 (
                     job_type,
+                    reference_id,
                     JobStatus.pending,
                     min_queue_len,
                     JobStatus.cached,
@@ -371,9 +399,9 @@ def refill_job_cache(db: connection, redis: Redis):
             job_ids = [str(row[0]) for row in cur.fetchall()]
             if job_ids:
                 logging.info(
-                    f"refill job cache for queue {str(job_type)} with {len(job_ids)} jobs"
+                    f"refill job cache for queue {queue_key} with {len(job_ids)} jobs"
                 )
-                redis.lpush(job_queue_cache_key(job_type), *job_ids)
+                redis.lpush(queue_key, *job_ids)
 
 
 def refill_job_cache_loop(conn: Connections):
@@ -396,4 +424,4 @@ def get_min_queue_len(job_type: JobType) -> int:
     if job_type == JobType.pow:
         return 100000
     else:
-        return 20000
+        return 50000

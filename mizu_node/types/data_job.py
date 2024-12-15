@@ -85,6 +85,7 @@ class DataJobContextWithValidator(DataJobContext):
     model_config = ConfigDict(populate_by_name=True)
 
     job_type: JobType = Field(alias="jobType")
+    reference_id: int = Field(alias="referenceId", default=0)
 
     @model_validator(mode="after")
     def _validate_job_type(self):

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 import logging
 import os
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Security, status, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Security, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -140,11 +140,15 @@ TAKE_JOB_V2 = Counter(
 def take_job_v2(
     job_type: JobType,
     user: str,
+    reference_ids: list[int] = Query([]),
     _: str = Depends(verify_internal_service),
 ):
-    job = handle_take_job(app.state.conn, user, job_type)
     TAKE_JOB_V2.labels(job_type.name).inc()
-    return build_ok_response(TakeJobResponse(job=job))
+    for reference_id in reference_ids:
+        job = handle_take_job(app.state.conn, user, job_type, reference_id)
+        if job is not None:
+            return build_ok_response(TakeJobResponse(job=job))
+    return build_ok_response(TakeJobResponse(job=None))
 
 
 FINISH_JOB_V2 = Counter(
@@ -171,12 +175,12 @@ def finish_job_v2(request: FinishJobRequest, _: str = Depends(verify_internal_se
 @app.get("/stats/queue_len")
 @app.get("/global_stats/queue_len")
 @error_handler
-def queue_len(job_type: JobType = JobType.pow):
+def queue_len(job_type: JobType = JobType.pow, reference_ids: list[int] = Query([])):
     """
     Return the number of queued classify jobs.
     """
     with app.state.conn.get_pg_connection() as db:
-        q_len = get_queue_len(db, job_type)
+        q_len = get_queue_len(db, job_type, reference_ids)
         return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 

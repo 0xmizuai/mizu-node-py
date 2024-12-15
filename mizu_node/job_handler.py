@@ -52,7 +52,7 @@ HANDLE_TAKE_JOB_LATENCY = Histogram(
 
 
 def handle_take_job(
-    conn: Connections, worker: str, job_type: JobType
+    conn: Connections, worker: str, job_type: JobType, reference_id: int | None = None
 ) -> WorkerJob | None:
     start_time = epoch_ms()
     with conn.get_pg_connection() as pg_conn:
@@ -61,7 +61,7 @@ def handle_take_job(
             epoch_ms() - start_time
         )
         after_validation = epoch_ms()
-        result = lease_job(pg_conn, conn.redis, job_type, worker)
+        result = lease_job(pg_conn, conn.redis, job_type, reference_id or 0, worker)
         HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
             epoch_ms() - after_validation
         )
@@ -87,6 +87,7 @@ def handle_take_job(
             job = WorkerJob(
                 job_id=item_id,
                 job_type=job_type,
+                reference_id=reference_id,
                 **ctx.model_dump(exclude_none=True),
             )
             return job
@@ -114,8 +115,8 @@ def handle_finish_job_v2(
         data_job_result = DataJobResult(
             **job_result.model_dump(exclude={"job_id", "job_type"})
         )
-        assigners.remove(worker)
         if assigners:
+            assigners.remove(worker)
             update_job_worker(pg_conn, job_id, assigners)
         else:
             complete_job(pg_conn, job_id, job_status, data_job_result)

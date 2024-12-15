@@ -9,7 +9,7 @@ CREATE TABLE job_queue (
     lease_expired_at BIGINT NOT NULL DEFAULT 0,
     result JSONB,
     finished_at BIGINT NOT NULL DEFAULT 0,
-    reference_id INTEGER DEFAULT 0,
+    reference_id INTEGER DEFAULT 0 NOT NULL,
     worker VARCHAR(255),
     retry INTEGER NOT NULL DEFAULT 0
 );
