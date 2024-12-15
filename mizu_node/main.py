@@ -29,16 +29,19 @@ from mizu_node.stats import (
     total_rewarded_in_past_n_hour,
 )
 from mizu_node.types.connections import Connections
-from mizu_node.types.data_job import JobType
+from mizu_node.types.data_job import DataJobContext, JobType, RewardContext
 from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobV2Response,
+    PublishRewardJobsRequest,
+    PublishRewardJobsResponse,
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
     QueryRewardJobsResponse,
     TakeJobResponse,
 )
 from mizu_node.db.job_queue import (
+    add_jobs,
     get_assigned_reward_jobs,
     get_queue_len,
     queue_clean,
@@ -120,6 +123,19 @@ def verify_internal_service(
 @app.get("/healthcheck")
 def default():
     return {"status": "ok"}
+
+
+@app.post("/publish_reward_jobs")
+@error_handler
+def publish_reward_jobs(
+    request: PublishRewardJobsRequest, _=Depends(verify_internal_service)
+):
+    with app.state.conn.get_pg_connection() as db:
+        contexts = [
+            DataJobContext(reward_ctx=RewardContext(**job)) for job in request.jobs
+        ]
+        job_ids = add_jobs(db, JobType.reward, contexts, request.reference_id)
+    return build_ok_response(PublishRewardJobsResponse(job_ids=job_ids))
 
 
 @app.get("/reward_jobs_v2")

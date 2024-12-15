@@ -10,6 +10,19 @@ from mizu_node.types.data_job import (
 )
 
 
+class PublishRewardJobsRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    reference_id: int
+    jobs: list[RewardContext]
+
+
+class PublishRewardJobsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_ids: list[int]
+
+
 class TakeJobResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
