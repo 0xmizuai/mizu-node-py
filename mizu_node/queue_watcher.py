@@ -125,6 +125,6 @@ def watch():
                 logging.info(f"queue watcher done")
             except Exception as e:
                 logging.error(f"failed to clean queue with error {e}")
-                continue
-            time.sleep(300)
+            finally:
+                time.sleep(300)
         round += 1
