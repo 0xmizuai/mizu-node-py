@@ -82,7 +82,9 @@ def refill_job_queues(cur: cursor, redis: Redis):
     for job_type, reference_id in get_pending_job_queues(cur):
         min_queue_len = get_min_queue_len(job_type)
         queue_key = job_queue_cache_key(job_type, reference_id)
-        logging.info(f"refill job cache start for queue {queue_key}")
+        logging.info(
+            f"refill job cache start for queue {queue_key}: {redis.llen(queue_key)}"
+        )
         if redis.llen(queue_key) > min_queue_len:
             logging.info(f"job cache for queue {queue_key} is full, skipping")
             continue
