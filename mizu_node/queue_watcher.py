@@ -95,15 +95,18 @@ def refill_job_queues(cur: cursor, redis: Redis):
                 f"refill job cache for queue {queue_key} with {len(job_ids)} jobs"
             )
             redis.lpush(queue_key, *job_ids)
+        logging.info(f"refill job cache done for queue {queue_key}")
 
 
 @with_transaction
 def process_queue(db: connection, redis: Redis, round: int):
     with db.cursor() as cur:
-        # queue clean every 10 mins
+        # queue clean every 5 mins
         if round % 5 == 0:
+            logging.info(f"queue clean start")
             reset_expired_processing_jobs(cur)
             cleanup_finished_jobs(cur)
+            logging.info(f"queue clean done")
 
         # refill job queues every 1 min
         refill_job_queues(cur, redis)
@@ -115,9 +118,9 @@ def watch():
     while True:
         with conn.get_pg_connection() as db:
             try:
-                logging.info(f"queue clean start")
+                logging.info(f"queue watcher start")
                 process_queue(db, conn.redis, round)
-                logging.info(f"queue clean done")
+                logging.info(f"queue watcher done")
             except Exception as e:
                 logging.error(f"failed to clean queue with error {e}")
                 continue
