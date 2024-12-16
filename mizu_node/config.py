@@ -49,6 +49,6 @@ def get_lease_ttl(job_type: JobType) -> int:
 
 def get_min_queue_len(job_type: JobType) -> int:
     if job_type == JobType.pow:
-        return 100000
+        return 200000
     else:
         return 50000
