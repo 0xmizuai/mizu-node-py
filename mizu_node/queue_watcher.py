@@ -107,14 +107,10 @@ def refill_job_queues(cur: cursor, redis: Redis):
 @with_transaction
 def process_queue(db: connection, redis: Redis, round: int):
     with db.cursor() as cur:
-        # queue clean every 5 mins
-        if round % 5 == 0:
-            logging.info(f"queue clean start")
-            reset_expired_processing_jobs(cur)
-            cleanup_finished_jobs(cur)
-            logging.info(f"queue clean done")
-
-        # refill job queues every 1 min
+        logging.info(f"queue clean start")
+        reset_expired_processing_jobs(cur)
+        cleanup_finished_jobs(cur)
+        logging.info(f"queue clean done")
         refill_job_queues(cur, redis)
 
 
@@ -130,5 +126,5 @@ def watch():
             except Exception as e:
                 logging.error(f"failed to clean queue with error {e}")
                 continue
-            time.sleep(60)
+            time.sleep(300)
         round += 1
