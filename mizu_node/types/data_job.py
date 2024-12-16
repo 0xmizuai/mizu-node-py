@@ -27,6 +27,7 @@ class JobStatus(int, Enum):
 class ErrorCode(int, Enum):
     reserved = 0
     max_retry_exceeded = 1
+    rejected = 2
 
 
 class ClassifyContext(BaseModel):

@@ -52,10 +52,7 @@ def lease_job(
                     status = %s,
                     assigned_at = %s,
                     lease_expired_at = %s,
-                    worker = CASE
-                        WHEN status = %s THEN worker || ',' || %s
-                        ELSE %s
-                    END
+                    worker = %s
                 WHERE id = %s
                 RETURNING id, retry, ctx"""
             ),
@@ -63,8 +60,6 @@ def lease_job(
                 JobStatus.processing,
                 epoch(),
                 epoch() + get_lease_ttl(job_type),
-                JobStatus.processing,
-                worker,
                 worker,
                 id,
             ),
@@ -212,16 +207,16 @@ def get_queue_len(
 
 
 @with_transaction
-def update_job_worker(db: connection, item_id: int, worker: str) -> None:
+def requeue_job(db: connection, item_id: int) -> None:
     with db.cursor() as cur:
         cur.execute(
             sql.SQL(
                 """UPDATE job_queue
-                SET worker = %s
+                SET status = %s
                 WHERE id = %s
             """
             ),
-            (worker, item_id),
+            (JobStatus.pending, item_id),
         )
 
 
@@ -246,14 +241,7 @@ def get_job_lease(
             ),
         )
         row = cur.fetchone()
-        return (
-            (
-                DataJobContext.model_validate(row[0]),
-                row[1].split(",") if row[1] else [],
-            )
-            if row
-            else (None, [])
-        )
+        return (DataJobContext.model_validate(row[0]), row[1]) if row else (None, [])
 
 
 @with_transaction

@@ -36,7 +36,7 @@ from mizu_node.db.job_queue import (
     complete_job,
     get_job_lease,
     lease_job,
-    update_job_worker,
+    requeue_job,
 )
 from mizu_node.types.service import SettleRewardRequest
 
@@ -106,19 +106,22 @@ def handle_finish_job_v2(
 ) -> SettleRewardRequest | None:
     with conn.get_pg_connection() as pg_conn:
         job_id = int(job_result.job_id)
-        ctx, assigners = get_job_lease(pg_conn, job_id)
-        if worker not in assigners:
+        ctx, assigner = get_job_lease(pg_conn, job_id)
+        if assigner != worker:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="lease not exists"
             )
+
         job_status = _validate_job_result(ctx, job_result)
-        data_job_result = DataJobResult(
-            **job_result.model_dump(exclude={"job_id", "job_type"})
-        )
-        assigners.remove(worker)
-        if assigners:
-            update_job_worker(pg_conn, job_id, assigners)
+        if (
+            job_status == JobStatus.error
+            and job_result.error_result.code == ErrorCode.rejected
+        ):
+            requeue_job(pg_conn, job_id)
         else:
+            data_job_result = DataJobResult(
+                **job_result.model_dump(exclude={"job_id", "job_type"})
+            )
             complete_job(pg_conn, job_id, job_status, data_job_result)
         return (
             _calculate_reward_v2(conn.redis, worker, ctx, job_result)
