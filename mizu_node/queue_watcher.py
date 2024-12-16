@@ -26,7 +26,7 @@ def reset_expired_processing_jobs(cur: cursor):
         ),
         (JobStatus.pending, JobStatus.processing),
     )
-    logging.info(f"reset expired jobs: {cursor.rowcount}")
+    logging.info(f"reset all expired jobs")
 
 
 def cleanup_finished_jobs(cur: cursor):
@@ -40,7 +40,7 @@ def cleanup_finished_jobs(cur: cursor):
         ),
         (JobStatus.finished, JobStatus.error, JobType.pow, JobType.reward),
     )
-    logging.info(f"cleanup jobs: {cursor.rowcount}")
+    logging.info(f"cleanup all finished jobs")
 
 
 def get_pending_job_queues(cur: cursor):
