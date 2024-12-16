@@ -1,4 +1,3 @@
-import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
@@ -10,14 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Histogram, make_asgi_app
 
 from mizu_node.common import build_ok_response, epoch_ms, error_handler
-from mizu_node.constants import (
+from mizu_node.config import (
     LATENCY_BUCKETS,
 )
 from mizu_node.job_handler import (
     handle_finish_job_v2,
     handle_take_job,
 )
-from mizu_node.security import (
+from mizu_node.config import (
     get_allowed_origins,
 )
 from mizu_node.stats import (
@@ -44,9 +43,6 @@ from mizu_node.db.job_queue import (
     add_jobs,
     get_assigned_reward_jobs,
     get_queue_len,
-    queue_clean,
-    refill_job_cache,
-    refill_job_cache_loop,
 )
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
@@ -58,12 +54,7 @@ bearer_scheme = HTTPBearer()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     conn = Connections()
-    with conn.get_pg_connection() as db:
-        refill_job_cache(db, conn.redis)
     app.state.conn = conn
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, queue_clean, app.state.conn)
-    loop.run_in_executor(None, refill_job_cache_loop, app.state.conn)
     yield
 
 

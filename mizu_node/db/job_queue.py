@@ -1,6 +1,4 @@
 import logging
-import os
-import time
 from typing import Tuple
 from typing import Tuple
 
@@ -10,9 +8,8 @@ from psycopg2.extensions import connection
 from redis import Redis
 
 from mizu_node.common import epoch
-from mizu_node.constants import REWARD_TTL
+from mizu_node.config import get_lease_ttl
 from mizu_node.db.common import with_transaction
-from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import (
     DataJobContext,
     JobStatus,
@@ -120,33 +117,6 @@ def complete_job(
             ),
         )
         return cur.rowcount > 0
-
-
-@with_transaction
-def light_clean(db: connection):
-    with db.cursor() as cur:
-        # Reset expired processing jobs back to pending
-        cur.execute(
-            sql.SQL(
-                """
-                UPDATE job_queue 
-                SET status = %s
-                WHERE status = %s
-                AND lease_expired_at < EXTRACT(EPOCH FROM NOW())::BIGINT
-            """
-            ),
-            (JobStatus.pending, JobStatus.processing),
-        )
-
-        # delete finished or error jobs
-        cur.execute(
-            sql.SQL(
-                """DELETE FROM job_queue
-                WHERE (status = %s OR status = %s)
-                AND job_type IN (%s, %s)"""
-            ),
-            (JobStatus.finished, JobStatus.error, JobType.pow, JobType.reward),
-        )
 
 
 @with_transaction
@@ -350,92 +320,3 @@ def get_job_info(db: connection, id: int) -> dict:
             "worker": row[11],
             "retry": row[12],
         }
-
-
-def queue_clean(conn: Connections):
-    while True:
-        with conn.get_pg_connection() as db:
-            try:
-                logging.info(f"light clean start for queue")
-                light_clean(db)
-                logging.info(f"light clean done for queue")
-            except Exception as e:
-                logging.error(f"failed to clean queue with error {e}")
-                continue
-            time.sleep(int(os.environ.get("QUEUE_CLEAN_INTERVAL", 300)))
-
-
-@with_transaction
-def refill_job_cache(db: connection, redis: Redis):
-    with db.cursor() as cur:
-        cur.execute(
-            sql.SQL(
-                """
-                SELECT DISTINCT job_type, reference_id
-                FROM job_queue
-                WHERE status = %s
-                """
-            ),
-            (JobStatus.pending,),
-        )
-        for job_type, reference_id in cur.fetchall():
-            job_type = JobType(job_type)
-            min_queue_len = get_min_queue_len(job_type)
-            queue_key = job_queue_cache_key(job_type, reference_id)
-            logging.info(f"refill job cache start for queue {queue_key}")
-            if redis.llen(queue_key) > min_queue_len:
-                logging.info(f"job cache for queue {queue_key} is full, skipping")
-                continue
-
-            cur.execute(
-                sql.SQL(
-                    """WITH selected_jobs AS (
-                        SELECT id FROM job_queue
-                        WHERE job_type = %s AND reference_id = %s AND status = %s
-                        ORDER BY published_at ASC
-                        LIMIT %s
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    UPDATE job_queue
-                    SET status = %s
-                    FROM selected_jobs
-                    WHERE job_queue.id = selected_jobs.id
-                    RETURNING job_queue.id"""
-                ),
-                (
-                    job_type,
-                    reference_id,
-                    JobStatus.pending,
-                    min_queue_len,
-                    JobStatus.cached,
-                ),
-            )
-            job_ids = [str(row[0]) for row in cur.fetchall()]
-            if job_ids:
-                logging.info(
-                    f"refill job cache for queue {queue_key} with {len(job_ids)} jobs"
-                )
-                redis.lpush(queue_key, *job_ids)
-
-
-def refill_job_cache_loop(conn: Connections):
-    while True:
-        with conn.get_pg_connection() as db:
-            refill_job_cache(db, conn.redis)
-        time.sleep(int(os.environ.get("QUEUE_REFILL_INTERVAL", 60)))
-
-
-def get_lease_ttl(job_type: JobType) -> int:
-    if job_type == JobType.reward:
-        return REWARD_TTL
-    elif job_type == JobType.batch_classify:
-        return 3600
-    else:
-        return 600
-
-
-def get_min_queue_len(job_type: JobType) -> int:
-    if job_type == JobType.pow:
-        return 100000
-    else:
-        return 50000

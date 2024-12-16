@@ -38,6 +38,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.scripts]
 dev = "mizu_node.main:start_dev"
 start = "mizu_node.main:start"
+watch_queue = "mizu_node.queue_watcher:watch"
 
 publish_pow = "publisher.pow:start"
 publish_reward = "publisher.reward:start"

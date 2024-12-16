@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 
 
 from mizu_node.common import epoch_ms
-from mizu_node.constants import (
+from mizu_node.config import (
     DEFAULT_POW_DIFFICULTY,
     LATENCY_BUCKETS,
     MAX_RETRY_ALLOWED,

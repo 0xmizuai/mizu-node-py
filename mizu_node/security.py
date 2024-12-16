@@ -4,11 +4,11 @@ from fastapi import HTTPException, status
 from redis import Redis
 
 from mizu_node.common import epoch
-from mizu_node.constants import (
+from mizu_node.config import (
     ACTIVE_USER_PAST_7D_THRESHOLD,
-    COOLDOWN_WORKER_EXPIRE_TTL_SECONDS,
     MAX_UNCLAIMED_REWARD,
     MIN_REWARD_GAP,
+    get_cooldown_config,
 )
 
 from mizu_node.db.job_queue import get_reward_jobs_stats
@@ -20,7 +20,6 @@ from mizu_node.stats import (
 from mizu_node.types.data_job import (
     JobType,
 )
-from mizu_node.types.service import CooldownConfig
 from psycopg2.extensions import connection
 
 BLOCKED_FIELD = "blocked_worker"
@@ -83,13 +82,3 @@ def validate_worker(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="not active user",
             )
-
-
-def get_cooldown_config(job_type: JobType) -> CooldownConfig:
-    if job_type == JobType.reward:
-        return CooldownConfig(60, 1)
-    return CooldownConfig(COOLDOWN_WORKER_EXPIRE_TTL_SECONDS, 10)
-
-
-def get_allowed_origins() -> list[str]:
-    return os.environ.get("ALLOWED_ORIGINS", "*").split(",")
