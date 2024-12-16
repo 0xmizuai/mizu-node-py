@@ -178,4 +178,5 @@ def _calculate_reward_v2(
         job_type=result.job_type,
         worker=worker,
         amount=str(rewarded),
+        mining_points=rewarded,
     )

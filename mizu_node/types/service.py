@@ -54,10 +54,10 @@ class SettleRewardRequest(BaseModel):
     job_id: str | int = Field(alias="jobId")
     job_type: JobType = Field(alias="jobType")
     worker: str
-    # only for reward job
     token: Optional[Token] = Field(default=None)
     amount: Optional[str] = Field(default=None)
     recipient: Optional[str] = Field(default=None)
+    mining_points: float = Field(default=0.0)
 
 
 class FinishJobV2Response(BaseModel):

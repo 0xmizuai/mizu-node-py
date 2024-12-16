@@ -374,6 +374,7 @@ def test_finish_job(mock_requests, mock_connections):
     assert response.json()["message"] == "ok"
     resp = FinishJobV2Response.model_validate(response.json()["data"])
     assert resp.settle_reward.amount == "0.5"
+    assert resp.settle_reward.mining_points == 0.5
 
     # Verify job 1 in database
     j1 = get_job_info(client.app.state.conn.postgres, bid)
@@ -416,6 +417,7 @@ def test_finish_job(mock_requests, mock_connections):
     assert response.status_code == 200
     resp = FinishJobV2Response.model_validate(response.json()["data"])
     assert resp.settle_reward.amount == "0.5"
+    assert resp.settle_reward.mining_points == 0.5
 
     # Verify job 2 in database
     j2 = get_job_info(client.app.state.conn.postgres, pid)
