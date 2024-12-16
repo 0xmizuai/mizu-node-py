@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
 
 def reset_expired_processing_jobs(cur: cursor):
-    cur.execute(
+    result = cur.execute(
         sql.SQL(
             """
             UPDATE job_queue 
@@ -26,10 +26,11 @@ def reset_expired_processing_jobs(cur: cursor):
         ),
         (JobStatus.pending, JobStatus.processing),
     )
+    logging.info(f"reset expired jobs: {result.rowcount}")
 
 
 def cleanup_finished_jobs(cur: cursor):
-    cur.execute(
+    result = cur.execute(
         sql.SQL(
             """DELETE FROM job_queue
             WHERE (status = %s OR status = %s)
@@ -39,6 +40,7 @@ def cleanup_finished_jobs(cur: cursor):
         ),
         (JobStatus.finished, JobStatus.error, JobType.pow, JobType.reward),
     )
+    logging.info(f"cleanup jobs: {result.rowcount}")
 
 
 def get_pending_job_queues(cur: cursor):
