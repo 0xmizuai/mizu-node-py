@@ -122,9 +122,7 @@ def publish_reward_jobs(
     request: PublishRewardJobsRequest, _=Depends(verify_internal_service)
 ):
     with app.state.conn.get_pg_connection() as db:
-        contexts = [
-            DataJobContext(reward_ctx=RewardContext(**job)) for job in request.jobs
-        ]
+        contexts = [DataJobContext(reward_ctx=job) for job in request.jobs]
         job_ids = add_jobs(db, JobType.reward, contexts, request.reference_id)
     return build_ok_response(PublishRewardJobsResponse(job_ids=job_ids))
 
