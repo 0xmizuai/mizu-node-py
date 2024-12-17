@@ -563,3 +563,46 @@ def test_query_reward_jobs(mock_connections):
     for job in records.jobs:
         assert job.job_id in job_ids
         assert job.reward_ctx is not None
+
+
+def test_publish_reward_jobs(mock_connections):
+    client = mock_connections
+
+    # Test case 1: Basic reward jobs
+    request = {
+        "jobs": [
+            {"amount": 50},
+            {"amount": 100},
+        ],
+        "reference_id": 123,
+    }
+
+    response = client.post("/publish_reward_jobs", json=request)
+    assert response.status_code == 200
+    job_ids = response.json()["data"]["jobIds"]
+    assert len(job_ids) == 2
+
+    # Test case 2: Reward jobs with tokens
+    request = {
+        "jobs": [
+            {
+                "amount": 50,
+                "token": {"chain": "arb", "address": "0x1234", "protocol": "ERC20"},
+            }
+        ],
+        "reference_id": 456,
+    }
+
+    response = client.post("/publish_reward_jobs", json=request)
+    assert response.status_code == 200
+    job_ids = response.json()["data"]["jobIds"]
+    assert len(job_ids) == 1
+
+    # Verify the job in database
+    with client.app.state.conn.get_pg_connection() as db:
+        with closing(db.cursor()) as cur:
+            cur.execute("SELECT ctx FROM job_queue WHERE id = %s", (job_ids[0],))
+            job_data = cur.fetchone()[0]
+            assert job_data["rewardCtx"]["token"]["chain"] == "arb"
+            assert job_data["rewardCtx"]["token"]["address"] == "0x1234"
+            assert job_data["rewardCtx"]["amount"] == 50

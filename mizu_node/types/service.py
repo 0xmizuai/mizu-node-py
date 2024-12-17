@@ -20,7 +20,7 @@ class PublishRewardJobsRequest(BaseModel):
 class PublishRewardJobsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    job_ids: list[int]
+    job_ids: list[int] = Field(alias="jobIds")
 
 
 class TakeJobResponse(BaseModel):
