@@ -150,6 +150,8 @@ def take_job_v2(
 ):
     TAKE_JOB_V2.labels(job_type.name).inc()
     reference_ids = reference_ids.split(",")
+    if "0" not in reference_ids:
+        reference_ids.append("0")
     for reference_id in reference_ids:
         job = handle_take_job(app.state.conn, user, job_type, int(reference_id))
         if job is not None:
