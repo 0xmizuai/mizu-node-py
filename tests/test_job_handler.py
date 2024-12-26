@@ -34,11 +34,6 @@ from mizu_node.types.service import (
 )
 from tests.redis_mock import RedisMock
 
-from tests.worker_utils import (
-    block_worker,
-    clear_cooldown,
-    set_reward_stats,
-)
 from freezegun import freeze_time
 
 from unittest import mock
@@ -179,7 +174,6 @@ def test_take_job_ok(mock_connections):
     bids = _publish_jobs_simple(client, JobType.batch_classify, 3)
 
     # Take reward job 1
-    set_reward_stats(client.app.state.conn.redis, "worker1")
     response1 = client.get(
         "/take_job_v2",
         params={"job_type": int(JobType.reward), "user": "worker1"},
@@ -234,44 +228,12 @@ def test_take_job_error(mock_connections):
     assert response.status_code == 200
     assert response.json()["data"].get("job", None) is None
 
-    # Blocked worker
-    block_worker(client.app.state.conn.redis, "worker3")
-    response = client.get(
-        "/take_job_v2",
-        params={"job_type": int(JobType.batch_classify), "user": "worker3"},
-    )
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert response.json()["message"] == "worker is blocked"
-
-    # user not active for reward job
-    _publish_jobs_simple(client, JobType.reward, 3)
-    response = client.get(
-        "/take_job_v2",
-        params={"job_type": int(JobType.reward), "user": "worker4"},
-    )
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert response.json()["message"] == "not active user"
-
     # cooling down
     response = client.get(
         "/take_job_v2",
         params={"job_type": int(JobType.reward), "user": "worker4"},
     )
-    assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
-    assert response.json()["message"].startswith("please retry after")
-
-    # take reward job
-    clear_cooldown(client.app.state.conn.redis, "worker4", JobType.reward)
-    set_reward_stats(client.app.state.conn.redis, "worker4")
-    response = client.get(
-        "/take_job_v2",
-        params={"job_type": int(JobType.reward), "user": "worker4"},
-    )
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["data"]["job"] is not None
-
-    # should not be able to take another reward job
-    clear_cooldown(client.app.state.conn.redis, "worker4", JobType.reward)
     response = client.get(
         "/take_job_v2",
         params={"job_type": int(JobType.reward), "user": "worker4"},
@@ -427,7 +389,6 @@ def test_finish_job(mock_requests, mock_connections):
     assert j2["finished_at"] is not None
 
     # Case 3: job expired
-    set_reward_stats(client.app.state.conn.redis, "worker4")
     response = client.get(
         "/take_job_v2",
         params={"job_type": int(JobType.reward), "user": "worker4"},
@@ -533,8 +494,6 @@ def test_query_reward_jobs(mock_connections):
     )
     # Cache job IDs in Redis
     client.app.state.conn.redis.lpush(f"job_cache_v2:{JobType.reward.name}", *job_ids)
-
-    set_reward_stats(client.app.state.conn.redis, "worker1")
 
     # take reward jobs
     initial_time = datetime.datetime.now()

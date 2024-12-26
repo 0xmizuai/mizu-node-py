@@ -55,12 +55,12 @@ def handle_take_job(
     conn: Connections, worker: str, job_type: JobType, reference_id: int
 ) -> WorkerJob | None:
     start_time = epoch_ms()
+    validate_worker(conn.redis, worker, job_type)
+    HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "validate").observe(
+        epoch_ms() - start_time
+    )
+    after_validation = epoch_ms()
     with conn.get_pg_connection() as pg_conn:
-        validate_worker(conn.redis, pg_conn, worker, job_type)
-        HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "validate").observe(
-            epoch_ms() - start_time
-        )
-        after_validation = epoch_ms()
         result = lease_job(pg_conn, conn.redis, job_type, reference_id or 0, worker)
         HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
             epoch_ms() - after_validation
