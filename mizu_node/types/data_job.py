@@ -60,7 +60,7 @@ class Token(BaseModel):
     chain: str
     address: str
     decimals: int = Field(default=18)
-    protocol: Literal["ERC20", "ERC721", "ERC1155"]
+    protocol: Literal["SPL", "ERC20", "ERC721", "ERC1155"]
 
 
 class RewardContext(BaseModel):
