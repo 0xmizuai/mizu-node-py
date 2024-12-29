@@ -1,5 +1,6 @@
 from typing import List, Optional
 from psycopg2.extensions import connection
+from psycopg_pool import AsyncConnectionPool
 from dataclasses import dataclass
 
 from mizu_node.db.common import with_transaction
@@ -155,6 +156,14 @@ def get_unpublished_query(db: connection) -> DataQuery:
         raise ValueError("No unpublished query found")
 
     return _create_query_from_result(result)
+
+
+async def get_unpublished_queries(
+    db: AsyncConnectionPool.connection, limit: int = 5
+) -> List[DataQuery]:
+    async with db.cursor as cur:
+        await cur.execute(f"{QUERY_WITH_DATASET} WHERE q.status = 0 LIMIT {limit}")
+        return [_create_query_from_result(row) async for row in cur]
 
 
 def _create_query_from_result(result) -> DataQuery:

@@ -16,6 +16,8 @@ fastapi-cors = "^0.0.6"
 boto3 = "^1.35.70"
 prometheus-client = "^0.21.0"
 psycopg2-binary = "^2.9.10"
+psycopg = { version = "^3.1.0", extras = ["binary", "pool"] }
+sqlalchemy = "^2.0.36"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
@@ -47,3 +49,4 @@ publish_reward = "publisher.reward:start"
 
 backup = "scripts.backup:main"
 import = "scripts.importer:main"
+query_processor = "scripts.query_processor:main"
