@@ -1,12 +1,11 @@
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Enum
+from enum import IntEnum
 
 
-class QueryStatus(int, Enum):
+class QueryStatus(IntEnum):
     pending = 0
-    publishing = 1
-    processing = 2
-    processed = 3
+    processing = 1
+    processed = 2
 
 
 class Dataset(BaseModel):

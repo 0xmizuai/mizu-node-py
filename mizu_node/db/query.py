@@ -164,9 +164,10 @@ def get_unpublished_query(db: connection) -> DataQuery:
 async def get_unpublished_queries(
     db: AsyncConnectionPool.connection, limit: int = 5
 ) -> List[DataQuery]:
-    async with db.cursor as cur:
+    async with db.cursor() as cur:
         await cur.execute(f"{QUERY_WITH_DATASET} WHERE q.status = 0 LIMIT {limit}")
-        return [_create_query_from_result(row) async for row in cur]
+        results = await cur.fetchall()
+        return [_create_query_from_result(row) for row in results]
 
 
 def _create_query_from_result(result) -> DataQuery:
