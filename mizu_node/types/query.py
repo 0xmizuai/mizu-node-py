@@ -1,4 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
 from enum import IntEnum
 
 
@@ -17,8 +18,8 @@ class Dataset(BaseModel):
     language: str = Field(alias="language")
     total_objects: int = Field(alias="totalObjects")
     total_bytes: int = Field(alias="totalBytes")
-    created_at: str = Field(alias="createdAt")
-    crawled_at: str = Field(alias="crawledAt")
+    created_at: datetime = Field(alias="createdAt")
+    crawled_at: datetime = Field(alias="crawledAt")
     source: str = Field(alias="source")
     source_link: str = Field(alias="sourceLink")
 
@@ -46,4 +47,4 @@ class DataQuery(BaseModel):
     last_record_published: int = Field(alias="lastRecordPublished")
     user: str = Field(alias="user")
     status: QueryStatus = Field(alias="status")
-    created_at: str = Field(alias="createdAt")
+    created_at: datetime = Field(alias="createdAt")
