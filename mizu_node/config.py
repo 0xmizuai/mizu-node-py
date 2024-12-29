@@ -1,5 +1,5 @@
 import os
-from mizu_node.types.data_job import JobType
+from mizu_node.types.data_job import JobType, Token
 from mizu_node.types.service import CooldownConfig
 
 
@@ -27,6 +27,23 @@ LATENCY_BUCKETS = [
     float("inf"),
 ]
 
+USDT_ADDRESS = "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9"
+USDT_TEST_ADDRESS = "0x0C5eAB07a5E082ED5Dc14BAC7e9C706568C2905f"
+
+ARB_USDT = Token(
+    chain="arbitrum",
+    address=USDT_ADDRESS,
+    decimals=6,
+    protocol="ERC20",
+)
+
+ARB_USDT_TEST = Token(
+    chain="arbitrum_sepolia",
+    address=USDT_TEST_ADDRESS,
+    decimals=18,
+    protocol="ERC20",
+)
+
 
 def get_cooldown_config(job_type: JobType) -> CooldownConfig:
     if job_type == JobType.reward:
@@ -52,3 +69,11 @@ def get_min_queue_len(job_type: JobType) -> int:
         return 200000
     else:
         return 50000
+
+
+def is_usdt(chain: str, address: str):
+    return chain == "arbitrum" and address == USDT_ADDRESS
+
+
+def is_usdt_test(chain: str, address: str):
+    return chain == "arbitrum_sepolia" and address == USDT_TEST_ADDRESS

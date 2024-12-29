@@ -1,6 +1,7 @@
 from redis import Redis
 
 from mizu_node.common import epoch
+from mizu_node.config import is_usdt, is_usdt_test
 from mizu_node.types.data_job import (
     JobType,
     RewardContext,
@@ -99,7 +100,13 @@ def total_rewarded_in_past_n_days(rclient: Redis, token: str, n: int):
 
 
 def get_token_name(ctx: RewardContext) -> str:
-    return "point" if ctx.token is None else "usdt"
+    if ctx.token is None:
+        return "point"
+    if is_usdt(ctx.token.chain, ctx.token.address) or is_usdt_test(
+        ctx.token.chain, ctx.token.address
+    ):
+        return "usdt"
+    return f"{ctx.token.chain}_{ctx.token.address}"
 
 
 def record_claim_event(rclient: Redis, ctx: RewardContext):

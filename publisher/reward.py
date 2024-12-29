@@ -7,6 +7,7 @@ import time
 from pydantic import BaseModel
 from redis import Redis
 from mizu_node.common import epoch, is_prod
+from mizu_node.config import ARB_USDT, ARB_USDT_TEST
 from mizu_node.db.job_queue import add_jobs, get_queue_len
 from mizu_node.types.connections import Connections
 from mizu_node.types.data_job import DataJobContext, JobType, RewardContext, Token
@@ -24,21 +25,6 @@ class RewardJobConfig(BaseModel):
     key: str
     ctx: RewardContext
     budget: BudgetSetting | None = None
-
-
-ARB_USDT = Token(
-    chain="arbitrum",
-    address="0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
-    decimals=6,
-    protocol="ERC20",
-)
-
-ARB_USDT_TEST = Token(
-    chain="arbitrum_sepolia",
-    address="0x0C5eAB07a5E082ED5Dc14BAC7e9C706568C2905f",
-    decimals=18,
-    protocol="ERC20",
-)
 
 
 def usdt_ctx(amount: int):
