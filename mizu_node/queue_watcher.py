@@ -101,7 +101,7 @@ def refill_job_queues(cur: cursor, redis: Redis):
             )
             redis.lpush(queue_key, *job_ids)
         logging.info(
-            f"refill job cache done for queue {queue_key}: after{redis.llen(queue_key)}"
+            f"refill job cache done for queue {queue_key}: after {redis.llen(queue_key)}"
         )
 
 
