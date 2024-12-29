@@ -4,12 +4,12 @@ from psycopg_pool import AsyncConnectionPool
 from dataclasses import dataclass
 
 from mizu_node.db.common import with_transaction
-from mizu_node.types.query import DataQuery, DataRecord, Dataset, QueryStatus
+from mizu_node.types.query import DataQuery, DataRecord, Dataset
 
 QUERY_WITH_DATASET = """
     SELECT 
-        q.id, q.dataset_id, q.query_text, q.model, q."user", q.last_record_published, q.status, q.created_at,
-        d.name, d.language, d.data_type, d.total_objects, d.total_bytes, d.created_at
+        q.id, q.dataset_id, q.query_text, q.model, q.user_id, q.last_record_published, q.status, q.created_at,
+        d.name, d.language, d.data_type, d.total_objects, d.total_bytes, d.created_at, d.crawled_at, d.source, d.source_link
     FROM queries q
     JOIN datasets d ON q.dataset_id = d.id
 """
@@ -26,7 +26,7 @@ def get_dataset(db: connection, dataset_id: int) -> Dataset:
     cursor = db.cursor()
     cursor.execute(
         """
-        SELECT id, name, language, data_type, total_objects, total_bytes, created_at
+        SELECT id, name, language, data_type, total_objects, total_bytes, created_at, crawled_at, source, source_link
         FROM datasets
         WHERE id = %s
         """,
@@ -44,6 +44,9 @@ def get_dataset(db: connection, dataset_id: int) -> Dataset:
         total_objects=result[4],
         total_bytes=result[5],
         created_at=result[6],
+        crawled_at=result[7],
+        source=result[8],
+        source_link=result[9],
     )
 
 
@@ -177,6 +180,9 @@ def _create_query_from_result(result) -> DataQuery:
             total_objects=result[11],
             total_bytes=result[12],
             created_at=result[13],
+            crawled_at=result[14],
+            source=result[15],
+            source_link=result[16],
         ),
         query_text=result[2],
         model=result[3],

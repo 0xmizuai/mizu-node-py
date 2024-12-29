@@ -19,6 +19,9 @@ class Dataset(BaseModel):
     total_objects: int = Field(alias="totalObjects")
     total_bytes: int = Field(alias="totalBytes")
     created_at: str = Field(alias="createdAt")
+    crawled_at: str = Field(alias="crawledAt")
+    source: str = Field(alias="source")
+    source_link: str = Field(alias="sourceLink")
 
 
 class DataRecord(BaseModel):

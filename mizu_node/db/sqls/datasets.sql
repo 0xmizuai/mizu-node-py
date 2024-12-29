@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS datasets (
     "total_objects" INTEGER DEFAULT 0,
     "total_bytes" BIGINT DEFAULT 0,
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    "crawled_at" TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    "source" VARCHAR(255) DEFAULT NULL,
+    "source_link" TEXT DEFAULT NULL,
     UNIQUE("language", "data_type", "name")
 );
 
