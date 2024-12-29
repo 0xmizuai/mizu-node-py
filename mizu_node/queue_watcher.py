@@ -114,8 +114,7 @@ def process_queue(db: connection, redis: Redis, round: int):
         refill_job_queues(cur, redis)
 
 
-def watch():
-    conn = Connections()
+def watch(conn: Connections):
     round = 0
     while True:
         with conn.get_pg_connection() as db:

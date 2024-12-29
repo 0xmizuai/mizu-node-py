@@ -8,6 +8,7 @@ from mizu_node.common import build_ok_response, error_handler
 from mizu_node.config import (
     get_allowed_origins,
 )
+from mizu_node.queue_watcher import watch
 from mizu_node.stats import (
     total_mined_points_in_past_n_days,
     total_mined_points_in_past_n_hour,
@@ -29,6 +30,7 @@ logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 async def lifespan(app: FastAPI):
     conn = Connections()
     app.state.conn = conn
+    watch(conn)
     yield
 
 
