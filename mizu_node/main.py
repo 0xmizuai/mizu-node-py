@@ -20,29 +20,23 @@ from mizu_node.config import (
     get_allowed_origins,
 )
 from mizu_node.stats import (
-    total_mined_points_in_past_n_days,
     total_mined_points_in_past_n_days_per_worker,
-    total_mined_points_in_past_n_hour,
     total_mined_points_in_past_n_hour_per_worker,
-    total_rewarded_in_past_n_days,
-    total_rewarded_in_past_n_hour,
 )
 from mizu_node.types.connections import Connections
-from mizu_node.types.data_job import DataJobContext, JobType, RewardContext
+from mizu_node.types.data_job import DataJobContext, JobType
 from mizu_node.types.service import (
     FinishJobRequest,
     FinishJobV2Response,
     PublishRewardJobsRequest,
     PublishRewardJobsResponse,
     QueryMinedPointsResponse,
-    QueryQueueLenResponse,
     QueryRewardJobsResponse,
     TakeJobResponse,
 )
 from mizu_node.db.job_queue import (
     add_jobs,
     get_assigned_reward_jobs,
-    get_queue_len,
 )
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
@@ -178,58 +172,6 @@ def finish_job_v2(request: FinishJobRequest, _: str = Depends(verify_internal_se
     job_type = request.job_result.job_type
     FINISH_JOB_V2.labels(job_type.name).inc()
     return build_ok_response(FinishJobV2Response(settle_reward=settle_reward))
-
-
-@app.get("/stats/queue_len")
-@app.get("/global_stats/queue_len")
-@error_handler
-def queue_len(job_type: JobType = JobType.pow, reference_ids: list[int] = Query([])):
-    """
-    Return the number of queued classify jobs.
-    """
-    with app.state.conn.get_pg_connection() as db:
-        q_len = get_queue_len(db, job_type, reference_ids)
-        return build_ok_response(QueryQueueLenResponse(length=q_len))
-
-
-@app.get("/global_stats/mined_points")
-@error_handler
-def get_mined_points_stats(hours: int | None = None, days: int | None = None):
-    """
-    Return the mined points in the last `hours` hours or last `days` days.
-    """
-    if hours is None and days is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="either hours or days must be provided",
-        )
-    if hours is not None:
-        points = total_mined_points_in_past_n_hour(app.state.conn.redis, max(hours, 24))
-    if days is not None:
-        points = total_mined_points_in_past_n_days(app.state.conn.redis, max(days, 7))
-    return build_ok_response(QueryMinedPointsResponse(points=points))
-
-
-@app.get("/global_stats/rewards")
-@error_handler
-def get_rewards_stats(token: str, hours: int | None = None, days: int | None = None):
-    """
-    Return the mined points in the last `hours` hours or last `days` days.
-    """
-    if hours is None and days is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="either hours or days must be provided",
-        )
-    if hours is not None:
-        points = total_rewarded_in_past_n_hour(
-            app.state.conn.redis, token, max(hours, 24)
-        )
-    if days is not None:
-        points = total_rewarded_in_past_n_days(
-            app.state.conn.redis, token, max(days, 7)
-        )
-    return build_ok_response(QueryMinedPointsResponse(points=points))
 
 
 @app.get("/stats/mined_points_v2")
