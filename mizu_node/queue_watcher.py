@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -114,8 +115,7 @@ def process_queue(db: connection, redis: Redis, round: int):
         refill_job_queues(cur, redis)
 
 
-def watch(conn: Connections):
-    round = 0
+async def watch(conn: Connections):
     while True:
         with conn.get_pg_connection() as db:
             try:
@@ -125,5 +125,4 @@ def watch(conn: Connections):
             except Exception as e:
                 logging.error(f"failed to clean queue with error {e}")
             finally:
-                time.sleep(300)
-        round += 1
+                await asyncio.sleep(300)

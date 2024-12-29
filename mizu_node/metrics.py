@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 import uvicorn
@@ -30,7 +31,7 @@ logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 async def lifespan(app: FastAPI):
     conn = Connections()
     app.state.conn = conn
-    watch(conn)
+    asyncio.create_task(watch(conn))
     yield
 
 
