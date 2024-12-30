@@ -6,7 +6,8 @@ import signal
 import redis.asyncio as redis
 from psycopg_pool import AsyncConnectionPool
 
-from mizu_node.db.query import get_unpublished_queries
+from mizu_node.db.query import get_unpublished_queries, update_query_status_async
+from mizu_node.types.query import QueryStatus
 
 
 class QueryProcessor:
@@ -101,6 +102,12 @@ class QueryProcessor:
                     for entry in entries:
                         if self.shutdown_event.is_set():
                             break
+
+                        # Set query status as "processing"
+                        entry.status = QueryStatus.processing
+                        async with self.db_pool.connection() as conn:
+                            await update_query_status_async(conn, entry)
+
                         task = asyncio.create_task(self.process_entry(entry))
                         self.active_tasks.add(task)
 

@@ -120,6 +120,20 @@ def update_query_status(db: connection, query: DataQuery) -> None:
     )
 
 
+async def update_query_status_async(
+    db: AsyncConnectionPool.connection, query: DataQuery
+) -> None:
+    async with db.cursor() as cur:
+        await cur.execute(
+            """
+        UPDATE queries
+        SET status = %s, last_record_published = %s
+        WHERE id = %s
+        """,
+            (query.status.value, query.last_record_published, query.id),
+        )
+
+
 @with_transaction
 def add_query(db: connection, query: DataQuery) -> None:
     cursor = db.cursor()
