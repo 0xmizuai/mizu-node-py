@@ -15,14 +15,16 @@ class QueryProcessor:
 
     def __init__(
         self,
-        db_pool: AsyncConnectionPool,
+        query_db_pool: AsyncConnectionPool,
+        jobs_db_pool: AsyncConnectionPool,
         redis_url: str,
         max_concurrent_tasks: int = 10,
     ):
         self.interval_seconds = 10
         self.max_concurrent_tasks = max_concurrent_tasks
         self.semaphore = asyncio.Semaphore(max_concurrent_tasks)
-        self.db_pool = db_pool
+        self.query_db_pool = query_db_pool
+        self.jobs_db_pool = jobs_db_pool
         self.redis_url = redis_url
         self.active_tasks = set()
 
@@ -37,7 +39,7 @@ class QueryProcessor:
         if self.shutdown_event.is_set():
             return []
 
-        async with self.db_pool.connection() as conn:
+        async with self.query_db_pool.connection() as conn:
             return await get_unpublished_queries(conn, limit)
 
     async def process_entry(self, entry):
@@ -84,7 +86,7 @@ class QueryProcessor:
 
                 await asyncio.gather(*remaining, return_exceptions=True)
 
-        await self.db_pool.close()
+        await self.query_db_pool.close()
         await self.redis.aclose()
 
         self.logger.info("Shutdown complete")
@@ -118,7 +120,7 @@ class QueryProcessor:
 
                         # Set query status as "processing"
                         entry.status = QueryStatus.processing
-                        async with self.db_pool.connection() as conn:
+                        async with self.query_db_pool.connection() as conn:
                             await update_query_status_async(conn, entry)
 
                         task = asyncio.create_task(self.process_entry(entry))
@@ -138,15 +140,23 @@ class QueryProcessor:
 
 async def start():
     logging.getLogger("asyncio").setLevel(logging.INFO)
-    postgres_url = os.environ["POSTGRES_URL"]
+    postgres_query_url = os.environ["POSTGRES_QUERY_URL"]
+    postgres_jobs_url = os.environ["POSTGRES_JOBS_URL"]
     redis_url = os.environ["REDIS_URL"]
-    db_pool = AsyncConnectionPool(postgres_url, min_size=1, max_size=5, open=False)
-    await db_pool.open()
+    query_db_pool = AsyncConnectionPool(
+        postgres_query_url, min_size=1, max_size=5, open=False
+    )
+    await query_db_pool.open()
+    jobs_db_pool = AsyncConnectionPool(
+        postgres_jobs_url, min_size=1, max_size=5, open=False
+    )
+    await jobs_db_pool.open()
 
-    qp = QueryProcessor(db_pool, redis_url, max_concurrent_tasks=3)
+    qp = QueryProcessor(query_db_pool, jobs_db_pool, redis_url, max_concurrent_tasks=3)
     print("calling run")
     await qp.run()
-    await db_pool.close()
+    await query_db_pool.close()
+    await jobs_db_pool.close()
 
 
 def main():
