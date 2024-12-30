@@ -57,9 +57,9 @@ def get_allowed_origins() -> list[str]:
 
 def get_lease_ttl(job_type: JobType) -> int:
     if job_type == JobType.reward:
-        return REWARD_TTL
-    elif job_type == JobType.batch_classify:
         return 3600
+    elif job_type == JobType.batch_classify:
+        return 1200
     else:
         return 600
 
