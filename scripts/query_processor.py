@@ -32,12 +32,12 @@ class QueryProcessor:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
-    async def fetch_entries(self):
+    async def fetch_entries(self, limit: int):
         if self.shutdown_event.is_set():
             return []
 
         async with self.db_pool.connection() as conn:
-            return await get_unpublished_queries(conn)
+            return await get_unpublished_queries(conn, limit)
 
     async def process_entry(self, entry):
         try:
@@ -92,8 +92,14 @@ class QueryProcessor:
                 self.active_tasks = {
                     task for task in self.active_tasks if not task.done()
                 }
-                if len(self.active_tasks) < self.max_concurrent_tasks:
-                    entries = await self.fetch_entries()
+                n_active_tasks = len(self.active_tasks)
+                limit = self.max_concurrent_tasks - n_active_tasks
+                self.logger.info(
+                    f"{n_active_tasks} active tasks, {self.max_concurrent_tasks} avail concurrent tasks"
+                )
+                if n_active_tasks < self.max_concurrent_tasks:
+                    self.logger.info(f"Fetching {limit} queries from DB")
+                    entries = await self.fetch_entries(limit)
                     if not entries:
                         self.logger.info("Nothing to process")
                         await asyncio.sleep(5)
@@ -110,6 +116,8 @@ class QueryProcessor:
 
                         task = asyncio.create_task(self.process_entry(entry))
                         self.active_tasks.add(task)
+                else:
+                    self.logger.info("Not enough workers available")
 
                 await asyncio.sleep(self.interval_seconds)
 
@@ -128,7 +136,7 @@ async def start():
     db_pool = AsyncConnectionPool(postgres_url, min_size=1, max_size=5, open=False)
     await db_pool.open()
 
-    qp = QueryProcessor(db_pool, redis_url)
+    qp = QueryProcessor(db_pool, redis_url, max_concurrent_tasks=3)
     print("calling run")
     await qp.run()
     await db_pool.close()

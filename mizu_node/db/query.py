@@ -176,7 +176,7 @@ def get_unpublished_query(db: connection) -> DataQuery:
 
 
 async def get_unpublished_queries(
-    db: AsyncConnectionPool.connection, limit: int = 5
+    db: AsyncConnectionPool.connection, limit: int
 ) -> List[DataQuery]:
     async with db.cursor() as cur:
         await cur.execute(
