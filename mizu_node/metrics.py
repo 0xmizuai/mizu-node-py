@@ -17,12 +17,12 @@ from mizu_node.stats import (
     total_rewarded_in_past_n_hour,
 )
 from mizu_node.types.connections import Connections
-from mizu_node.types.data_job import JobType
+from mizu_node.types.data_job import JobStatus, JobType
 from mizu_node.types.service import (
     QueryMinedPointsResponse,
     QueryQueueLenResponse,
 )
-from mizu_node.db.job_queue import get_queue_len
+from mizu_node.db.job_queue import get_num_of_jobs, get_queue_len
 
 logging.basicConfig(level=logging.INFO)  # Set the desired logging level
 
@@ -54,7 +54,7 @@ def queue_len(job_type: JobType = JobType.pow, reference_ids: list[int] = Query(
     Return the number of queued classify jobs.
     """
     with app.state.conn.get_pg_connection() as db:
-        q_len = get_queue_len(db, job_type, reference_ids)
+        q_len = get_num_of_jobs(db, job_type, JobStatus.cached, reference_ids)
         return build_ok_response(QueryQueueLenResponse(length=q_len))
 
 
