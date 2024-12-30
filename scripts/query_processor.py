@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import random
 import signal
 
 import redis.asyncio as redis
@@ -47,7 +48,13 @@ class QueryProcessor:
                         self.logger.info(f"Skipping {entry.id} dues to shutdown event")
                         return
 
-                    self.logger.warning(f"Entry {entry.id}")
+                    self.logger.info(f"Query {entry.id}")
+                    seconds = random.randint(20, 50)
+                    self.logger.info(
+                        f"Simulating some processing: this takes {seconds}s"
+                    )
+                    await asyncio.sleep(seconds)
+                    self.logger.info(f"Done sleeping {seconds}s")
                 except Exception as e:
                     self.logger.error(f"Error while processing {entry.id}: {str(e)}")
 
