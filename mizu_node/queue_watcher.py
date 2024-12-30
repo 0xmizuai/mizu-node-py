@@ -22,10 +22,10 @@ def reset_expired_processing_jobs(cur: cursor):
             UPDATE job_queue 
             SET status = %s
             WHERE status = %s
-            AND assigned_at < EXTRACT(EPOCH FROM NOW())::BIGINT - %s
+            AND lease_expired_at > EXTRACT(EPOCH FROM NOW())::BIGINT
         """
         ),
-        (JobStatus.pending, JobStatus.processing, 3600),
+        (JobStatus.pending, JobStatus.processing),
     )
     logging.info(f"reset all expired jobs")
 
