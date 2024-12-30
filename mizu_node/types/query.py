@@ -34,7 +34,7 @@ class DataRecord(BaseModel):
     decompressed_byte_size: int = Field(alias="decompressedByteSize")
     byte_size: int = Field(alias="byteSize")
     source: str = Field(alias="source")
-    created_at: str = Field(alias="createdAt")
+    created_at: datetime = Field(alias="createdAt")
 
 
 class DataQuery(BaseModel):
