@@ -55,42 +55,27 @@ def handle_take_job(
     conn: Connections, worker: str, job_type: JobType, reference_id: int
 ) -> WorkerJob | None:
     start_time = epoch_ms()
-    validate_worker(conn.redis, worker, job_type)
-    HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "validate").observe(
-        epoch_ms() - start_time
-    )
-    after_validation = epoch_ms()
     with conn.get_pg_connection() as pg_conn:
-        result = lease_job(pg_conn, conn.redis, job_type, reference_id or 0, worker)
+        result = lease_job(pg_conn, conn.redis, job_type, reference_id, worker)
         HANDLE_TAKE_JOB_LATENCY.labels(job_type.name, "lease").observe(
-            epoch_ms() - after_validation
+            epoch_ms() - start_time
         )
         if result is None:
             return None
 
         (item_id, retry, ctx) = result
         if retry > MAX_RETRY_ALLOWED:
-            try:
-                complete_job(
-                    pg_conn,
-                    item_id,
-                    JobStatus.error,
-                    DataJobResult(
-                        error_result=ErrorResult(code=ErrorCode.max_retry_exceeded)
-                    ),
-                )
-            except HTTPException as e:
-                logging.warning(f"failed to retire job {item_id} with error {e.detail}")
-                pass
-            return None
-        else:
-            job = WorkerJob(
-                job_id=item_id,
-                job_type=job_type,
-                reference_id=reference_id,
-                **ctx.model_dump(exclude_none=True),
+            logging.info(
+                f"retry {retry} exceeded max retry {MAX_RETRY_ALLOWED} for job {item_id}"
             )
-            return job
+
+        job = WorkerJob(
+            job_id=item_id,
+            job_type=job_type,
+            reference_id=reference_id,
+            **ctx.model_dump(exclude_none=True),
+        )
+        return job
 
 
 HANDLE_FINISH_JOB_LATENCY = Histogram(
