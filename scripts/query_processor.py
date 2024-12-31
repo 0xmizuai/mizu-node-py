@@ -1,14 +1,23 @@
 import asyncio
 import logging
 import os
-import random
 import signal
 
 import redis.asyncio as redis
-from psycopg_pool import AsyncConnectionPool
 
-from mizu_node.db.query import get_unpublished_queries, update_query_status_async
-from mizu_node.types.query import QueryStatus
+from psycopg_pool import AsyncConnectionPool
+from redis.asyncio.client import Redis
+
+from mizu_node.db.query import (
+    get_unpublished_queries,
+    update_query_status_async,
+    get_unpublished_data_per_query_async,
+)
+from mizu_node.types.query import QueryStatus, DataQuery
+
+
+def redis_key(query_id: int):
+    return f"qp:query:{query_id}:start_id"
 
 
 class QueryProcessor:
@@ -17,23 +26,42 @@ class QueryProcessor:
         self,
         query_db_pool: AsyncConnectionPool,
         jobs_db_pool: AsyncConnectionPool,
-        redis_url: str,
+        redis_client: Redis,
         max_concurrent_tasks: int = 10,
     ):
         self.interval_seconds = 10
         self.max_concurrent_tasks = max_concurrent_tasks
+        self.batched_jobs = 1000
         self.semaphore = asyncio.Semaphore(max_concurrent_tasks)
         self.query_db_pool = query_db_pool
         self.jobs_db_pool = jobs_db_pool
-        self.redis_url = redis_url
+        self.r_client = redis_client
         self.active_tasks = set()
-
-        self.redis = redis.from_url(redis_url)
 
         self.shutdown_event = asyncio.Event()
 
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
+
+    async def create_jobs(self, query: DataQuery):
+        # retrieve start_id, if any
+        start_id = await self.r_client.get(redis_key(query.id)) or 0
+
+        while True:
+            async with self.query_db_pool.connection() as conn:
+                paginated_records = await get_unpublished_data_per_query_async(
+                    conn, query, start_id, self.batched_jobs
+                )
+                if (
+                    not paginated_records.records
+                    or len(paginated_records.records) < self.batched_jobs
+                ):
+                    # we processed everything
+                    return
+                # ToDO: do something similar to process_query_batch in batch_classify.py
+                pass
+                # ToDo: update redis with last id stored into jobs table
+                pass
 
     async def fetch_entries(self, limit: int):
         if self.shutdown_event.is_set():
@@ -42,21 +70,15 @@ class QueryProcessor:
         async with self.query_db_pool.connection() as conn:
             return await get_unpublished_queries(conn, limit)
 
-    async def process_entry(self, entry):
+    async def process_query(self, entry):
         try:
             async with self.semaphore:
                 try:
                     if self.shutdown_event.is_set():
-                        self.logger.info(f"Skipping {entry.id} dues to shutdown event")
+                        self.logger.info(f"Skipping {entry.id} due to shutdown event")
                         return
 
-                    self.logger.info(f"Query {entry.id}")
-                    seconds = random.randint(20, 50)
-                    self.logger.info(
-                        f"Simulating some processing: this takes {seconds}s"
-                    )
-                    await asyncio.sleep(seconds)
-                    self.logger.info(f"Done sleeping {seconds}s")
+                    self.logger.info(f"Processing query {entry.id}")
                 except Exception as e:
                     self.logger.error(f"Error while processing {entry.id}: {str(e)}")
 
@@ -87,7 +109,8 @@ class QueryProcessor:
                 await asyncio.gather(*remaining, return_exceptions=True)
 
         await self.query_db_pool.close()
-        await self.redis.aclose()
+        await self.jobs_db_pool.close()
+        await self.r_client.aclose()
 
         self.logger.info("Shutdown complete")
 
@@ -123,7 +146,7 @@ class QueryProcessor:
                         async with self.query_db_pool.connection() as conn:
                             await update_query_status_async(conn, entry)
 
-                        task = asyncio.create_task(self.process_entry(entry))
+                        task = asyncio.create_task(self.process_query(entry))
                         self.active_tasks.add(task)
                 else:
                     self.logger.info("Not enough workers available")
@@ -143,6 +166,8 @@ async def start():
     postgres_query_url = os.environ["POSTGRES_QUERY_URL"]
     postgres_jobs_url = os.environ["POSTGRES_JOBS_URL"]
     redis_url = os.environ["REDIS_URL"]
+
+    # Set up DB pools
     query_db_pool = AsyncConnectionPool(
         postgres_query_url, min_size=1, max_size=5, open=False
     )
@@ -152,11 +177,11 @@ async def start():
     )
     await jobs_db_pool.open()
 
-    qp = QueryProcessor(query_db_pool, jobs_db_pool, redis_url, max_concurrent_tasks=3)
-    print("calling run")
+    # Setup Redis
+    r_client = await redis.from_url(redis_url)
+
+    qp = QueryProcessor(query_db_pool, jobs_db_pool, r_client, max_concurrent_tasks=3)
     await qp.run()
-    await query_db_pool.close()
-    await jobs_db_pool.close()
 
 
 def main():
