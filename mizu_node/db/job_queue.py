@@ -1,7 +1,8 @@
 import logging
-from typing import Tuple
-from typing import Tuple
+from typing import List, Tuple
 
+from psycopg_pool import AsyncConnectionPool
+from psycopg import sql as sql_async
 from psycopg2 import sql
 from pydantic import BaseModel
 from psycopg2.extensions import connection
@@ -96,6 +97,36 @@ def add_jobs(
             )
             inserted_ids.append(cur.fetchone()[0])
         return inserted_ids
+
+
+async def add_jobs_async(
+    db: AsyncConnectionPool.connection,
+    job_type: JobType,
+    contexts: List[BaseModel],
+    reference_id: int = 0,
+) -> List[int]:
+    # We have multiple operations, but treat them atomically
+    async with db.transaction():
+        async with db.cursor() as cur:
+            inserted_ids = []
+            for ctx in contexts:
+                await cur.execute(
+                    sql_async.SQL(
+                        """
+                            INSERT INTO job_queue (job_type, ctx, reference_id)
+                            VALUES (%s, %s::jsonb, %s)
+                            RETURNING id
+                            """
+                    ),
+                    (
+                        job_type,
+                        ctx.model_dump_json(by_alias=True, exclude_none=True),
+                        reference_id,
+                    ),
+                )
+                entry = await cur.fetchone()
+                inserted_ids.append(entry[0])
+            return inserted_ids
 
 
 @with_transaction
