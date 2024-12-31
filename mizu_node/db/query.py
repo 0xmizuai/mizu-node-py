@@ -107,6 +107,64 @@ def get_unpublished_data_per_query(
     return PaginatedDataRecords(records=records, last_id=last_id)
 
 
+async def get_unpublished_data_per_query_async(
+    db: AsyncConnectionPool.connection,
+    query: DataQuery,
+    start_after_id: Optional[int] = None,
+    limit: int = 1000,
+) -> PaginatedDataRecords:
+    """
+    Fetch unpublished data records after a specific ID.
+
+    Args:
+        db: Database connection
+        query: The data query object
+        start_after_id: ID to start fetching after (exclusive). If None, starts from query.last_record_published
+        limit: Maximum number of records to return
+
+    Returns:
+        PaginatedDataRecords containing the records and the last ID for next pagination
+    """
+    async with db.cursor() as cursor:
+        effective_start_id = (
+            start_after_id
+            if start_after_id is not None
+            else query.last_record_published
+        )
+        await cursor.execute(
+            """
+            SELECT id, dataset_id, md5, num_of_records, decompressed_byte_size, byte_size, source, created_at
+            FROM data_records
+            WHERE dataset_id = %s AND id > %s
+            ORDER BY id
+            LIMIT %s
+            """,
+            (query.dataset.id, effective_start_id, limit),
+        )
+        results = await cursor.fetchall()
+
+        if not results:
+            return PaginatedDataRecords(records=[], last_id=None)
+
+        records = [
+            DataRecord(
+                id=row[0],
+                dataset_id=row[1],
+                md5=row[2],
+                num_of_records=row[3],
+                decompressed_byte_size=row[4],
+                byte_size=row[5],
+                source=row[6],
+                created_at=row[7],
+            )
+            for row in results
+        ]
+
+        last_id = records[-1].id if records else None
+
+        return PaginatedDataRecords(records=records, last_id=last_id)
+
+
 @with_transaction
 def update_query_status(db: connection, query: DataQuery) -> None:
     cursor = db.cursor()
