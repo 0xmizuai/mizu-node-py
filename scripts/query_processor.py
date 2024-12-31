@@ -8,11 +8,13 @@ import redis.asyncio as redis
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio.client import Redis
 
+from mizu_node.db.job_queue import add_jobs_async
 from mizu_node.db.query import (
     get_unpublished_queries,
     update_query_status_async,
     get_unpublished_data_per_query_async,
 )
+from mizu_node.types.data_job import DataJobContext, BatchClassifyContext, JobType
 from mizu_node.types.query import QueryStatus, DataQuery
 
 
@@ -29,7 +31,8 @@ class QueryProcessor:
         redis_client: Redis,
         max_concurrent_tasks: int = 10,
     ):
-        self.interval_seconds = 10
+        self.query_interval_s = 10  # seconds
+        self.job_batch_interval_s = 30  # seconds
         self.max_concurrent_tasks = max_concurrent_tasks
         self.batched_jobs = 1000
         self.semaphore = asyncio.Semaphore(max_concurrent_tasks)
@@ -48,20 +51,49 @@ class QueryProcessor:
         start_id = await self.r_client.get(redis_key(query.id)) or 0
 
         while True:
+            self.logger.info(
+                f"query {query.id}: publishing {self.batched_jobs} jobs after {start_id} id"
+            )
             async with self.query_db_pool.connection() as conn:
                 paginated_records = await get_unpublished_data_per_query_async(
                     conn, query, start_id, self.batched_jobs
                 )
-                if (
-                    not paginated_records.records
-                    or len(paginated_records.records) < self.batched_jobs
-                ):
+                self.logger.info(
+                    f"Retrieved {len(paginated_records.records)} records for query {query.id}"
+                )
+                if paginated_records.last_id is None:
                     # we processed everything
                     return
-                # ToDO: do something similar to process_query_batch in batch_classify.py
-                pass
-                # ToDo: update redis with last id stored into jobs table
-                pass
+
+                # prepare jobs
+                contexts = [
+                    DataJobContext(
+                        batch_classify_ctx=BatchClassifyContext(
+                            data_url=f"/{query.dataset.name}/{query.dataset.data_type}/{query.dataset.language}/{record.md5}.zz",
+                            batch_size=0,
+                            bytesize=record.byte_size,
+                            decompressed_byte_size=record.decompressed_byte_size,
+                            checksum_md5=record.md5,
+                            classifier_id=0,
+                        )
+                    )
+                    for record in paginated_records.records
+                ]
+                # Write jobs to jobs db
+                async with self.jobs_db_pool.connection() as jobs_db:
+                    _ = await add_jobs_async(
+                        jobs_db, JobType.batch_classify, contexts, query.id
+                    )
+                    # Update redis with last record id stored into jobs table
+                    await self.r_client.set(
+                        redis_key(query.id), paginated_records.last_id
+                    )
+                self.logger.info(
+                    f"last_id {paginated_records.last_id} for query {query.id} written to redis"
+                )
+
+            # Wait before next batch
+            await asyncio.sleep(self.job_batch_interval_s)
 
     async def fetch_entries(self, limit: int):
         if self.shutdown_event.is_set():
@@ -79,6 +111,7 @@ class QueryProcessor:
                         return
 
                     self.logger.info(f"Processing query {entry.id}")
+                    await self.create_jobs(entry)
                 except Exception as e:
                     self.logger.error(f"Error while processing {entry.id}: {str(e)}")
 
@@ -151,7 +184,7 @@ class QueryProcessor:
                 else:
                     self.logger.info("Not enough workers available")
 
-                await asyncio.sleep(self.interval_seconds)
+                await asyncio.sleep(self.query_interval_s)
 
         except Exception as e:
             self.logger.error(f"Unexpected error in main loop: {str(e)}")
