@@ -51,6 +51,10 @@ class QueryProcessor:
         start_id = await self.r_client.get(redis_key(query.id)) or 0
 
         while True:
+            if self.shutdown_event.is_set():
+                self.logger.info(f"create_jobs for query {query.id} received shutdown")
+                return  # return because we do not want to write completion to db in this case
+
             self.logger.info(
                 f"query {query.id}: publishing {self.batched_jobs} jobs after {start_id} id"
             )
@@ -63,7 +67,13 @@ class QueryProcessor:
                 )
                 if paginated_records.last_id is None:
                     # we processed everything
-                    return
+                    self.logger.info(f"Processed all records for query {query.id}")
+                    break
+                else:
+                    start_id = paginated_records.last_id
+                    self.logger.info(
+                        f"Query {query.id}: new start_id for next paginated record -> {start_id}"
+                    )
 
                 # prepare jobs
                 contexts = [
@@ -85,15 +95,18 @@ class QueryProcessor:
                         jobs_db, JobType.batch_classify, contexts, query.id
                     )
                     # Update redis with last record id stored into jobs table
-                    await self.r_client.set(
-                        redis_key(query.id), paginated_records.last_id
-                    )
+                    await self.r_client.set(redis_key(query.id), start_id)
                 self.logger.info(
                     f"last_id {paginated_records.last_id} for query {query.id} written to redis"
                 )
 
             # Wait before next batch
             await asyncio.sleep(self.job_batch_interval_s)
+
+        # Done with this query, mark it complete
+        query.status = QueryStatus.processed
+        async with self.query_db_pool.connection() as conn:
+            await update_query_status_async(conn, query)
 
     async def fetch_entries(self, limit: int):
         if self.shutdown_event.is_set():
