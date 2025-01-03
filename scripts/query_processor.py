@@ -40,7 +40,7 @@ class QueryProcessor:
         max_concurrent_tasks: int = 10,
     ):
         self.query_interval_s = 10  # seconds
-        self.job_batch_interval_s = 30  # seconds
+        self.job_batch_interval_s = 5  # seconds
         self.max_concurrent_tasks = max_concurrent_tasks
         self.batched_jobs = 1000
         self.semaphore = asyncio.Semaphore(max_concurrent_tasks)
