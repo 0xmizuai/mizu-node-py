@@ -18,8 +18,16 @@ from mizu_node.types.data_job import DataJobContext, BatchClassifyContext, JobTy
 from mizu_node.types.query import QueryStatus, DataQuery
 
 
-def redis_key(query_id: int):
-    return f"qp:query:{query_id}:start_id"
+def redis_prefix(query_id: int):
+    return f"qp:query:{query_id}"
+
+
+def redis_start_id_key(query_id: int):
+    return f"{redis_prefix(query_id)}:start_id"
+
+
+def redis_progress_key(query_id: int):
+    return f"{redis_prefix(query_id)}:progress"
 
 
 class QueryProcessor:
@@ -46,9 +54,25 @@ class QueryProcessor:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
-    async def create_jobs(self, query: DataQuery):
+    async def store_query_progress(self, query: DataQuery, processed: int):
+        progress = (processed * 100) // query.dataset.total_objects
+        _ = await self.r_client.set(redis_progress_key(query.id), progress)
+
+    async def create_jobs(self, query: DataQuery, processed: int = 0):
+        """
+        Create jobs for a specific query
+
+        Args:
+            query: The data query object
+            processed: Number of already process entries. If we are resuming an interrupted task,
+               this number must be passed by the caller after counting the entries already present in jobs table.
+        """
         # retrieve start_id, if any
-        start_id = await self.r_client.get(redis_key(query.id)) or 0
+        start_id = await self.r_client.get(redis_start_id_key(query.id)) or 0
+
+        # Initialize progress in redis
+        processed = processed
+        await self.store_query_progress(query, processed)
 
         while True:
             if self.shutdown_event.is_set():
@@ -95,9 +119,13 @@ class QueryProcessor:
                         jobs_db, JobType.batch_classify, contexts, query.id
                     )
                     # Update redis with last record id stored into jobs table
-                    await self.r_client.set(redis_key(query.id), start_id)
+                    await self.r_client.set(redis_start_id_key(query.id), start_id)
+                    # Update redis with progress
+                    processed += len(paginated_records.records)
+                    await self.store_query_progress(query, processed)
+
                 self.logger.info(
-                    f"last_id {paginated_records.last_id} for query {query.id} written to redis"
+                    f"entries up to last_id={paginated_records.last_id} for query {query.id} written to redis"
                 )
 
             # Wait before next batch
