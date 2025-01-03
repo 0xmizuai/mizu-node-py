@@ -196,6 +196,19 @@ def get_num_of_jobs(
         return cur.fetchone()[0]
 
 
+async def get_num_jobs_by_query(
+    db: AsyncConnectionPool.connection, reference_id: int
+) -> int:
+    async with db.cursor() as cur:
+        await cur.execute(
+            sql_async.SQL(
+                f"SELECT COUNT(*) FROM job_queue WHERE reference_id = {reference_id}"
+            )
+        )
+        res = await cur.fetchone()
+        return res[0]
+
+
 def get_queue_len(
     db: connection, job_type: JobType, reference_ids: list[int] = []
 ) -> int:

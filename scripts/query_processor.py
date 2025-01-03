@@ -8,11 +8,11 @@ import redis.asyncio as redis
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio.client import Redis
 
-from mizu_node.db.job_queue import add_jobs_async
+from mizu_node.db.job_queue import add_jobs_async, get_num_jobs_by_query
 from mizu_node.db.query import (
-    get_unpublished_queries,
     update_query_status_async,
     get_unpublished_data_per_query_async,
+    get_queries_with_status,
 )
 from mizu_node.types.data_job import DataJobContext, BatchClassifyContext, JobType
 from mizu_node.types.query import QueryStatus, DataQuery
@@ -136,14 +136,14 @@ class QueryProcessor:
         async with self.query_db_pool.connection() as conn:
             await update_query_status_async(conn, query)
 
-    async def fetch_entries(self, limit: int):
+    async def fetch_entries(self, status: QueryStatus, limit: int):
         if self.shutdown_event.is_set():
             return []
 
         async with self.query_db_pool.connection() as conn:
-            return await get_unpublished_queries(conn, limit)
+            return await get_queries_with_status(conn, status, limit)
 
-    async def process_query(self, entry):
+    async def process_query(self, entry, resume: bool = False):
         try:
             async with self.semaphore:
                 try:
@@ -151,8 +151,19 @@ class QueryProcessor:
                         self.logger.info(f"Skipping {entry.id} due to shutdown event")
                         return
 
-                    self.logger.info(f"Processing query {entry.id}")
-                    await self.create_jobs(entry)
+                    if resume:
+                        self.logger.info(f"Resuming query {entry.id}")
+                        # We operate under the assumption that the value stored in Redis for
+                        # start_id is always correct, and we just want the number of already created
+                        # jobs (expensive but always accurate). However, there is a race condition where
+                        # start_id is behind the real one. In that case, we create the same jobs again and
+                        # we over-estimate the progress (> 100%).
+                        async with self.jobs_db_pool.connection() as conn:
+                            processed = await get_num_jobs_by_query(conn, entry.id)
+                            await self.create_jobs(entry, processed)
+                    else:
+                        self.logger.info(f"Processing query {entry.id}")
+                        await self.create_jobs(entry)
                 except Exception as e:
                     self.logger.error(f"Error while processing {entry.id}: {str(e)}")
 
@@ -193,6 +204,29 @@ class QueryProcessor:
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, self._handle_shutdown)
 
+        self.logger.info("Looking for unfinished queries..")
+        await self.resume_queries()
+        await self.process_new()
+
+    async def resume_queries(self):
+        self.logger.info("####### Resuming unfinished queries")
+
+        limit = self.max_concurrent_tasks + 1
+        entries = await self.fetch_entries(QueryStatus.processing, limit)
+        self.logger.info(f"Fetched {len(entries)} unfinished queries from db")
+        if len(entries) == limit:
+            self.logger.error("Too many unfinished queries")
+
+        for entry in entries:
+            if self.shutdown_event.is_set():
+                return
+            task = asyncio.create_task(self.process_query(entry, resume=True))
+            self.active_tasks.add(task)
+
+        self.logger.info("Done creating resuming tasks")
+
+    async def process_new(self):
+        self.logger.info("####### Processing new queries")
         try:
             while not self.shutdown_event.is_set():
                 self.active_tasks = {
@@ -203,9 +237,11 @@ class QueryProcessor:
                 self.logger.info(
                     f"{n_active_tasks} active tasks, {self.max_concurrent_tasks} avail concurrent tasks"
                 )
+
+                # Process pending queries if there are sufficient avail tasks
                 if n_active_tasks < self.max_concurrent_tasks:
                     self.logger.info(f"Fetching {limit} queries from DB")
-                    entries = await self.fetch_entries(limit)
+                    entries = await self.fetch_entries(QueryStatus.pending, limit)
                     if not entries:
                         self.logger.info("Nothing to process")
                         await asyncio.sleep(5)

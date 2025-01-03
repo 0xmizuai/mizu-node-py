@@ -4,7 +4,7 @@ from psycopg_pool import AsyncConnectionPool
 from dataclasses import dataclass
 
 from mizu_node.db.common import with_transaction
-from mizu_node.types.query import DataQuery, DataRecord, Dataset
+from mizu_node.types.query import DataQuery, DataRecord, Dataset, QueryStatus
 
 QUERY_WITH_DATASET = """
     SELECT 
@@ -233,15 +233,29 @@ def get_unpublished_query(db: connection) -> DataQuery:
     return _create_query_from_result(result)
 
 
-async def get_unpublished_queries(
-    db: AsyncConnectionPool.connection, limit: int
+async def get_queries_with_status(
+    db: AsyncConnectionPool.connection,
+    status: QueryStatus,
+    limit: int,
 ) -> List[DataQuery]:
     async with db.cursor() as cur:
         await cur.execute(
-            f"{QUERY_WITH_DATASET} WHERE q.status = 0 ORDER BY q.id LIMIT {limit}"
+            f"{QUERY_WITH_DATASET} WHERE q.status = {status} ORDER BY q.id LIMIT {limit}"
         )
         results = await cur.fetchall()
         return [_create_query_from_result(row) for row in results]
+
+
+async def get_unpublished_queries(
+    db: AsyncConnectionPool.connection, limit: int
+) -> List[DataQuery]:
+    return await get_queries_with_status(db, QueryStatus.pending, limit)
+
+
+async def get_incomplete_queries(
+    db: AsyncConnectionPool.connection, limit: int
+) -> List[DataQuery]:
+    return await get_queries_with_status(db, QueryStatus.processing, limit)
 
 
 def _create_query_from_result(result) -> DataQuery:
