@@ -68,7 +68,7 @@ class QueryProcessor:
                this number must be passed by the caller after counting the entries already present in jobs table.
         """
         # retrieve start_id, if any
-        start_id = await self.r_client.get(redis_start_id_key(query.id)) or 0
+        start_id = int(await self.r_client.get(redis_start_id_key(query.id)) or 0)
 
         # Initialize progress in redis
         processed = processed
